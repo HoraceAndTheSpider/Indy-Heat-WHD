@@ -4,4 +4,26 @@
 - Fixed Route Links so targets resolve only within the originating A/B/C descriptor instead of through a global cross-route address map.
 - Fixed Sequence Groups so yellow joins are route-local: same-Sequence points may join within A, within B or within C, but never between routes.
 - Added automatic startup fetch of repository `whdload/data/Disk.1`, with manual Open/Drop fallback.
+- Added editable +1 foreground/occlusion and +2 surface layers with contextual drawing tools.
+- Surface painting is quantised to the native 160×112 grid, preserving the required 2×2 game-pixel cell size.
+- Foreground painting is native 320×256 1bpp single-pixel editing; `$2804` trailing bytes remain untouched.
+- Added freehand, straight line, rectangle, ellipse and fill tools plus per-layer Undo/Revert.
+- Moved foreground/surface editing into a dedicated third desktop column to the right of the circuit, so opening tools no longer shifts the map vertically.
+- Added filled rectangle/square and filled ellipse/circle variants.
+- Reworked drawing controls: icon/radio-button tools, radio-button Area to Paint, a continuous 1–9 brush-size slider, and a Square/Circle brush toggle.
+- Added right-click erase using the current tool/brush (Foreground = clear; Surface = Normal).
+- Bitmap edit modes are mutually exclusive with waypoint editing; enabling Waypoints exits foreground/surface edit mode.
+- Raw +1/+2 resource exports and View PNG now reflect layer edits.
 - Updated export filenames/version metadata to v0.11.
+- Made Master Circuit Zoom permanent at the top of the third editor column; default zoom is now 200%, with 300% and 400% available.
+- Added a 64×64 source-area magnifier displayed as a 256×256 editable window, with a placement frame on the main circuit.
+- Magnified-area editing uses the same tools, brush size/shape and right-click erase behaviour as the main circuit.
+- Moved the Waypoint editor from the permanent left-column position into the third column whenever Waypoints are enabled; the Drawing pane occupies that column when Waypoints are off.
+- Replaced implicit Waypoints-vs-Drawing behaviour with permanent Waypoints / Surface / Foreground editor-mode buttons in column 3.
+- Moved Overlay opacity beneath Master Circuit Zoom in the permanent top section of column 3.
+- Waypoint mode now explicitly shows the Waypoint editor; Surface/Foreground modes explicitly show their drawing tools.
+- Simplified the app header to the app name and version only.
+- Added 500% Master Circuit Zoom alongside 200%, 300% and 400%.
+- Added a Foreground-only Hatched 1/1 brush pattern with fixed one-pixel-on / one-pixel-off frequency; brush size enlarges the painted area without scaling the hatch pattern.
+- Replaced the Master Circuit Zoom dropdown with a 100%–600% slider in 50% steps; default remains 200%.
+- Corrected right-click painting: Foreground now always toggles to the opposite selected value (Foreground ↔ Clear), while Surface right-click always paints Normal.

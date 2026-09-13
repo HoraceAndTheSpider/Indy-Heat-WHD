@@ -8,7 +8,7 @@
 </head>
 <body>
 <header>
-  <div><h1>Indy Heat Amiga — Circuit Editor</h1><div class="sub">v0.11 · route-local links · background transparency · online Disk.1 preload · all processing stays in your browser</div></div>
+  <div><h1>Indy Heat Amiga — Circuit Editor v0.11</h1></div>
   <label class="filebtn">Open Disk.1 / ADF<input id="fileInput" type="file" accept=".adf,.ADF,.1,application/octet-stream"></label>
 </header>
 <div id="dropZone">Repository <b>whdload/data/Disk.1</b> loads automatically. Drop a different Disk.1 here or use <b>Open Disk.1 / ADF</b> to override it.</div>
@@ -60,10 +60,13 @@
           <select id="headingDensity"><option value="1">Every cell</option><option value="2" selected>Every 2nd cell</option><option value="4">Every 4th cell</option></select>
         </label>
       </div>
-      <label class="inlineControl">Editor zoom
-        <select id="editorScale"><option value="2">2×</option><option value="3" selected>3×</option><option value="4">4×</option></select>
+      <label id="masterZoomControl">Master Circuit Zoom
+        <div class="masterZoomSlider">
+          <input id="editorScale" type="range" min="1" max="6" step="0.5" value="2">
+          <span id="editorScaleText">200%</span>
+        </div>
       </label>
-      <label>Overlay opacity <input id="opacity" type="range" min="0" max="100" value="55"><span id="opacityText">55%</span></label>
+      <label id="overlayOpacityControl">Overlay opacity <input id="opacity" type="range" min="0" max="100" value="55"><span id="opacityText">55%</span></label>
     </section>
 
     <section class="editorSection">
@@ -119,8 +122,13 @@
       <div class="prose">
         <p><b>Select</b> a visible waypoint by clicking it, or choose it from the Waypoint list. Hidden waypoint layers cannot be selected.</p>
         <p><b>Drag</b> a visible waypoint to move it. The editor converts the dragged screen position back to the game's waypoint coordinates and records the edit when you release the pointer.</p>
+        <p><b>Editor column</b> sits to the right of the circuit. Master Circuit Zoom and Overlay opacity are always at the top, followed by explicit editor modes: <b>Waypoints</b>, <b>Surface</b> and <b>Foreground</b>.</p>
+        <p><b>Waypoint mode</b> shows the waypoint editor and enables normal click/drag waypoint editing. <b>Surface</b> and <b>Foreground</b> modes hide the waypoint editor and show the drawing tools for the selected bitmap layer. These modes are mutually exclusive.</p>
+        <p><b>Magnified Area</b> uses a 64×64-pixel source window. Click the magnifying-glass button, position the frame over the circuit, and the magnified window updates. The same drawing tools work directly inside it. Toggling the magnifying glass off clears the magnified window to black.</p>
+        <p><b>Drawing tools</b> are icon radio-buttons for freehand, line, outlined or filled rectangle/square, outlined or filled ellipse/circle, and fill. Area to Paint is selected with radio-buttons. Brush size uses a 1–9 slider and brush shape is a Square/Circle toggle. Foreground also has a <b>Hatched 1/1</b> pattern: one pixel on, one pixel off at a fixed frequency; increasing brush size enlarges the hatch area without enlarging the hatch pixels. Right-click uses the current tool and brush as the secondary paint action: in Foreground mode it always paints the opposite of the selected value (Foreground ↔ Clear); in Surface mode it always paints Normal.</p>
+        <p><b>Surface painting</b> always works on the real 160×112 logical grid, so one brush unit remains exactly 2×2 game pixels. Foreground painting works at the original 320×256 single-pixel resolution.</p>
         <p><b>Labels</b> can show the physical route-local waypoint ID or the logical sequence value. Duplicate sequence labels are deliberate: multiple physical points can represent the same lap progress.</p>
-        <p><b>Sequence groups</b> draw yellow joining lines between geographically adjacent visible waypoints carrying the same sequence value. Yellow means logical equivalence, not a route/link.</p>
+        <p><b>Sequence groups</b> draw yellow joining lines between geographically adjacent visible waypoints on the same route carrying the same sequence value. They never join A, B and C to one another. Yellow means logical equivalence within that route, not a route/link.</p>
         <p>Route A and B are alternative AI driving lines. Route C is kept neutral as a reference/service path while its exact role in human progress checking and pit/service behaviour remains under investigation.</p>
       </div>
     </details>
@@ -186,6 +194,8 @@
   </div>
 </main>
 <script src="indyheat.js"></script>
+<script src="layer-tools.js"></script>
 <script src="app.js"></script>
+<script src="layer-editor.js"></script>
 </body>
 </html>
