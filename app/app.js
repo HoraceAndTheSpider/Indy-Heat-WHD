@@ -265,13 +265,14 @@ function sequenceGroupEdges(){
     if(!enabled.has(set.index))continue;
     for(const p of set.points){
       const q=wpScreen(p);if(q.x<0||q.x>=320||q.y<0||q.y>=224)continue;
-      if(!groups.has(p.progress))groups.set(p.progress,[]);
-      groups.get(p.progress).push({p,q,set:set.index});
+      const key=`${set.index}:${p.progress}`;
+      if(!groups.has(key))groups.set(key,{sequence:p.progress,pts:[]});
+      groups.get(key).pts.push({p,q,set:set.index});
     }
   }
-  // Minimum-spanning tree per sequence group: joins the geographically closest members
-  // without turning 3+ equivalent points into an unreadable complete graph.
-  for(const [sequence,pts] of groups){
+  // Minimum-spanning tree per route-local sequence group: joins the geographically
+  // closest same-sequence members without ever joining A, B or C to one another.
+  for(const {sequence,pts} of groups.values()){
     if(pts.length<2)continue;
     const used=new Set([0]);
     while(used.size<pts.length){

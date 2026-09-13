@@ -14,6 +14,8 @@ if(!js.includes('beginWaypointDrag')||!js.includes("addEventListener('pointerdow
 if(!js.includes('visibleWaypointSetIndices'))throw new Error('Waypoint visibility hit-test gate missing');
 for(const needle of ['id="showSequenceGroups"','Sequence groups','<option value="sequence">Sequence</option>','id="sequenceSummary"'])if(!html.includes(needle))throw new Error('Missing sequence UI: '+needle);
 if(!js.includes('drawSequenceGroups')||!js.includes('summarizeWaypointSequences'))throw new Error('Sequence overlay/summary wiring missing');
+if(!js.includes('const key=`${set.index}:${p.progress}`')||!js.includes('groups.get(key).pts.push'))throw new Error('Sequence groups are not route-local');
+if(js.includes('if(!groups.has(p.progress))groups.set(p.progress,[])'))throw new Error('Cross-route sequence grouping regression');
 if(!js.includes('waypointAddressMapForSet')||js.includes('function waypointAddressMap()'))throw new Error('Route-local link resolution missing');
 if(!js.includes('ONLINE_DISK_URL')||!js.includes('preloadOnlineDisk()'))throw new Error('Online Disk.1 preload wiring missing');
 console.log('v0.11 UI static tests OK');
