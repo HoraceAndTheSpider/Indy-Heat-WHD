@@ -45,10 +45,10 @@
       <div class="classToggles indent compactSubcontrols">
         <label><input class="waypointSet" data-set="0" type="checkbox" checked> Route A</label>
         <label><input class="waypointSet" data-set="1" type="checkbox" checked> Route B</label>
-        <label><input class="waypointSet" data-set="2" type="checkbox" checked> Route C / reference-service</label>
+        <label><input class="waypointSet" data-set="2" type="checkbox" checked> Route C / service</label>
         <label><input id="showWaypointLinks" type="checkbox" checked> Route links</label>
         <label><input id="showSequenceGroups" type="checkbox"> Sequence groups</label>
-        <label><input id="showBit7Flags" type="checkbox"> Bit-7 flags</label>
+        <label><input id="showBit7Flags" type="checkbox"> AI Turbo markers</label>
         <label><input id="showNonDefaultLinkDeltas" type="checkbox"> Link deltas ≠ +6</label>
         <label class="inlineControl">Labels
           <select id="wpLabelMode"><option value="off">Off</option><option value="index" selected>Waypoint ID</option><option value="sequence">Sequence</option></select>
@@ -83,7 +83,7 @@
       </div>
       <details class="smallDetails"><summary>Advanced waypoint fields</summary>
         <div class="editGrid compactAdvanced">
-          <label class="checkline"><input id="editWpFlag" type="checkbox" disabled> Bit-7 flag</label>
+          <label class="checkline"><input id="editWpFlag" type="checkbox" disabled> AI Turbo marker (bit 7)</label>
           <label>Link delta <input id="editWpDelta" type="number" min="-32768" max="32767" step="6" disabled></label>
         </div>
       </details>
@@ -124,6 +124,7 @@
       <div class="prose">
         <p><b>Select</b> a visible waypoint by clicking it, or choose it from the Waypoint list. Hidden waypoint layers cannot be selected.</p>
         <p><b>Drag</b> a visible waypoint to move it. The editor converts the dragged screen position back to the game's waypoint coordinates and records the edit when you release the pointer.</p>
+        <p><b>Right-click</b> a visible waypoint in Waypoint mode to toggle its <b>AI Turbo marker</b>. This changes waypoint <code>+2</code> bit 7 only; X/Y, Sequence and Link Delta are preserved.</p>
         <p><b>Editor column</b> sits to the right of the circuit. Master Circuit Zoom and Overlay opacity are always at the top, followed by explicit editor modes: <b>Waypoints</b>, <b>Surface</b> and <b>Foreground</b>.</p>
         <p><b>Waypoint mode</b> shows the waypoint editor and enables normal click/drag waypoint editing. <b>Surface</b> and <b>Foreground</b> modes hide the waypoint editor and show the drawing tools for the selected bitmap layer. These modes are mutually exclusive.</p>
         <p><b>Magnified Area</b> uses a 64×64-pixel source window. Click the magnifying-glass button, position the frame over the circuit, and the magnified window updates. The same drawing tools work directly inside it. Toggling the magnifying glass off clears the magnified window to black.</p>
@@ -131,8 +132,8 @@
         <p><b>Surface painting</b> always works on the real 160×112 logical grid, so one brush unit remains exactly 2×2 game pixels. Foreground painting works at the original 320×256 single-pixel resolution.</p>
         <p><b>Labels</b> can show the physical route-local waypoint ID or the logical sequence value. Duplicate sequence labels are deliberate: multiple physical points can represent the same lap progress.</p>
         <p><b>Sequence groups</b> draw yellow joining lines between geographically adjacent visible waypoints on the same route carrying the same sequence value. They never join A, B and C to one another. Yellow means logical equivalence within that route, not a route/link.</p>
-        <p><b>Bit-7 flags</b> adds a white outer ring to visible waypoints whose independent high-bit flag is set. <b>Link deltas ≠ +6</b> draws cyan directional arrows only for route-local links whose signed byte displacement is not the ordinary +6, with the delta value shown beside the arrow.</p>
-        <p>Route A and B are alternative AI driving lines. Route C is kept neutral as a reference/service path while its exact role in human progress checking and pit/service behaviour remains under investigation.</p>
+        <p><b>AI Turbo markers</b> add a white outer ring to visible waypoints whose <code>+2</code> high bit is set. Static tracing proves this flag can make the AI generate a Turbo input when its Turbo-use timer permits it. <b>Link deltas ≠ +6</b> draws cyan directional arrows only for route-local links whose signed byte displacement is not the ordinary +6, with the delta value shown beside the arrow.</p>
+        <p>Route A and B are alternative normal AI driving lines. Route C is the AI service route selected by service-request state; the exact naming of every service trigger remains under investigation.</p>
       </div>
     </details>
 
@@ -180,8 +181,9 @@
         <p><b>+1</b> is the 320×256 foreground/occlusion mask. The bitmap starts at byte 0; the four extra bytes in $2804 variants trail the bitmap.</p>
         <p><b>+2</b> is a packed 2-bit surface map at 160×112 logical cells, covering the 320×224 gameplay area at 2×2 pixels per cell.</p>
         <p><b>+3</b> is a 40×28 recovery/heading lookup, one value per 8×8 gameplay cell.</p>
-        <p>Stored six-byte waypoint records are complemented before race use: each runtime byte is the stored byte XOR <code>$FF</code>. The decoded record contains signed X, a logical sequence/progress value plus a separate high-bit flag, signed Y and a signed relative link displacement.</p>
+        <p>Stored six-byte waypoint records are complemented before race use: each runtime byte is the stored byte XOR <code>$FF</code>. The decoded record contains signed X, a logical sequence/progress value plus the AI Turbo high-bit marker, signed Y and a signed relative Link Delta.</p>
         <p>The physical waypoint ID is not the lap order. Sequence (<code>+2 &amp; $7F</code>) is the logical progress value and may legitimately be shared by several physical waypoints.</p>
+        <p>The Link Delta at <code>+4.w</code> is the code-proven explicit next-node pointer displacement. <code>+6</code> is ordinary physical succession only because each waypoint record is six bytes.</p>
         <p>The editor's default waypoint position uses the code-derived game coordinate projection. Manual mapping controls are retained above only for reverse-engineering comparison.</p>
       </div>
     </details>
@@ -200,5 +202,6 @@
 <script src="layer-tools.js"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js"></script>
+<script src="waypoint-actions.js"></script>
 </body>
 </html>
