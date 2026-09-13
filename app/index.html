@@ -3,96 +3,178 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Ripper / Viewer v0.5</title>
+<title>Indy Heat Amiga – Circuit Editor v0.11</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <div><h1>Indy Heat Amiga — Circuit Ripper / Viewer</h1><div class="sub">Read-only research build v0.5 · all processing stays in your browser</div></div>
+  <div><h1>Indy Heat Amiga — Circuit Editor</h1><div class="sub">v0.11 · route-local links · background transparency · online Disk.1 preload · all processing stays in your browser</div></div>
   <label class="filebtn">Open Disk.1 / ADF<input id="fileInput" type="file" accept=".adf,.ADF,.1,application/octet-stream"></label>
 </header>
-<div id="dropZone">Drop the original Indy Heat <b>Disk.1</b> here, or use <b>Open Disk.1 / ADF</b>.</div>
+<div id="dropZone">Repository <b>whdload/data/Disk.1</b> loads automatically. Drop a different Disk.1 here or use <b>Open Disk.1 / ADF</b> to override it.</div>
 <main>
   <aside>
     <section>
       <h2>Disk</h2>
       <div id="diskStatus" class="muted">No disk loaded.</div>
     </section>
+
     <section>
-      <h2>Circuit resource group</h2>
+      <h2>Circuit</h2>
       <select id="trackSelect" disabled></select>
       <div id="trackMeta" class="mini muted"></div>
     </section>
+
     <section>
-      <h2>Layers</h2>
-      <label><input id="showBg" type="checkbox" checked> 5-plane circuit bitmap</label>
-      <label><input id="showMask1" type="checkbox"> Resource +1 · foreground/occlusion mask (1bpp)</label>
-      <label class="indent">+1 decode offset <select id="mask1Offset"><option value="auto">auto</option><option value="0">0</option><option value="4">4</option></select></label>
-      <label><input id="showSurface" type="checkbox" checked> Resource +2 · 2bpp surface map</label>
-      <div class="classToggles indent">
-        <label><input class="surfaceClass" data-class="0" type="checkbox"> 0 · ordinary / no special response</label>
-        <label><input class="surfaceClass" data-class="1" type="checkbox" checked> 1 · collision / edge correction</label>
-        <label><input class="surfaceClass" data-class="2" type="checkbox" checked> 2 · slowdown A (stronger)</label>
-        <label><input class="surfaceClass" data-class="3" type="checkbox" checked> 3 · slowdown B (weaker)</label>
+      <h2>View</h2>
+      <label><input id="showBg" type="checkbox" checked> Track image</label>
+      <label>Track opacity <input id="backgroundOpacity" type="range" min="0" max="100" value="100"><span id="backgroundOpacityText">100%</span></label>
+      <label class="inlineControl">Colours
+        <select id="paletteMode"><option value="game" selected>Original colour</option><option value="mono">Monochrome</option></select>
+      </label>
+      <label><input id="showMask1" type="checkbox"> Foreground / bridge mask</label>
+      <label><input id="showSurface" type="checkbox"> Surface types</label>
+      <div class="classToggles indent compactSubcontrols">
+        <label><input class="surfaceClass" data-class="0" type="checkbox"> Normal</label>
+        <label><input class="surfaceClass" data-class="1" type="checkbox" checked> Edge / collision</label>
+        <label><input class="surfaceClass" data-class="2" type="checkbox" checked> Slowdown A</label>
+        <label><input class="surfaceClass" data-class="3" type="checkbox" checked> Slowdown B</label>
       </div>
-      <label><input id="showWaypoints" type="checkbox" checked> Path / waypoint records</label>
-      <div class="classToggles indent">
-        <label><input class="waypointSet" data-set="0" type="checkbox" checked> descriptor A</label>
-        <label><input class="waypointSet" data-set="1" type="checkbox" checked> descriptor B</label>
-        <label><input class="waypointSet" data-set="2" type="checkbox" checked> descriptor C</label>
-        <label><input id="showWaypointLinks" type="checkbox"> experimental +4 link candidates</label>
-        <div class="mini muted">Points are shown without connecting storage order. Candidate links are diagnostic only and are off by default.</div>
-        <details class="wpTransform"><summary>display transform diagnostic</summary>
-          <label>X mirror <select id="wpFlipMode"><option value="auto" selected>auto from race +$6A</option><option value="no">force off</option><option value="yes">force on</option></select></label>
-          <label>X scale <input id="wpScaleX" type="number" min="-4" max="4" step="0.05" value="2"></label>
-          <label>X offset <input id="wpOffsetX" type="number" min="-320" max="320" step="1" value="0"></label>
-          <label>Y scale <input id="wpScaleY" type="number" min="-4" max="4" step="0.05" value="1"></label>
-          <label>Y offset <input id="wpOffsetY" type="number" min="-320" max="320" step="1" value="128"></label>
-          <button id="wpReset" type="button">Reset auto mirror / X×2 / Y+128</button>
-          <div class="mini muted">Research-only display transform. Auto mode follows the code-proven race +$6A X-negation flag. Scale/offset remain provisional and never alter game data.</div>
-        </details>
+
+      <label><input id="showWaypoints" type="checkbox" checked> Waypoints</label>
+      <div class="classToggles indent compactSubcontrols">
+        <label><input class="waypointSet" data-set="0" type="checkbox" checked> Route A</label>
+        <label><input class="waypointSet" data-set="1" type="checkbox" checked> Route B</label>
+        <label><input class="waypointSet" data-set="2" type="checkbox" checked> Route C / reference-service</label>
+        <label><input id="showWaypointLinks" type="checkbox" checked> Route links</label>
+        <label><input id="showSequenceGroups" type="checkbox"> Sequence groups</label>
+        <label class="inlineControl">Labels
+          <select id="wpLabelMode"><option value="off">Off</option><option value="index" selected>Waypoint ID</option><option value="sequence">Sequence</option></select>
+        </label>
+        <div id="sequenceSummary" class="sequenceSummary mini muted">Sequence summary unavailable.</div>
       </div>
-      <label><input id="showHeading" type="checkbox" checked> Resource +3 · 40×28 heading grid arrows</label>
-      <label class="indent">display phase <input id="headingPhase" type="range" min="0" max="255" value="192"><span id="phaseText">192</span></label>
-      <label class="indent"><input id="headingReverse" type="checkbox"> reverse arrow rotation</label>
-      <label>Overlay opacity <input id="opacity" type="range" min="0" max="100" value="45"><span id="opacityText">45%</span></label>
+
+      <label><input id="showHeading" type="checkbox"> Recovery arrows</label>
+      <div class="indent compactSubcontrols">
+        <label class="inlineControl">Arrow density
+          <select id="headingDensity"><option value="1">Every cell</option><option value="2" selected>Every 2nd cell</option><option value="4">Every 4th cell</option></select>
+        </label>
+      </div>
+      <label class="inlineControl">Editor zoom
+        <select id="editorScale"><option value="2">2×</option><option value="3" selected>3×</option><option value="4">4×</option></select>
+      </label>
+      <label>Overlay opacity <input id="opacity" type="range" min="0" max="100" value="55"><span id="opacityText">55%</span></label>
     </section>
-    <section>
-      <h2>Cursor</h2>
-      <pre id="cursorInfo">x --  y --</pre>
+
+    <section class="editorSection">
+      <h2>Waypoint</h2>
+      <label class="mini">Select <select id="wpSelectList" disabled><option>—</option></select></label>
+      <div id="wpSelectedInfo" class="selectedSummary mini muted">Select a visible waypoint, or drag one on the circuit.</div>
+      <div class="editGrid">
+        <label>X <input id="editWpX" type="number" min="-32768" max="32767" step="1" disabled></label>
+        <label>Y <input id="editWpY" type="number" min="-128" max="127" step="1" disabled></label>
+        <label>Sequence <input id="editWpProgress" type="number" min="0" max="127" step="1" disabled></label>
+        <label class="wide">Link target <select id="editWpTarget" disabled><option>—</option></select></label>
+      </div>
+      <details class="smallDetails"><summary>Advanced waypoint fields</summary>
+        <div class="editGrid compactAdvanced">
+          <label class="checkline"><input id="editWpFlag" type="checkbox" disabled> Bit-7 flag</label>
+          <label>Link delta <input id="editWpDelta" type="number" min="-32768" max="32767" step="6" disabled></label>
+        </div>
+      </details>
+      <div class="wpBtns"><button id="applyWaypoint" type="button" disabled>Apply fields</button><button id="revertWaypoint" type="button" disabled>Revert selected</button></div>
+      <div id="editStatus" class="mini statusLine"></div>
+      <div id="editCount" class="mini">0 modified waypoints</div>
     </section>
+
     <section>
       <h2>Export</h2>
-      <button id="savePng" disabled>Rendered PNG</button>
+      <button id="savePng" disabled>View PNG</button>
       <button id="saveJson" disabled>Track JSON</button>
-      <div class="downloads">
-        <button data-dl="0" disabled>Background .bin</button>
-        <button data-dl="1" disabled>+1 .bin</button>
-        <button data-dl="2" disabled>+2 .bin</button>
-        <button data-dl="3" disabled>+3 .bin</button>
-      </div>
+      <button id="savePatch" disabled>Waypoint patch</button>
+      <button id="saveMain" disabled>Modified main .bin</button>
+      <button id="revertAll" disabled>Revert all edits</button>
+      <details class="smallDetails"><summary>Raw resources</summary>
+        <div class="downloads">
+          <button data-dl="0" disabled>Track image .bin</button>
+          <button data-dl="1" disabled>+1 .bin</button>
+          <button data-dl="2" disabled>+2 .bin</button>
+          <button data-dl="3" disabled>+3 .bin</button>
+        </div>
+      </details>
     </section>
   </aside>
+
   <div class="content">
     <section class="viewerPanel">
-      <canvas id="view" width="320" height="256"></canvas>
-      <div class="legend"><span class="sw c1"></span>surface 1 <span class="sw c2"></span>surface 2 <span class="sw c3"></span>surface 3 <span class="sw occ"></span>+1 1bpp</div>
+      <canvas id="view" width="960" height="768"></canvas>
+      <div class="viewerFooter">
+        <div class="legend"><span class="sw routeA"></span>A <span class="sw routeB"></span>B <span class="sw routeC"></span>C <span class="sw sequence"></span>same sequence <span class="sw c1"></span>edge <span class="sw c2"></span>slow A <span class="sw c3"></span>slow B <span class="sw occ"></span>foreground</div>
+        <pre id="cursorInfo">x --  y --</pre>
+      </div>
     </section>
-    <section class="cards">
-      <article><h2>Selected resources</h2><div id="resourceTable"></div></article>
-      <article><h2>Surface map statistics</h2><div id="surfaceStats" class="mono"></div></article>
-      <article><h2>Heading grid</h2><div id="headingStats" class="mono"></div></article>
-    </section>
-    <details open>
-      <summary>Research interpretation</summary>
+
+    <details>
+      <summary>Help / controls</summary>
       <div class="prose">
-        <p><b>+1</b> is the 320×256 foreground/occlusion mask. The drawing routines extract its bits at the car position, combine them with the car/sprite mask and use the result in the BOB/blitter path so the car can pass behind scenery.</p>
-        <p><b>+2</b> is code-proven as a packed 2-bit map at 160×112 logical cells, covering 320×224 gameplay pixels at 2×2 pixels per cell. This is why a 1-bit rendering produces artificial vertical stripes. Values 0–3 select normal, collision-correction and two slowdown responses.</p>
-        <p><b>+3</b> is code-proven as a 40×28 byte lookup indexed by <code>x&gt;&gt;3</code>, <code>y&gt;&gt;3</code>. Out-of-bounds returns use cardinal heading values, strongly identifying it as a direction/heading recovery grid rather than a bitmap mask.</p>
-        <p>The first three descriptors in each race record feed the AI/path code and reference six-byte records. The coordinate setup has now been traced: car X is optionally negated according to race word <code>+$6A</code>, then the 16.16 X origin at <code>+$62</code> is added; Y receives the 16.16 origin at <code>+$66</code>. The resulting high words are what the nearest-waypoint routine compares with waypoint <code>+0.w</code> and signed <code>+3.b</code>. The viewer therefore follows <code>+$6A</code> automatically for its provisional left/right display mirror. X/Y scale and display origin are still research controls rather than proven screen-projection semantics. Byte <code>+2 &amp; $7F</code> behaves as route/progress metadata, not heading. Word <code>+4</code> is used as a relative link after setup; its static pre-runtime encoding remains under investigation. All earlier waypoint contact sheets should be treated as superseded.</p>
-        <p>The boot code copies the decrunched main image to runtime <code>$1000</code>, so path pointers map back to this file image by subtracting <code>$1000</code>. The stored descriptor span is <code>count×6</code>; the nearest-point routine uses <code>DBF</code> and appears to inspect one extra boundary record, which remains under investigation.</p>
+        <p><b>Select</b> a visible waypoint by clicking it, or choose it from the Waypoint list. Hidden waypoint layers cannot be selected.</p>
+        <p><b>Drag</b> a visible waypoint to move it. The editor converts the dragged screen position back to the game's waypoint coordinates and records the edit when you release the pointer.</p>
+        <p><b>Labels</b> can show the physical route-local waypoint ID or the logical sequence value. Duplicate sequence labels are deliberate: multiple physical points can represent the same lap progress.</p>
+        <p><b>Sequence groups</b> draw yellow joining lines between geographically adjacent visible waypoints carrying the same sequence value. Yellow means logical equivalence, not a route/link.</p>
+        <p>Route A and B are alternative AI driving lines. Route C is kept neutral as a reference/service path while its exact role in human progress checking and pit/service behaviour remains under investigation.</p>
       </div>
     </details>
+
+    <details id="advancedDisplay">
+      <summary>Advanced display / research diagnostics</summary>
+      <div class="advancedGrid">
+        <div>
+          <h3>Waypoint mapping</h3>
+          <label>Mapping <select id="wpProjectionMode"><option value="a082" selected>Game mapping</option><option value="manual">Manual comparison</option></select></label>
+          <div id="manualProjectionControls" class="advancedSubgroup">
+            <label>X scale <input id="wpScaleX" type="number" min="-6" max="6" step="0.05" value="2"></label>
+            <label>X offset <input id="wpOffsetX" type="number" min="-500" max="600" step="1" value="338"></label>
+            <label>Y scale <input id="wpScaleY" type="number" min="-6" max="6" step="0.05" value="-1.5"></label>
+            <label>Y offset <input id="wpOffsetY" type="number" min="-320" max="320" step="0.5" value="142.5"></label>
+            <div class="wpBtns"><button id="wpReset" type="button">Game mapping</button><button id="wpAutoFit" type="button">Research auto-fit</button></div>
+          </div>
+          <pre id="wpFitStats" class="mini mono">fit metrics unavailable</pre>
+        </div>
+        <div>
+          <h3>Recovery arrow orientation</h3>
+          <label>Phase <input id="headingPhase" type="range" min="0" max="255" value="192"><span id="phaseText">192</span></label>
+          <label><input id="headingReverse" type="checkbox"> Reverse rotation</label>
+          <p class="mini muted">These controls are retained for research comparison; ordinary editing does not require them.</p>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Waypoint validation</summary>
+      <pre id="wpValidation" class="mini mono">Load a disk to validate routes.</pre>
+    </details>
+
+    <details>
+      <summary>Technical resource details</summary>
+      <div class="cards">
+        <article><h2>Selected resources</h2><div id="resourceTable"></div></article>
+        <article><h2>Surface map statistics</h2><div id="surfaceStats" class="mono"></div></article>
+        <article><h2>Recovery grid</h2><div id="headingStats" class="mono"></div></article>
+      </div>
+    </details>
+
+    <details>
+      <summary>Research interpretation</summary>
+      <div class="prose">
+        <p><b>+1</b> is the 320×256 foreground/occlusion mask. The bitmap starts at byte 0; the four extra bytes in $2804 variants trail the bitmap.</p>
+        <p><b>+2</b> is a packed 2-bit surface map at 160×112 logical cells, covering the 320×224 gameplay area at 2×2 pixels per cell.</p>
+        <p><b>+3</b> is a 40×28 recovery/heading lookup, one value per 8×8 gameplay cell.</p>
+        <p>Stored six-byte waypoint records are complemented before race use: each runtime byte is the stored byte XOR <code>$FF</code>. The decoded record contains signed X, a logical sequence/progress value plus a separate high-bit flag, signed Y and a signed relative link displacement.</p>
+        <p>The physical waypoint ID is not the lap order. Sequence (<code>+2 &amp; $7F</code>) is the logical progress value and may legitimately be shared by several physical waypoints.</p>
+        <p>The editor's default waypoint position uses the code-derived game coordinate projection. Manual mapping controls are retained above only for reverse-engineering comparison.</p>
+      </div>
+    </details>
+
     <details>
       <summary>Race/event records and path descriptors</summary>
       <div id="raceRecords"></div>
