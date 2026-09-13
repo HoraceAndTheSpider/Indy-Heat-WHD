@@ -48,6 +48,8 @@
         <label><input class="waypointSet" data-set="2" type="checkbox" checked> Route C / reference-service</label>
         <label><input id="showWaypointLinks" type="checkbox" checked> Route links</label>
         <label><input id="showSequenceGroups" type="checkbox"> Sequence groups</label>
+        <label><input id="showBit7Flags" type="checkbox"> Bit-7 flags</label>
+        <label><input id="showNonDefaultLinkDeltas" type="checkbox"> Link deltas ≠ +6</label>
         <label class="inlineControl">Labels
           <select id="wpLabelMode"><option value="off">Off</option><option value="index" selected>Waypoint ID</option><option value="sequence">Sequence</option></select>
         </label>
@@ -129,6 +131,7 @@
         <p><b>Surface painting</b> always works on the real 160×112 logical grid, so one brush unit remains exactly 2×2 game pixels. Foreground painting works at the original 320×256 single-pixel resolution.</p>
         <p><b>Labels</b> can show the physical route-local waypoint ID or the logical sequence value. Duplicate sequence labels are deliberate: multiple physical points can represent the same lap progress.</p>
         <p><b>Sequence groups</b> draw yellow joining lines between geographically adjacent visible waypoints on the same route carrying the same sequence value. They never join A, B and C to one another. Yellow means logical equivalence within that route, not a route/link.</p>
+        <p><b>Bit-7 flags</b> adds a white outer ring to visible waypoints whose independent high-bit flag is set. <b>Link deltas ≠ +6</b> draws cyan directional arrows only for route-local links whose signed byte displacement is not the ordinary +6, with the delta value shown beside the arrow.</p>
         <p>Route A and B are alternative AI driving lines. Route C is kept neutral as a reference/service path while its exact role in human progress checking and pit/service behaviour remains under investigation.</p>
       </div>
     </details>

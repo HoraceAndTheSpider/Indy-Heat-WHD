@@ -27,3 +27,5 @@
 - Added a Foreground-only Hatched 1/1 brush pattern with fixed one-pixel-on / one-pixel-off frequency; brush size enlarges the painted area without scaling the hatch pattern.
 - Replaced the Master Circuit Zoom dropdown with a 100%–600% slider in 50% steps; default remains 200%.
 - Corrected right-click painting: Foreground now always toggles to the opposite selected value (Foreground ↔ Clear), while Surface right-click always paints Normal.
+- Added optional Bit-7 flag visualisation: flagged waypoints receive an extra white outer ring.
+- Added an optional cyan directional overlay for route-local waypoint links whose signed Link delta is not +6; arrows point source → target and are labelled with the byte delta.

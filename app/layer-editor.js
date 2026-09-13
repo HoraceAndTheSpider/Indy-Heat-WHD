@@ -11,6 +11,7 @@ const view=$('view');
 if(!view)return;
 
 let model=null,currentIndex=0,currentResources=null;
+let raceRecords=[],researchWaypoints=null;
 let bg=null,mask=null,surface=null,heading=null;
 let editMode=null,gesture=null,history=[];
 const magnifier={active:false,placing:false,x:128,y:96};
@@ -287,6 +288,8 @@ function selectedTrack(index){
   const base=T.TRACK_BASE_IDS[currentIndex];
   currentResources=[0,1,2,3].map(n=>model.getResource(base+n));
   currentResources.forEach(rememberOriginal);
+  const race=raceRecords.find(r=>r.baseResourceId===base)||null;
+  researchWaypoints=race?.waypointDescriptors||null;
   decodeCurrent();history=[];
   updateToolbar();queueRedraw(true);
 }
@@ -294,6 +297,11 @@ function selectedTrack(index){
 async function loadDiskBytes(bytes,label='Disk.1'){
   try{
     model=T.makeDiskModel(bytes);
+    raceRecords=T.parseRaceRecords(model.main);
+    raceRecords.forEach(r=>{
+      r.baseResourceId=T.raceBaseResourceId(r,model.resourceTableOffset+0x1000);
+      r.waypointDescriptors=T.parseWaypointDescriptors(model.main,r);
+    });
     originals.clear();dirtyResources.clear();history=[];gesture=null;
     selectedTrack(Number($('trackSelect')?.value)||0);
     setLayerStatus(`${label} ready for layer editing.`);
@@ -465,6 +473,93 @@ function drawPreview(){
   for(const [x,y] of pts)octx.fillRect(x*unit*S,y*unit*S,unit*S,unit*S);
   octx.restore();
 }
+
+function researchWaypointProjection(p){
+  const mode=$('wpProjectionMode')?.value||'a082';
+  if(mode==='a082'){
+    const q=T.projectWaypointA082(p.x,p.y);
+    if(q)return q;
+  }
+  const sx=Number($('wpScaleX')?.value??2),ox=Number($('wpOffsetX')?.value??338);
+  const sy=Number($('wpScaleY')?.value??-1.5),oy=Number($('wpOffsetY')?.value??142.5);
+  return {x:p.x*sx+ox,y:p.y*sy+oy};
+}
+function visibleResearchWaypointSets(){
+  if(!$('showWaypoints')?.checked||!researchWaypoints)return [];
+  const enabled=new Set(Array.from(document.querySelectorAll('.waypointSet:checked')).map(c=>Number(c.dataset.set)));
+  return researchWaypoints.filter(set=>enabled.has(set.index));
+}
+function routeLocalWaypointMap(set){
+  const by=new Map();
+  for(const p of set.points||[])by.set(p.runtimeAddress,p);
+  if(set.boundaryPoint&&!set.boundaryPoint.zeroSentinel)by.set(set.boundaryPoint.runtimeAddress,set.boundaryPoint);
+  return by;
+}
+function drawCyanArrow(a,b,label,S){
+  const ax=a.x*S,ay=a.y*S,bx=b.x*S,by=b.y*S,dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy);
+  if(len<2*S)return;
+  const ux=dx/len,uy=dy/len;
+  const startPad=2.1*S,endPad=3.0*S;
+  const x1=ax+ux*startPad,y1=ay+uy*startPad,x2=bx-ux*endPad,y2=by-uy*endPad;
+  const head=Math.max(5,2.1*S),wing=.55;
+  const cyan='#25e7ff';
+
+  octx.save();
+  octx.lineCap='round';octx.lineJoin='round';
+  octx.strokeStyle='rgba(0,0,0,.86)';octx.lineWidth=Math.max(3,1.45*S);
+  octx.beginPath();octx.moveTo(x1,y1);octx.lineTo(x2,y2);octx.stroke();
+  octx.strokeStyle=cyan;octx.lineWidth=Math.max(1.4,.62*S);
+  octx.beginPath();octx.moveTo(x1,y1);octx.lineTo(x2,y2);octx.stroke();
+
+  const angle=Math.atan2(y2-y1,x2-x1);
+  const hx1=x2-Math.cos(angle-wing)*head,hy1=y2-Math.sin(angle-wing)*head;
+  const hx2=x2-Math.cos(angle+wing)*head,hy2=y2-Math.sin(angle+wing)*head;
+  octx.fillStyle=cyan;octx.strokeStyle='rgba(0,0,0,.86)';octx.lineWidth=Math.max(2,.8*S);
+  octx.beginPath();octx.moveTo(x2,y2);octx.lineTo(hx1,hy1);octx.lineTo(hx2,hy2);octx.closePath();octx.stroke();octx.fill();
+
+  if(label){
+    const mx=(x1+x2)/2,my=(y1+y2)/2-1.8*S,fontPx=Math.max(9,Math.round(3.5*S));
+    octx.font=`600 ${fontPx}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;
+    octx.textAlign='center';octx.textBaseline='bottom';
+    octx.strokeStyle='rgba(0,0,0,.95)';octx.lineWidth=Math.max(2,1.05*S);
+    octx.strokeText(label,mx,my);octx.fillStyle=cyan;octx.fillText(label,mx,my);
+  }
+  octx.restore();
+}
+function drawWaypointResearchOverlays(){
+  if(!researchWaypoints||!$('showWaypoints')?.checked)return;
+  const showFlags=$('showBit7Flags')?.checked;
+  const showLinks=$('showNonDefaultLinkDeltas')?.checked;
+  if(!showFlags&&!showLinks)return;
+  const sets=visibleResearchWaypointSets(),S=scale();
+
+  if(showLinks){
+    for(const set of sets){
+      const byAddress=routeLocalWaypointMap(set);
+      for(const p of set.points||[]){
+        if(Number(p.linkDelta)===6)continue;
+        const target=byAddress.get(p.linkTarget);
+        if(!target||target.zeroSentinel)continue;
+        const a=researchWaypointProjection(p),b=researchWaypointProjection(target);
+        if(!a||!b||a.x<0||a.x>=320||a.y<0||a.y>=224||b.x<0||b.x>=320||b.y<0||b.y>=224)continue;
+        const d=Number(p.linkDelta),label=`${d>=0?'+':''}${d}`;
+        drawCyanArrow(a,b,label,S);
+      }
+    }
+  }
+
+  if(showFlags){
+    octx.save();
+    octx.strokeStyle='#fff';octx.lineWidth=Math.max(1.4,.55*S);octx.globalAlpha=.98;
+    for(const set of sets)for(const p of set.points||[]){
+      if(!p.progressFlag)continue;
+      const q=researchWaypointProjection(p);
+      if(!q||q.x<0||q.x>=320||q.y<0||q.y>=224)continue;
+      octx.beginPath();octx.arc(q.x*S,q.y*S,Math.max(4,1.9*S),0,Math.PI*2);octx.stroke();
+    }
+    octx.restore();
+  }
+}
 function clampMagnifier(){
   magnifier.x=Math.max(0,Math.min(256,Math.round(magnifier.x)));
   magnifier.y=Math.max(0,Math.min(192,Math.round(magnifier.y)));
@@ -508,7 +603,7 @@ function drawNow(){
   redrawPending=false;
   if(overlay.width!==view.width||overlay.height!==view.height){overlay.width=view.width;overlay.height=view.height;}
   octx.clearRect(0,0,overlay.width,overlay.height);
-  drawMask();drawSurface();drawPreview();
+  drawMask();drawSurface();drawPreview();drawWaypointResearchOverlays();
   renderMagnifier();
   drawMagnifierFrame();
 }
@@ -731,6 +826,12 @@ ui.brushHatch.addEventListener('click',()=>{
 });
 
 document.querySelectorAll('.surfaceClass').forEach(c=>c.addEventListener('change',()=>queueRedraw()));
+document.querySelectorAll('.waypointSet').forEach(c=>c.addEventListener('change',()=>queueRedraw()));
+$('showBit7Flags')?.addEventListener('change',()=>queueRedraw());
+$('showNonDefaultLinkDeltas')?.addEventListener('change',()=>queueRedraw());
+for(const id of ['wpProjectionMode','wpScaleX','wpOffsetX','wpScaleY','wpOffsetY']){
+  $(id)?.addEventListener(id==='wpProjectionMode'?'change':'input',()=>queueRedraw());
+}
 $('opacity')?.addEventListener('input',()=>queueRedraw());
 $('editorScale')?.addEventListener('input',e=>{
   const text=$('editorScaleText');

@@ -45,6 +45,13 @@ Routes are labelled:
 
 Click a visible waypoint or choose it from the list. You can then drag it, or edit X/Y, sequence, the high-bit flag and link target/delta numerically. Physical waypoint ID and logical sequence are deliberately kept separate. Edits are automatically re-encoded into the complemented stored representation.
 
+Two optional research overlays sit directly below **Sequence groups**:
+
+- **Bit-7 flags** — adds a white outer ring around each visible physical waypoint whose independent high bit is set. This deliberately does not assign a gameplay meaning to the flag; it is a visual aid for spotting geometric/contextual patterns.
+- **Link deltas ≠ +6** — draws cyan directional arrows from each source waypoint to its route-local decoded link target only when the signed relative displacement is not the ordinary `+6`. The signed byte delta is labelled on the arrow, making branches, backward links and larger skips easy to inspect without duplicating every normal adjacent link.
+
+These research overlays respect Route A/B/C visibility and the current waypoint projection. The cyan overlay remains route-local, matching the editor's existing route-link display safeguard.
+
 ## Surface and foreground editing
 
 The established +1/+2 circuit resources can now be edited directly on the circuit.
