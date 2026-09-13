@@ -495,6 +495,44 @@ function routeLocalWaypointMap(set){
   if(set.boundaryPoint&&!set.boundaryPoint.zeroSentinel)by.set(set.boundaryPoint.runtimeAddress,set.boundaryPoint);
   return by;
 }
+
+function researchPointByAddress(addr){
+  for(const set of researchWaypoints||[]){
+    const p=(set.points||[]).find(q=>q.runtimeAddress===addr);
+    if(p)return p;
+  }
+  return null;
+}
+function syncSelectedResearchPointFromEditor(){
+  if(!researchWaypoints)return false;
+  const addr=Number($('wpSelectList')?.value);
+  if(!addr)return false;
+  const p=researchPointByAddress(addr);
+  if(!p)return false;
+
+  const x=Number($('editWpX')?.value),y=Number($('editWpY')?.value);
+  const progress=Number($('editWpProgress')?.value),linkDelta=Number($('editWpDelta')?.value);
+  if(Number.isFinite(x))p.x=x;
+  if(Number.isFinite(y))p.y=y;
+  if(Number.isFinite(progress))p.progress=progress;
+  p.progressFlag=!!$('editWpFlag')?.checked;
+  if(Number.isFinite(linkDelta)){
+    p.linkDelta=linkDelta;
+    p.linkTarget=p.runtimeAddress+linkDelta;
+  }
+  return true;
+}
+function resetResearchWaypointsFromLayerModel(){
+  if(!model)return;
+  raceRecords=T.parseRaceRecords(model.main);
+  raceRecords.forEach(r=>{
+    r.baseResourceId=T.raceBaseResourceId(r,model.resourceTableOffset+0x1000);
+    r.waypointDescriptors=T.parseWaypointDescriptors(model.main,r);
+  });
+  const base=T.TRACK_BASE_IDS[currentIndex];
+  researchWaypoints=raceRecords.find(r=>r.baseResourceId===base)?.waypointDescriptors||null;
+  queueRedraw(true);
+}
 function drawCyanArrow(a,b,label,S){
   const ax=a.x*S,ay=a.y*S,bx=b.x*S,by=b.y*S,dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy);
   if(len<2*S)return;
@@ -858,6 +896,18 @@ magnifierCanvas.addEventListener('pointerup',e=>endMagnifierGesture(e,false));
 magnifierCanvas.addEventListener('pointercancel',e=>endMagnifierGesture(e,true));
 
 view.addEventListener('pointermove',patchNormalCursor);
+// app.js updates the waypoint editor fields before this listener runs. Mirror those
+// live values into the research overlay model so Bit-7 rings and Link-delta arrows
+// follow waypoint drag previews immediately instead of remaining at the loaded position.
+view.addEventListener('pointermove',()=>{
+  if(!editMode&&$('showWaypoints')?.checked&&syncSelectedResearchPointFromEditor())queueRedraw();
+});
+view.addEventListener('pointerup',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
+view.addEventListener('pointercancel',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
+$('applyWaypoint')?.addEventListener('click',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
+$('revertWaypoint')?.addEventListener('click',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
+$('revertAll')?.addEventListener('click',()=>setTimeout(resetResearchWaypointsFromLayerModel,0));
+
 for(const id of ['showBg','backgroundOpacity','paletteMode','showHeading','headingDensity']){
   $(id)?.addEventListener(id==='backgroundOpacity'?'input':'change',()=>queueRedraw());
 }

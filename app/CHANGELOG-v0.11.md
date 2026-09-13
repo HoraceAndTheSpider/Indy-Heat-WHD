@@ -29,3 +29,4 @@
 - Corrected right-click painting: Foreground now always toggles to the opposite selected value (Foreground ↔ Clear), while Surface right-click always paints Normal.
 - Added optional Bit-7 flag visualisation: flagged waypoints receive an extra white outer ring.
 - Added an optional cyan directional overlay for route-local waypoint links whose signed Link delta is not +6; arrows point source → target and are labelled with the byte delta.
+- Fixed Bit-7 rings and Link-delta arrows so they follow live waypoint drag/edit changes instead of remaining at the originally loaded coordinates.
