@@ -56,11 +56,11 @@
         <div id="sequenceSummary" class="sequenceSummary mini muted">Sequence summary unavailable.</div>
       </div>
 
-      <label><input id="showHeading" type="checkbox"> Recovery arrows</label>
-      <div class="indent compactSubcontrols">
-        <label class="inlineControl">Arrow density
-          <select id="headingDensity"><option value="1">Every cell</option><option value="2" selected>Every 2nd cell</option><option value="4">Every 4th cell</option></select>
-        </label>
+      <div id="legacyRecoveryControls" hidden>
+        <input id="showHeading" type="checkbox">
+        <select id="headingDensity"><option value="1" selected>Every cell</option></select>
+        <input id="headingPhase" type="range" min="0" max="255" value="0"><span id="phaseText">0</span>
+        <input id="headingReverse" type="checkbox">
       </div>
       <label id="masterZoomControl">Master Circuit Zoom
         <div class="masterZoomSlider">
@@ -125,8 +125,9 @@
         <p><b>Select</b> a visible waypoint by clicking it, or choose it from the Waypoint list. Hidden waypoint layers cannot be selected.</p>
         <p><b>Drag</b> a visible waypoint to move it. The editor converts the dragged screen position back to the game's waypoint coordinates and records the edit when you release the pointer.</p>
         <p><b>Right-click</b> a visible waypoint in Waypoint mode to toggle its <b>AI Turbo marker</b>. This changes waypoint <code>+2</code> bit 7 only; X/Y, Sequence and Link Delta are preserved.</p>
-        <p><b>Editor column</b> sits to the right of the circuit. Master Circuit Zoom and Overlay opacity are always at the top, followed by explicit editor modes: <b>Waypoints</b>, <b>Surface</b> and <b>Foreground</b>.</p>
-        <p><b>Waypoint mode</b> shows the waypoint editor and enables normal click/drag waypoint editing. <b>Surface</b> and <b>Foreground</b> modes hide the waypoint editor and show the drawing tools for the selected bitmap layer. These modes are mutually exclusive.</p>
+        <p><b>Editor column</b> sits to the right of the circuit. Master Circuit Zoom and Overlay opacity are always at the top, followed by explicit editor modes: <b>Waypoints</b>, <b>Surface</b>, <b>Foreground</b> and <b>Recovery</b>.</p>
+        <p><b>Waypoint mode</b> shows the waypoint editor and enables normal click/drag waypoint editing. <b>Surface</b> and <b>Foreground</b> modes hide the waypoint editor and show the drawing tools for the selected bitmap layer. <b>Recovery</b> shows the code-proven collision-recovery direction field and its limited editing controls. These modes are mutually exclusive.</p>
+        <p><b>Recovery editing</b> uses the authentic 40×28 <code>+3</code> byte grid. Full-strength arrows are cells whose 8×8 area intersects Surface class 1 (Edge / collision); stored arrows with no current class-1 intersection can optionally remain visible at low opacity. Raw <code>$00/$40/$80/$C0</code> point right/up/left/down respectively. Left-click rotates anti-clockwise by the selected step and right-click rotates clockwise. <b>Grab group</b> temporarily changes left-click into an add/remove selection action, so any non-adjacent set of arrows can be built. Leave Grab group to rotate the retained group with normal left/right clicks; <b>Clear group</b> returns immediately to single-arrow editing. Undo and Revert +3 are local to this layer.</p>
         <p><b>Magnified Area</b> uses a 64×64-pixel source window. Click the magnifying-glass button, position the frame over the circuit, and the magnified window updates. The same drawing tools work directly inside it. Toggling the magnifying glass off clears the magnified window to black.</p>
         <p><b>Drawing tools</b> are icon radio-buttons for freehand, line, outlined or filled rectangle/square, outlined or filled ellipse/circle, and fill. Area to Paint is selected with radio-buttons. Brush size uses a 1–9 slider and brush shape is a Square/Circle toggle. Foreground also has a <b>Hatched 1/1</b> pattern: one pixel on, one pixel off at a fixed frequency; increasing brush size enlarges the hatch area without enlarging the hatch pixels. Right-click uses the current tool and brush as the secondary paint action: in Foreground mode it always paints the opposite of the selected value (Foreground ↔ Clear); in Surface mode it always paints Normal.</p>
         <p><b>Surface painting</b> always works on the real 160×112 logical grid, so one brush unit remains exactly 2×2 game pixels. Foreground painting works at the original 320×256 single-pixel resolution.</p>
@@ -152,12 +153,6 @@
           </div>
           <pre id="wpFitStats" class="mini mono">fit metrics unavailable</pre>
         </div>
-        <div>
-          <h3>Recovery arrow orientation</h3>
-          <label>Phase <input id="headingPhase" type="range" min="0" max="255" value="192"><span id="phaseText">192</span></label>
-          <label><input id="headingReverse" type="checkbox"> Reverse rotation</label>
-          <p class="mini muted">These controls are retained for research comparison; ordinary editing does not require them.</p>
-        </div>
       </div>
     </details>
 
@@ -180,7 +175,7 @@
       <div class="prose">
         <p><b>+1</b> is the 320×256 foreground/occlusion mask. The bitmap starts at byte 0; the four extra bytes in $2804 variants trail the bitmap.</p>
         <p><b>+2</b> is a packed 2-bit surface map at 160×112 logical cells, covering the 320×224 gameplay area at 2×2 pixels per cell.</p>
-        <p><b>+3</b> is a 40×28 recovery/heading lookup, one value per 8×8 gameplay cell.</p>
+        <p><b>+3</b> is the code-proven 40×28 collision-recovery direction field, one angle byte per 8×8 gameplay cell. The traced race-physics consumer consults it when the corresponding <code>+2</code> Surface lookup returns class 1 (Edge / collision). The byte is used directly as a 256-step circle value; no display phase or reverse option is part of the game data. On the circuit view <code>$00/$40/$80/$C0</code> point right/up/left/down.</p>
         <p>Stored six-byte waypoint records are complemented before race use: each runtime byte is the stored byte XOR <code>$FF</code>. The decoded record contains signed X, a logical sequence/progress value plus the AI Turbo high-bit marker, signed Y and a signed relative Link Delta.</p>
         <p>The physical waypoint ID is not the lap order. Sequence (<code>+2 &amp; $7F</code>) is the logical progress value and may legitimately be shared by several physical waypoints.</p>
         <p>The Link Delta at <code>+4.w</code> is the code-proven explicit next-node pointer displacement. <code>+6</code> is ordinary physical succession only because each waypoint record is six bytes.</p>
@@ -199,9 +194,11 @@
   </div>
 </main>
 <script src="indyheat.js"></script>
+<script src="recovery-hook.js"></script>
 <script src="layer-tools.js"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js"></script>
 <script src="waypoint-actions.js"></script>
+<script src="recovery-editor.js"></script>
 </body>
 </html>
