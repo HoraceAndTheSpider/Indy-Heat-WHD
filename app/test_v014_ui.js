@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('fs'),assert=require('assert');
+const hook=fs.readFileSync('recovery-hook.js','utf8');
+const backdrop=fs.readFileSync('track-backdrop.js','utf8');
+assert(hook.includes('IndyHeatEditorBridge'));
+assert(hook.includes('coreTrackChangeListener'));
+assert(hook.includes("type==='change' && !captureOption"));
+assert(hook.includes('refreshSelectedTrack()'));
+assert(hook.includes('restoreTrackAddListener'));
+assert(backdrop.includes('bridge.refreshSelectedTrack()'));
+assert(backdrop.includes("replace(/v0\\.(?:11|12|13)/i,'v0.14')"));
+assert(!backdrop.includes("function redrawTrack(){const sel=$('trackSelect');if(!sel)return;sel.dispatchEvent"));
+console.log('v0.14 backdrop refresh bridge UI regression tests OK');

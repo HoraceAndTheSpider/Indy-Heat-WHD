@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Indy Heat Car Graphics Probe</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111;color:#eee;margin:0;padding:24px;line-height:1.4}
+  main{max-width:900px;margin:auto}
+  h1{font-size:1.6rem;margin-top:0}
+  p{color:#ccc}
+  .panel{background:#1b1b1b;border:1px solid #444;border-radius:10px;padding:18px;margin:16px 0}
+  input,button{font:inherit}
+  input[type=file]{display:block;margin:12px 0}
+  button{padding:10px 16px;border:0;border-radius:8px;background:#eee;color:#111;cursor:pointer;font-weight:600}
+  button:disabled{opacity:.45;cursor:default}
+  #status{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#090909;padding:14px;border-radius:8px;min-height:120px;overflow:auto}
+  .ok{color:#95d995}.bad{color:#ff9999}
+</style>
+<script src="./indyheat.js"></script>
+<script src="./indyheat_race_graphics.js"></script>
+</head>
+<body>
+<main>
+<h1>Indy Heat — car atlas / full-page graphics probe</h1>
+<p>This is a read-only research tool. It does not change <code>Disk.1</code> or any editor file. It uses the current <code>indyheat.js</code> and <code>indyheat_race_graphics.js</code> beside this HTML file.</p>
+
+<div class="panel">
+  <strong>1. Choose the repository's <code>whdload/data/Disk.1</code></strong>
+  <input id="disk" type="file">
+  <button id="run" disabled>Run car atlas search</button>
+</div>
+
+<div class="panel">
+  <strong>Status</strong>
+  <div id="status">Waiting for Disk.1…</div>
+</div>
+
+<div class="panel">
+  <strong>What happens next</strong>
+  <p>When the scan finishes, the browser downloads <code>indyheat_car_atlas_probe_output.zip</code>. Send that ZIP back to ChatGPT. The ZIP contains a text summary, JSON evidence, raw focus resources and review PNGs generated only from bytes in <code>Disk.1</code>.</p>
+</div>
+</main>
+
+<script>
+'use strict';
+
+const $ = s => document.querySelector(s);
+const diskInput = $('#disk');
+const runButton = $('#run');
+const statusEl = $('#status');
+let selectedFile = null;
+
+function log(s){ statusEl.textContent += (statusEl.textContent ? '\n' : '') + s; statusEl.scrollTop=statusEl.scrollHeight; }
+function setStatus(s){ statusEl.textContent=s; }
+function hex(v,n=4){ return '$'+(Number(v)>>>0).toString(16).toUpperCase().padStart(n,'0'); }
+function s8(v){ return v & 0x80 ? v-0x100 : v; }
+function s16(v){ return v & 0x8000 ? v-0x10000 : v; }
+function be16(b,o){ return ((b[o]<<8)|b[o+1])>>>0; }
+function be32(b,o){ return (((be16(b,o)<<16)>>>0)|be16(b,o+2))>>>0; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+diskInput.addEventListener('change',()=>{
+  selectedFile=diskInput.files && diskInput.files[0] || null;
+  runButton.disabled=!selectedFile;
+  setStatus(selectedFile ? `Selected ${selectedFile.name} (${selectedFile.size} bytes).` : 'Waiting for Disk.1…');
+});
+
+function validHeader(data,offset,opts={}){
+  if(offset<0 || offset+12>data.length) return null;
+  const width=be16(data,offset);
+  const height=be16(data,offset+2);
+  const rawX=be16(data,offset+4);
+  const rawY=be16(data,offset+6);
+  const transparent=be16(data,offset+8);
+  const planes=be16(data,offset+10);
+  const xOrigin=s16(rawX), yOrigin=s16(rawY);
+  const maxDim=opts.maxDim || 96;
+  if(width<2 || width>maxDim || height<2 || height>maxDim) return null;
+  if(planes<1 || planes>5) return null;
+  if(transparent >= (1<<planes)) return null;
+  if(Math.abs(xOrigin)>128 || Math.abs(yOrigin)>128) return null;
+  const rowBytes=Math.ceil(width/16)*2;
+  const planeBytes=rowBytes*height;
+  const byteLength=12+planeBytes*planes;
+  if(offset+byteLength>data.length) return null;
+  return {offset,width,height,xOrigin,yOrigin,transparentSourceIndex:transparent,
+          planes,rowBytes,planeBytes,byteLength,end:offset+byteLength};
+}
+
+function findBobChains(data,resourceId){
+  const headers=new Map();
+  for(let off=0;off+12<=data.length;off+=2){
+    const h=validHeader(data,off);
+    if(h) headers.set(off,h);
+  }
+  const ends=new Set(Array.from(headers.values(),h=>h.end));
+  const chains=[];
+  for(const [off,h0] of headers){
+    if(ends.has(off)) continue;
+    const frames=[];
+    let p=off;
+    while(headers.has(p) && frames.length<2048){
+      const h=headers.get(p);
+      frames.push(h);
+      p=h.end;
+    }
+    if(frames.length>=2){
+      const fourPlane=frames.filter(f=>f.planes===4).length;
+      const fivePlane=frames.filter(f=>f.planes===5).length;
+      const carSize=frames.filter(f=>f.width>=8&&f.width<=48&&f.height>=8&&f.height<=48).length;
+      const commonDims={};
+      for(const f of frames){
+        const k=`${f.width}x${f.height}x${f.planes}`;
+        commonDims[k]=(commonDims[k]||0)+1;
+      }
+      const bestDim=Object.entries(commonDims).sort((a,b)=>b[1]-a[1])[0]||['',0];
+      let score=frames.length*10 + fourPlane*8 + carSize*5 + bestDim[1]*4;
+      if(resourceId===0x38) score+=500;
+      if(resourceId===0x01) score+=40;
+      if(frames.length>=16) score+=50;
+      chains.push({
+        resourceId,start:off,end:p,byteLength:p-off,frameCount:frames.length,
+        fourPlane,fivePlane,carSizeFrames:carSize,
+        dominantDimensions:bestDim[0],dominantCount:bestDim[1],
+        planeSet:Array.from(new Set(frames.map(f=>f.planes))).sort(),
+        score,frames
+      });
+    }
+  }
+  const isolated=[];
+  if(resourceId===0x01 || resourceId===0x38){
+    for(const h of headers.values()){
+      if(h.planes===4 && h.width>=8&&h.width<=48&&h.height>=8&&h.height<=48)
+        isolated.push(h);
+    }
+  }
+  chains.sort((a,b)=>b.score-a.score);
+  return {headerCount:headers.size,chains,isolated};
+}
+
+function classifyWholeBank(data,id){
+  try{
+    const bank=IndyHeatRaceGraphics.decodeBank(data,{resourceId:id,strict:true});
+    return {valid:true,frameCount:bank.frameCount,
+      dimensions:Array.from(new Set(bank.frames.map(f=>`${f.width}x${f.height}x${f.planes}`))).slice(0,30)};
+  }catch(e){ return {valid:false,error:String(e && e.message || e)}; }
+}
+
+function extractResourceBytes(model,id){
+  const entry=model.resources[id];
+  if(!entry || entry.id!==id) throw new Error(`Resource ${hex(id,2)} missing from directory`);
+  try{
+    const resource=model.getResource(id);
+    return {id,entry,data:resource.data,kind:'imploder',diskOffset:entry.sector*512,
+            physicalBytes:entry.sectors*512,block:resource.block};
+  }catch(error){
+    const diskOffset=entry.sector*512;
+    const physicalBytes=entry.sectors*512;
+    if(diskOffset<0 || diskOffset>=model.disk.length || physicalBytes<=0) throw error;
+    const available=Math.min(physicalBytes,model.disk.length-diskOffset);
+    const candidates=[entry.readSize,entry.outLen].map(Number)
+      .filter(v=>Number.isInteger(v)&&v>0&&v<=available);
+    const length=candidates.length?candidates[0]:available;
+    return {id,entry,data:model.disk.slice(diskOffset,diskOffset+length),
+            kind:'raw-directory-slice',diskOffset,physicalBytes:available,
+            decoderError:String(error && error.message || error)};
+  }
+}
+
+function resourcePointerFieldAddress(model,id){
+  return 0x1000 + model.resourceTableOffset + id*22 + 14;
+}
+function resourceEntryAddress(model,id){
+  return 0x1000 + model.resourceTableOffset + id*22;
+}
+function knownNonCar(id){
+  if(id===0x00) return true;
+  if(id>=0x05 && id<=0x17) return true;
+  for(const base of IndyHeatTools.TRACK_BASE_IDS){
+    if(id>=base && id<=base+3) return true;
+  }
+  return false;
+}
+function bytesHex(b,start,end){
+  const s=[];
+  for(let i=Math.max(0,start);i<Math.min(b.length,end);i++)
+    s.push(b[i].toString(16).padStart(2,'0'));
+  return s.join(' ').toUpperCase();
+}
+function decodeLikelyAbsoluteRefOpcode(op){
+  const low=op&0x3f;
+  const ea=low===0x38?'abs.w':low===0x39?'abs.l':null;
+  if(!ea) return null;
+  if((op&0xf1c0)===0x2040) return `MOVEA.L ${ea},A${(op>>9)&7}`;
+  if((op&0xf1c0)===0x3040) return `MOVEA.W ${ea},A${(op>>9)&7}`;
+  if((op&0xf000)===0x2000) return `MOVE.L ${ea},D${(op>>9)&7}`;
+  if((op&0xf000)===0x3000) return `MOVE.W ${ea},D${(op>>9)&7}`;
+  if((op&0xf1c0)===0x41c0) return `LEA ${ea},A${(op>>9)&7}`;
+  if(op===0x4878||op===0x4879) return `PEA ${ea}`;
+  return null;
+}
+function scanAddressReferences(main,address){
+  const refs=[];
+  const w=address&0xffff, wb=[w>>8,w&255];
+  const lb=[(address>>>24)&255,(address>>>16)&255,(address>>>8)&255,address&255];
+  for(let i=0;i+2<=main.length;i+=2){
+    if(main[i]===wb[0]&&main[i+1]===wb[1]){
+      let kind='word-literal',op=null;
+      if(i>=2){
+        const opcode=be16(main,i-2),label=decodeLikelyAbsoluteRefOpcode(opcode);
+        if(label&&label.includes('abs.w')){kind='absolute-word-operand';op=label;}
+      }
+      refs.push({mainOffset:i,runtimeAddress:0x1000+i,kind,opcode:op,
+                 context:bytesHex(main,i-10,i+12)});
+    }
+    if(i+4<=main.length&&main[i]===lb[0]&&main[i+1]===lb[1]&&
+       main[i+2]===lb[2]&&main[i+3]===lb[3]){
+      let kind='long-literal',op=null;
+      if(i>=2){
+        const opcode=be16(main,i-2),label=decodeLikelyAbsoluteRefOpcode(opcode);
+        if(label&&label.includes('abs.l')){kind='absolute-long-operand';op=label;}
+        if(opcode===0x4eb9){kind='JSR-absolute-long';op='JSR abs.l';}
+        if(opcode===0x4ef9){kind='JMP-absolute-long';op='JMP abs.l';}
+      }
+      refs.push({mainOffset:i,runtimeAddress:0x1000+i,kind,opcode:op,
+                 context:bytesHex(main,i-10,i+14)});
+    }
+  }
+  return refs;
+}
+function scanCallers(main,targetRuntime){
+  const callers=[],base=0x1000;
+  for(let off=0;off+2<=main.length;off+=2){
+    const op=be16(main,off),rt=base+off;
+    if((op&0xff00)===0x6100){
+      const d8=op&0xff; let target,bytes;
+      if(d8===0&&off+4<=main.length){ target=rt+2+s16(be16(main,off+2)); bytes=4; }
+      else{ target=rt+2+s8(d8); bytes=2; }
+      if((target&0xffffff)===targetRuntime)
+        callers.push({type:'BSR',mainOffset:off,runtimeAddress:rt,target,bytes,
+                      context:bytesHex(main,off-12,off+18)});
+    }else if(op===0x4eb8&&off+4<=main.length){
+      const target=s16(be16(main,off+2))&0xffffffff;
+      if((target&0xffff)===targetRuntime)
+        callers.push({type:'JSR abs.w',mainOffset:off,runtimeAddress:rt,target,
+                      context:bytesHex(main,off-12,off+18)});
+    }else if(op===0x4eb9&&off+6<=main.length){
+      const target=be32(main,off+2);
+      if(target===targetRuntime)
+        callers.push({type:'JSR abs.l',mainOffset:off,runtimeAddress:rt,target,
+                      context:bytesHex(main,off-12,off+20)});
+    }
+  }
+  return callers;
+}
+function scanOffsetPointerTables(data,minCount=8){
+  const tables=[];
+  for(let off=0;off+minCount*4<=data.length;off+=2){
+    const vals=[]; let p=off,last=-1;
+    while(p+4<=data.length&&vals.length<512){
+      const v=be32(data,p);
+      if(v>=data.length||v<=last||(v&1)) break;
+      vals.push(v);last=v;p+=4;
+    }
+    if(vals.length>=minCount){
+      tables.push({offset:off,count:vals.length,first:vals[0],last:vals[vals.length-1],
+                   sample:vals.slice(0,16)});
+      off+=vals.length*4-2;
+    }
+  }
+  return tables;
+}
+
+async function contactSheetBlob(data,chain,paletteRgb){
+  const hs=chain.frames.filter(f=>f.planes===4||f.planes===5);
+  if(!hs.length) return null;
+  const maxW=Math.max(...hs.map(f=>f.width)),maxH=Math.max(...hs.map(f=>f.height));
+  const scale=(maxW<=32&&maxH<=32)?3:2,pad=4;
+  const cols=Math.min(16,Math.max(1,Math.ceil(Math.sqrt(hs.length))));
+  const rows=Math.ceil(hs.length/cols),cellW=maxW*scale+pad*2,cellH=maxH*scale+pad*2;
+  const c=document.createElement('canvas'); c.width=cols*cellW;c.height=rows*cellH;
+  const ctx=c.getContext('2d'); ctx.clearRect(0,0,c.width,c.height);
+  for(let fi=0;fi<hs.length;fi++){
+    const h=hs[fi]; let frame,img;
+    try{
+      frame=IndyHeatRaceGraphics.decodeFrame(data,h.offset,fi);
+      img=IndyHeatRaceGraphics.frameToRgba(frame,paletteRgb);
+    }catch(_){continue;}
+    const tmp=document.createElement('canvas');tmp.width=h.width;tmp.height=h.height;
+    const tx=tmp.getContext('2d');
+    const id=tx.createImageData(h.width,h.height);id.data.set(img.rgba);tx.putImageData(id,0,0);
+    const cx=fi%cols,cy=Math.floor(fi/cols);
+    const ox=cx*cellW+pad+Math.floor((maxW-h.width)*scale/2);
+    const oy=cy*cellH+pad+Math.floor((maxH-h.height)*scale/2);
+    ctx.imageSmoothingEnabled=false;
+    ctx.drawImage(tmp,ox,oy,h.width*scale,h.height*scale);
+  }
+  return await new Promise(resolve=>c.toBlob(resolve,'image/png'));
+}
+
+
+
+function decodeFullPageLayout(data,layout){
+  const width=320,height=256,planes=5,rowBytes=40,wordsPerRow=20;
+  if(!data || data.length!==width*height*planes/8)
+    throw new Error(`full-page decode needs exactly 51200 bytes, got ${data?data.length:0}`);
+  const px=new Uint8Array(width*height);
+  for(let y=0;y<height;y++){
+    for(let x=0;x<width;x++){
+      const byteInRow=x>>>3, bitMask=0x80>>>(x&7), word=x>>>4, byteInWord=(x>>>3)&1;
+      let v=0;
+      for(let p=0;p<planes;p++){
+        let o;
+        if(layout==='plane-major') o=p*(rowBytes*height)+y*rowBytes+byteInRow;
+        else if(layout==='row-interleaved') o=(y*planes+p)*rowBytes+byteInRow;
+        else if(layout==='word-interleaved') o=y*(wordsPerRow*planes*2)+word*(planes*2)+p*2+byteInWord;
+        else throw new Error(`unknown full-page layout ${layout}`);
+        if(data[o]&bitMask) v|=1<<p;
+      }
+      px[y*width+x]=v;
+    }
+  }
+  return {width,height,planes,pixels:px,layout};
+}
+
+function pageStats(page){
+  const hist=new Array(32).fill(0);
+  for(const p of page.pixels) hist[p]++;
+  let dominant=0;
+  for(let i=1;i<hist.length;i++) if(hist[i]>hist[dominant]) dominant=i;
+  const used=hist.map((count,index)=>({index,count})).filter(x=>x.count>0);
+  return {layout:page.layout,dominantIndex:dominant,dominantCount:hist[dominant],used};
+}
+
+async function indexedPageBlob(page,paletteRgb,{scale=1,grid=0}={}){
+  const c=document.createElement('canvas'); c.width=page.width*scale;c.height=page.height*scale;
+  const ctx=c.getContext('2d');
+  const tmp=document.createElement('canvas');tmp.width=page.width;tmp.height=page.height;
+  const tx=tmp.getContext('2d');const id=tx.createImageData(page.width,page.height);
+  for(let i=0;i<page.pixels.length;i++){
+    const rgb=paletteRgb[page.pixels[i]]||[255,0,255],o=i*4;
+    id.data[o]=rgb[0];id.data[o+1]=rgb[1];id.data[o+2]=rgb[2];id.data[o+3]=255;
+  }
+  tx.putImageData(id,0,0);ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(tmp,0,0,c.width,c.height);
+  if(grid>0){
+    ctx.save();ctx.strokeStyle='rgba(255,255,255,.32)';ctx.lineWidth=1;
+    for(let x=grid*scale;x<c.width;x+=grid*scale){ctx.beginPath();ctx.moveTo(x+.5,0);ctx.lineTo(x+.5,c.height);ctx.stroke();}
+    for(let y=grid*scale;y<c.height;y+=grid*scale){ctx.beginPath();ctx.moveTo(0,y+.5);ctx.lineTo(c.width,y+.5);ctx.stroke();}
+    ctx.restore();
+  }
+  return await new Promise(resolve=>c.toBlob(resolve,'image/png'));
+}
+
+async function bitplaneBlob(page,plane,{scale=1}={}){
+  const c=document.createElement('canvas');c.width=page.width*scale;c.height=page.height*scale;
+  const ctx=c.getContext('2d');const tmp=document.createElement('canvas');tmp.width=page.width;tmp.height=page.height;
+  const tx=tmp.getContext('2d');const id=tx.createImageData(page.width,page.height);
+  for(let i=0;i<page.pixels.length;i++){
+    const on=(page.pixels[i]>>>plane)&1,o=i*4,v=on?255:0;
+    id.data[o]=id.data[o+1]=id.data[o+2]=v;id.data[o+3]=255;
+  }
+  tx.putImageData(id,0,0);ctx.imageSmoothingEnabled=false;ctx.drawImage(tmp,0,0,c.width,c.height);
+  return await new Promise(resolve=>c.toBlob(resolve,'image/png'));
+}
+
+function utf8(s){ return new TextEncoder().encode(s); }
+function concatArrays(arrs){
+  const n=arrs.reduce((a,b)=>a+b.length,0),out=new Uint8Array(n);let p=0;
+  for(const a of arrs){out.set(a,p);p+=a.length;} return out;
+}
+const CRC_TABLE=(()=>{
+  const t=new Uint32Array(256);
+  for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0;}
+  return t;
+})();
+function crc32(bytes){let c=0xffffffff;for(const b of bytes)c=CRC_TABLE[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
+function le16(v){const b=new Uint8Array(2);new DataView(b.buffer).setUint16(0,v,true);return b;}
+function le32(v){const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,v>>>0,true);return b;}
+function dosTimeDate(d=new Date()){
+  const time=((d.getHours()&31)<<11)|((d.getMinutes()&63)<<5)|((Math.floor(d.getSeconds()/2))&31);
+  const date=(((d.getFullYear()-1980)&127)<<9)|(((d.getMonth()+1)&15)<<5)|(d.getDate()&31);
+  return {time,date};
+}
+async function toBytes(data){
+  if(data instanceof Uint8Array) return data;
+  if(typeof data==='string') return utf8(data);
+  if(data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+  return new Uint8Array(data);
+}
+async function makeZip(files){
+  const locals=[],centrals=[];let offset=0;const dt=dosTimeDate();
+  for(const f of files){
+    const name=utf8(f.name),data=await toBytes(f.data),crc=crc32(data);
+    const local=concatArrays([
+      le32(0x04034b50),le16(20),le16(0),le16(0),le16(dt.time),le16(dt.date),
+      le32(crc),le32(data.length),le32(data.length),le16(name.length),le16(0),name,data
+    ]);
+    locals.push(local);
+    const central=concatArrays([
+      le32(0x02014b50),le16(20),le16(20),le16(0),le16(0),le16(dt.time),le16(dt.date),
+      le32(crc),le32(data.length),le32(data.length),le16(name.length),le16(0),le16(0),
+      le16(0),le16(0),le32(0),le32(offset),name
+    ]);
+    centrals.push(central);offset+=local.length;
+  }
+  const centralData=concatArrays(centrals);
+  const end=concatArrays([
+    le32(0x06054b50),le16(0),le16(0),le16(files.length),le16(files.length),
+    le32(centralData.length),le32(offset),le16(0)
+  ]);
+  return new Blob([...locals,centralData,end],{type:'application/zip'});
+}
+function downloadBlob(blob,name){
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+
+runButton.addEventListener('click',async()=>{
+  runButton.disabled=true;
+  try{
+    if(!globalThis.IndyHeatTools||!globalThis.IndyHeatRaceGraphics)
+      throw new Error('Could not load indyheat.js / indyheat_race_graphics.js. Put this HTML file in the app/ folder beside both scripts.');
+    if(!selectedFile) throw new Error('Choose Disk.1 first.');
+    setStatus('Reading Disk.1…');
+    const disk=new Uint8Array(await selectedFile.arrayBuffer());
+    if(disk.length!==901120)
+      throw new Error(`Unexpected Disk.1 size ${disk.length}; expected 901120 bytes.`);
+
+    log('Parsing authoritative disk and resource directory…');
+    const model=IndyHeatTools.makeDiskModel(disk);
+    const palette=IndyHeatRaceGraphics.paletteFromMain(model.main);
+    log(`Main ${hex(model.main.length,5)}; ${model.resources.length} resources; ${model.blocks.length} Imploder blocks.`);
+
+    const report={
+      generatedAt:new Date().toISOString(),
+      disk:{name:selectedFile.name,size:disk.length,imploderBlocks:model.blocks.length,
+            mainLength:model.main.length,resourceTableOffset:model.resourceTableOffset,
+            resourceCount:model.resources.length},
+      palette:{mainOffset:palette.offset,words:palette.words},
+      resources:[],shortlist:[],resource01:null,resource38:null,atlasPages:{},
+      mainResourceReferences:{},drawPathCallers:{},
+      notes:[
+        'All review images contain only pixels decoded from Disk.1.',
+        'No FlagMan.iff or screenshot pixels are used.',
+        'Visual resemblance alone is not treated as proof of racing-car identity.'
+      ]
+    };
+    const files=[],allChains=[];
+    files.push({name:'raw_focus_resources/main_decrunched_01206A.bin',data:model.main});
+
+    for(let id=0;id<model.resources.length;id++){
+      if((id&7)===0){ log(`Scanning resource ${hex(id,2)}…`); await sleep(0); }
+      const entry=model.resources[id];
+      const rec={id,hexId:hex(id,2),entry:{
+        sector:entry.sector,sectors:entry.sectors,outLen:entry.outLen,
+        readSize:entry.readSize,runtimePtr:entry.runtimePtr,allocSize:entry.allocSize
+      },pointerFieldRuntime:resourcePointerFieldAddress(model,id),
+        entryRuntime:resourceEntryAddress(model,id)};
+      try{
+        const r=extractResourceBytes(model,id);
+        rec.loaded=true;rec.storageKind=r.kind;rec.diskOffset=r.diskOffset;
+        rec.physicalBytes=r.physicalBytes;rec.actualLength=r.data.length;
+        if(r.decoderError)rec.decoderError=r.decoderError;
+        rec.wholeBank=classifyWholeBank(r.data,id);
+        const scan=findBobChains(r.data,id);
+        rec.headerCount=scan.headerCount;
+        rec.chains=scan.chains.map(c=>({
+          start:c.start,end:c.end,byteLength:c.byteLength,frameCount:c.frameCount,
+          fourPlane:c.fourPlane,fivePlane:c.fivePlane,carSizeFrames:c.carSizeFrames,
+          dominantDimensions:c.dominantDimensions,dominantCount:c.dominantCount,
+          planeSet:c.planeSet,score:c.score
+        }));
+        if(id===0x01){
+          rec.offsetPointerTables=scanOffsetPointerTables(r.data,8);
+          rec.isolatedCarLikeHeaders=scan.isolated.slice(0,500);
+          report.resource01={
+            storageKind:r.kind,entry:rec.entry,actualLength:r.data.length,
+            wholeBank:rec.wholeBank,headerCount:scan.headerCount,chains:rec.chains,
+            offsetPointerTables:rec.offsetPointerTables,
+            isolatedCarLikeHeaderCount:scan.isolated.length
+          };
+        }
+        if(id===0x38){
+          report.resource38={
+            storageKind:r.kind,entry:rec.entry,actualLength:r.data.length,
+            wholeBank:rec.wholeBank,headerCount:scan.headerCount,chains:rec.chains,
+            isolatedCarLikeHeaderCount:scan.isolated.length
+          };
+        }
+        for(const c of scan.chains){
+          c.resourceData=r.data;c.knownNonCar=knownNonCar(id);allChains.push(c);
+        }
+        if((id>=0x02&&id<=0x04)||(id>=0x24&&id<=0x39)||id===0x01||id===0x38){
+          files.push({name:`raw_focus_resources/R${id.toString(16).toUpperCase().padStart(2,'0')}_${r.kind}.bin`,data:r.data});
+        }
+      }catch(e){rec.loaded=false;rec.error=String(e&&e.message||e);}
+      report.resources.push(rec);
+    }
+
+    log('Rendering the three $C800 common full-page candidates $02/$03/$04…');
+    for(const id of [0x02,0x03,0x04]){
+      const r=extractResourceBytes(model,id), idhex=id.toString(16).toUpperCase().padStart(2,'0');
+      const rec={resourceId:id,byteLength:r.data.length,layouts:{}};
+      for(const layout of ['plane-major','row-interleaved','word-interleaved']){
+        const page=decodeFullPageLayout(r.data,layout);
+        const stats=pageStats(page); rec.layouts[layout]=stats;
+        const base=`full_page_candidates/R${idhex}_${layout.replaceAll('-','_')}`;
+        files.push({name:`${base}.png`,data:await indexedPageBlob(page,palette.rgb)});
+        if(layout==='plane-major'){
+          files.push({name:`${base}_grid8.png`,data:await indexedPageBlob(page,palette.rgb,{grid:8})});
+          files.push({name:`${base}_grid16.png`,data:await indexedPageBlob(page,palette.rgb,{grid:16})});
+          for(let p=0;p<5;p++) files.push({name:`${base}_plane${p}.png`,data:await bitplaneBlob(page,p)});
+        }
+      }
+      report.atlasPages[hex(id,2)]=rec;
+      await sleep(0);
+    }
+
+    log('Tracing resource-pointer references and draw-area callers…');
+    for(const id of [0x00,0x01,0x02,0x03,0x04,0x05,0x08,0x0A,0x0D,0x0F,0x34,0x35,0x36,0x37,0x38]){
+      const ptr=resourcePointerFieldAddress(model,id),ent=resourceEntryAddress(model,id);
+      report.mainResourceReferences[hex(id,2)]={
+        pointerFieldRuntime:ptr,pointerFieldReferences:scanAddressReferences(model.main,ptr),
+        entryRuntime:ent,entryReferences:scanAddressReferences(model.main,ent)
+      };
+    }
+    for(const t of [0x3748,0x3834,0x397c,0x4748,0x4834,0x497c])
+      report.drawPathCallers[hex(t,4)]=scanCallers(model.main,t);
+
+    const ranked=allChains.slice().sort((a,b)=>{
+      const ap=a.score-(a.knownNonCar?120:0)+(a.resourceId===0x38?1000:0);
+      const bp=b.score-(b.knownNonCar?120:0)+(b.resourceId===0x38?1000:0);
+      return bp-ap;
+    });
+
+    log('Generating review PNGs…');
+    let imageCount=0;
+    for(const c of ranked){
+      if(imageCount>=40)break;
+      if(c.frameCount<2)continue;
+      if(c.fourPlane+c.fivePlane<Math.max(2,Math.floor(c.frameCount*.75)))continue;
+      const adjusted=c.score-(c.knownNonCar?120:0)+(c.resourceId===0x38?1000:0);
+      if(adjusted<45)continue;
+      const idhex=c.resourceId.toString(16).toUpperCase().padStart(2,'0');
+      const fn=`candidate_sheets/R${idhex}_O${c.start.toString(16).toUpperCase().padStart(6,'0')}_N${String(c.frameCount).padStart(3,'0')}.png`;
+      const blob=await contactSheetBlob(c.resourceData,c,palette.rgb);
+      if(blob){
+        files.push({name:fn,data:blob});
+        report.shortlist.push({resourceId:c.resourceId,hexId:hex(c.resourceId,2),
+          start:c.start,frameCount:c.frameCount,dominantDimensions:c.dominantDimensions,
+          score:c.score,knownNonCar:c.knownNonCar,file:fn});
+        imageCount++;
+      }
+      await sleep(0);
+    }
+
+    const summary=[];
+    summary.push('Indy Heat car atlas probe — browser version');
+    summary.push('======================================');
+    summary.push(`Disk ${disk.length} bytes; main ${hex(model.main.length,5)}; resources ${model.resources.length}`);
+    summary.push('');
+    summary.push('Common $C800 candidates $02/$03/$04');
+    summary.push('  Each is exactly 51200 bytes = 320x256x5 planes.');
+    for(const id of [0x02,0x03,0x04]){
+      const key=hex(id,2), a=report.atlasPages[key];
+      const pm=a&&a.layouts&&a.layouts['plane-major'];
+      if(!pm){summary.push(`  ${key}: unavailable`);continue;}
+      const used=pm.used.map(x=>`${x.index}:${x.count}`).join(' ');
+      summary.push(`  ${key}: dominant colour index ${pm.dominantIndex} (${pm.dominantCount} px); used ${used}`);
+      summary.push(`       review full_page_candidates/R${id.toString(16).toUpperCase().padStart(2,'0')}_plane_major.png`);
+    }
+    summary.push('  The ZIP also contains row-interleaved and word-interleaved interpretations, 8/16px grids, five monochrome bitplanes, raw $02-$04 and the complete decrunched main image.');
+    summary.push('');
+    summary.push('Priority target: resource $38');
+    const r38=report.resource38;
+    if(r38){
+      summary.push(`  sector ${r38.entry.sector}; outLen ${r38.entry.outLen} (${hex(r38.entry.outLen,6)})`);
+      summary.push(`  storage ${r38.storageKind}; extracted bytes ${r38.actualLength}`);
+      summary.push(`  strict whole-bank BOB: ${r38.wholeBank.valid?'YES':'no'}`);
+      summary.push(`  plausible headers ${r38.headerCount}; chains ${r38.chains.length}`);
+      for(const c of r38.chains.slice(0,20))
+        summary.push(`    ${hex(c.start,6)}: ${c.frameCount} frames; dominant ${c.dominantDimensions}; 4-plane ${c.fourPlane}; car-size ${c.carSizeFrames}; score ${c.score}`);
+    }else summary.push('  no $38 result');
+    summary.push('');
+    summary.push('Resource-directory focus $24-$39');
+    for(let id=0x24;id<=0x39;id++){
+      const r=report.resources[id];if(!r)continue;
+      summary.push(`  ${hex(id,2)} sector ${String(r.entry.sector).padStart(4)} sectors ${String(r.entry.sectors).padStart(3)} outLen ${hex(r.entry.outLen,6)} read ${hex(r.entry.readSize,6)} storage ${r.storageKind||'unread'} bytes ${r.actualLength||0}`);
+    }
+    summary.push('');
+    summary.push('Top unresolved candidate chains');
+    for(const s of report.shortlist.filter(x=>!x.knownNonCar).slice(0,25))
+      summary.push(`  ${s.hexId} ${hex(s.start,6)}: ${s.frameCount} frames; ${s.dominantDimensions}; ${s.file}`);
+    summary.push('');
+    summary.push('Main-code references to resource $38 live pointer field');
+    const refs38=report.mainResourceReferences[hex(0x38,2)]?.pointerFieldReferences||[];
+    if(refs38.length)for(const r of refs38)
+      summary.push(`  main ${hex(r.mainOffset,5)} / runtime ${hex(r.runtimeAddress,5)}: ${r.kind}${r.opcode?' '+r.opcode:''} | ${r.context}`);
+    else summary.push('  no literal absolute reference found; indirect table/base access remains possible');
+    summary.push('');
+    summary.push('Known car/foreground draw-area callers');
+    for(const [target,calls] of Object.entries(report.drawPathCallers)){
+      if(!calls.length)continue;summary.push(`  ${target}:`);
+      for(const c of calls)summary.push(`    ${c.type} from main ${hex(c.mainOffset,5)} / runtime ${hex(c.runtimeAddress,5)} | ${c.context}`);
+    }
+    summary.push('');
+    summary.push('Send the complete ZIP back to ChatGPT; it now contains the bytes needed for the $02-$04 atlas and main-code consumer trace.');
+
+    files.push({name:'SUMMARY.txt',data:summary.join('\n')+'\n'});
+    files.push({name:'car_probe_report.json',data:JSON.stringify(report,null,2)});
+
+    log('Packaging ZIP…');
+    const zip=await makeZip(files);
+    downloadBlob(zip,'indyheat_car_atlas_probe_output.zip');
+    log(`Finished. Downloaded indyheat_car_atlas_probe_output.zip (${files.length} files).`);
+    log('Send that ZIP back to ChatGPT; this version includes $02-$04 and the decrunched main image.');
+  }catch(e){
+    console.error(e);
+    log(`ERROR: ${e && e.stack || e}`);
+  }finally{
+    runButton.disabled=false;
+  }
+});
+</script>
+</body>
+</html>

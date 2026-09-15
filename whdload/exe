@@ -1,0 +1,3 @@
+basm "indyheathd (1.2).asm"
+whdload indyheat.slave preload data=data
+
