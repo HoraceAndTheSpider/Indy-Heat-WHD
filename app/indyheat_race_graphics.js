@@ -21,14 +21,14 @@ const RACE_OBJECT_RESOURCE_IDS = Object.freeze([
 const RACE_OBJECT_ROLES = Object.freeze({
   0x05:{name:'pit crew',confidence:'established'},
   0x06:{name:'car damage/debris effects',confidence:'strong data/visual evidence'},
-  0x07:{name:'smoke plume',confidence:'strong data/visual evidence; exact consumer link pending'},
+  0x07:{name:'damaged-car smoke plume',confidence:'strong data/visual evidence; exact consumer link pending'},
   0x08:{name:'PIT-board attendants',confidence:'established'},
   0x09:{name:'unresolved race-object bank',confidence:'unresolved'},
-  0x0A:{name:'unresolved race-object bank',confidence:'unresolved'},
-  0x0B:{name:'unresolved race-object bank',confidence:'unresolved'},
+  0x0A:{name:'high-damage car-on-fire overlay',confidence:'user-confirmed in-game identity'},
+  0x0B:{name:'out-of-fuel overlay',confidence:'user-confirmed in-game identity; exact internal grouping remains unresolved'},
   0x0C:{name:'unresolved race-object bank',confidence:'unresolved'},
-  0x0D:{name:'unresolved five-plane race-object bank',confidence:'unresolved'},
-  0x0E:{name:'unresolved five-plane race-object bank',confidence:'unresolved'},
+  0x0D:{name:'speedometer',confidence:'user-confirmed in-game identity; three instances shown low on race screen'},
+  0x0E:{name:'speedometer / pit-status overlay',confidence:'user-confirmed association; blank/default-restoration role remains inferred'},
   0x0F:{name:'flag man / starting gun',confidence:'established'}
 });
 
