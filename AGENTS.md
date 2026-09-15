@@ -1,4 +1,55 @@
-# AGENTS.md — Indy Heat Circuit Editor
+# AGENTS.md — Indy Heat Amiga Reverse Engineering / Circuit Editor
+
+## Mandatory startup protocol
+
+Every new thread or agent must **continue from the repository's accumulated state, not restart the reverse engineering**.
+
+Before doing implementation or investigation:
+
+1. Treat the current `master` branch as the working authority and inspect its current state.
+2. Read this `AGENTS.md` in full.
+3. Read the wiki page **[Disk Image, Loader and Runtime Resource Map](https://github.com/HoraceAndTheSpider/Indy-Heat-WHD/wiki/Disk-Image-Loader-and-Runtime-Resource-Map)** before touching `Disk.1`, rebuilding the main executable, scanning resources, or implementing another decoder.
+4. Read the task-specific wiki page(s), then only the source/tests relevant to the requested task.
+5. Inherit documented/code-proven findings when the current files still match their stated invariants. A new conversation is **not** a reason to re-prove them.
+6. Re-open a settled item only when the current repository, a failing regression, live-debugger evidence, or the user's new evidence directly contradicts it.
+7. Continue from the actual unresolved question and produce tangible review output where the task calls for it.
+
+### Stable binary baseline
+
+At the continuity checkpoint used to create these instructions:
+
+- authoritative retail image: `whdload/data/Disk.1`;
+- size: `901120` bytes = 1,760 × 512-byte sectors;
+- Git blob: `c072bbacb3dd1d7ee5759e2ecdce2df7cca3cb61`;
+- main File Imploder block: sector 22 / disk `$2C00`, `EDAM`;
+- main decompressed size: `$1206A`;
+- main Imploder `endOff`: `$8CBE`, packed frame size `$8CF0`;
+- decompressed main file offset zero maps to runtime `$1000`;
+- resource directory: main `+$3C6A` / runtime `$4C6A`;
+- resource directory: 108 sequential 22-byte entries (`$00–$6B`);
+- current full-disk regression expects 96 discoverable Imploder blocks;
+- circuit base resource IDs: `$39,$3D,$41,$45,$49,$4D,$5A,$5E,$62,$66`.
+
+If current `master` still satisfies those invariants, **do not spend time rediscovering them**. The wiki page above contains the layouts, formulas, track-resource formats and race-object rendering rules.
+
+### Do not reconstruct the committed disk from connector fragments
+
+If a tool can read repository text but cannot directly stream the binary `Disk.1`, do not rebuild the disk/main program from truncated Base64 slices and then treat decrunch errors as game evidence.
+
+Use the checked-in parser/tests and documented offsets, or use a tool/environment that can access the committed file intact. Partial connector reconstruction is not an authoritative binary source.
+
+### Source-of-truth hierarchy
+
+Use the current material in this order when statements conflict:
+
+1. current code/data and reproducible tests;
+2. current topic-led wiki findings;
+3. this `AGENTS.md`;
+4. `app/README.md` and `app/research-notes.md` for implementation state;
+5. older handovers/chats;
+6. repository-root `README.md`.
+
+The root `README.md` is an early viewer-era document and currently contains superseded statements about waypoints/palette. Do not let it override the current app, wiki or tests.
 
 ## Working authority
 
@@ -78,3 +129,14 @@ When an investigation produces new evidence:
 - Sequence Group joining lines are useful and should remain, but they are **route-local**: same-Sequence points may join within A, within B, or within C; they must never join A↔B, A↔C, or B↔C.
 - Prefer semantics proved from the game code/data over labels inferred only from editor appearance.
 - Preserve raw data faithfully when a field is not yet understood; do not make destructive editor assumptions merely to give an unknown field a friendly name.
+
+### Graphics-specific continuity rules
+
+When the requested strand is race graphics:
+
+- Keep the task graphics-only when the user says so; do not widen back into waypoint, pit-record, menu or unrelated-resource research.
+- Treat the documented four-plane race-object transparency/palette mapping and BOB/blitter path as settled unless contradicted by current code/data.
+- Treat the user-supplied `FlagMan.iff` reference and exact `$0F` frame-26 match as ground truth for validating the renderer.
+- Do not identify an object solely from frame count or vague visual resemblance.
+- Prefer an exact image match, proven object structure, or traced consumer/draw path.
+- Do not restart hardware-sprite investigation for the racing cars merely because their actual frame bank is still unresolved.
