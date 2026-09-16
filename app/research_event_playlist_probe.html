@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Indy Heat — Event / Playlist Selector Probe</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#eee;background:#111318}
+body{margin:0;background:#111318}
+main{max-width:900px;margin:0 auto;padding:24px}
+h1{font-size:1.6rem;margin:0 0 8px}
+p{color:#b8bec8;line-height:1.5}
+.panel{background:#181b21;border:1px solid #30343d;border-radius:8px;padding:16px;margin:14px 0}
+input,button{font:inherit}
+input[type=file]{display:block;margin:12px 0}
+button{background:#303746;border:1px solid #545f73;border-radius:6px;padding:9px 12px;color:#fff;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+#status{white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0c0e12;padding:12px;border-radius:5px;min-height:150px}
+code{background:#0c0e12;padding:1px 4px;border-radius:3px}
+</style>
+<script src="./indyheat.js"></script>
+</head>
+<body>
+<main>
+<h1>Indy Heat — Event / Playlist Selector Probe</h1>
+<p>
+Read-only research tool for the authoritative <code>Disk.1</code>. It does not modify the disk or editor.
+Put this HTML file in <code>app/</code> beside the current <code>indyheat.js</code>, choose
+<code>whdload/data/Disk.1</code>, and run once.
+</p>
+
+<div class="panel">
+<strong>Choose Disk.1</strong>
+<input id="disk" type="file">
+<button id="run" disabled>Run event/playlist trace</button>
+</div>
+
+<div class="panel">
+<strong>Status</strong>
+<div id="status">Waiting for Disk.1…</div>
+</div>
+
+<div class="panel">
+<strong>Output</strong>
+<p>The probe downloads <code>indyheat_event_playlist_probe_output.zip</code>. Send that ZIP back to ChatGPT.
+It contains a concise report, structured JSON, candidate code windows and the decrunched main image for exact follow-up disassembly.</p>
+</div>
+</main>
+
+<script>
+'use strict';
+
+const $=id=>document.getElementById(id);
+const diskInput=$('disk'),runButton=$('run'),statusEl=$('status');
+let selectedFile=null;
+
+function setStatus(s){statusEl.textContent=s;}
+function log(s){statusEl.textContent+=(statusEl.textContent?'\\n':'')+s;statusEl.scrollTop=statusEl.scrollHeight;}
+function hex(v,n=4){return '$'+(Number(v)>>>0).toString(16).toUpperCase().padStart(n,'0');}
+function be16(b,o){return ((b[o]<<8)|b[o+1])>>>0;}
+function be32(b,o){return (((be16(b,o)<<16)>>>0)|be16(b,o+2))>>>0;}
+function s16(v){return (v&0x8000)?v-0x10000:v;}
+function s8(v){return (v&0x80)?v-0x100:v;}
+function bytesHex(b,start,end){
+  const a=[];for(let i=Math.max(0,start);i<Math.min(b.length,end);i++)a.push(b[i].toString(16).padStart(2,'0').toUpperCase());
+  return a.join(' ');
+}
+function asciiSafe(b,start,end){
+  let s='';for(let i=Math.max(0,start);i<Math.min(b.length,end);i++){const c=b[i];s+=(c>=32&&c<127)?String.fromCharCode(c):'.';}
+  return s;
+}
+
+diskInput.addEventListener('change',()=>{
+  selectedFile=diskInput.files&&diskInput.files[0]||null;
+  runButton.disabled=!selectedFile;
+  setStatus(selectedFile?`Selected ${selectedFile.name} (${selectedFile.size} bytes).`:'Waiting for Disk.1…');
+});
+
+function diffRanges(a,b){
+  const ranges=[];let start=-1;
+  for(let i=0;i<Math.min(a.length,b.length);i++){
+    if(a[i]!==b[i]){if(start<0)start=i;}
+    else if(start>=0){ranges.push([start,i]);start=-1;}
+  }
+  if(start>=0)ranges.push([start,Math.min(a.length,b.length)]);
+  return ranges;
+}
+
+function classifyOperand(op){
+  const low=op&0x3f;
+  const dest=(op>>9)&7;
+  if((op&0xf1ff)===0x41f8)return `LEA abs.w,A${dest}`;
+  if((op&0xf1ff)===0x41f9)return `LEA abs.l,A${dest}`;
+  if((op&0xf1ff)===0x41fa)return `LEA d16(PC),A${dest}`;
+  if(op===0x4eb8)return 'JSR abs.w';
+  if(op===0x4eb9)return 'JSR abs.l';
+  if(op===0x4ef8)return 'JMP abs.w';
+  if(op===0x4ef9)return 'JMP abs.l';
+  if(op===0x4878)return 'PEA abs.w';
+  if(op===0x4879)return 'PEA abs.l';
+  if(low===0x38)return `EA abs.w opcode ${hex(op,4)}`;
+  if(low===0x39)return `EA abs.l opcode ${hex(op,4)}`;
+  if(low===0x3a)return `EA d16(PC) opcode ${hex(op,4)}`;
+  if(low===0x3c)return `EA immediate opcode ${hex(op,4)}`;
+  return `opcode ${hex(op,4)}`;
+}
+
+function scanAbsoluteRefs(main,targetRuntime){
+  const refs=[];
+  const w=targetRuntime&0xffff, wb=[w>>>8,w&255];
+  const lb=[(targetRuntime>>>24)&255,(targetRuntime>>>16)&255,(targetRuntime>>>8)&255,targetRuntime&255];
+  for(let off=0;off+2<=main.length;off+=2){
+    if(main[off]===wb[0]&&main[off+1]===wb[1]&&off>=2){
+      const op=be16(main,off-2),low=op&0x3f;
+      if(low===0x38 || op===0x4eb8 || op===0x4ef8 || op===0x4878){
+        refs.push({kind:'abs.w',operandOffset:off,instructionOffset:off-2,
+          runtimeInstruction:0x1000+off-2,opcode:op,label:classifyOperand(op),
+          context:bytesHex(main,off-18,off+20)});
+      }
+    }
+    if(off+4<=main.length&&main[off]===lb[0]&&main[off+1]===lb[1]&&main[off+2]===lb[2]&&main[off+3]===lb[3]&&off>=2){
+      const op=be16(main,off-2),low=op&0x3f;
+      if(low===0x39 || op===0x4eb9 || op===0x4ef9 || op===0x4879){
+        refs.push({kind:'abs.l',operandOffset:off,instructionOffset:off-2,
+          runtimeInstruction:0x1000+off-2,opcode:op,label:classifyOperand(op),
+          context:bytesHex(main,off-18,off+22)});
+      }
+    }
+  }
+  return refs;
+}
+
+function scanPcRelativeRefs(main,targetRuntime){
+  const refs=[];
+  for(let off=0;off+4<=main.length;off+=2){
+    const op=be16(main,off),low=op&0x3f;
+    if(low!==0x3a)continue;
+    const disp=s16(be16(main,off+2));
+    // 68000 d16(PC): base is address of extension word.
+    const target=(0x1000+off+2+disp)&0xffffffff;
+    if(target===targetRuntime){
+      refs.push({kind:'pc-d16',instructionOffset:off,runtimeInstruction:0x1000+off,
+        opcode:op,label:classifyOperand(op),displacement:disp,
+        context:bytesHex(main,off-16,off+24)});
+    }
+  }
+  return refs;
+}
+
+function scanImmediateWord(main,value){
+  const refs=[];
+  value&=0xffff;
+  for(let off=2;off+2<=main.length;off+=2){
+    if(be16(main,off)!==value)continue;
+    const op=be16(main,off-2);
+    let label='word literal';
+    const low=op&0x3f;
+    if(low===0x3c)label=classifyOperand(op);
+    // Recognise common arithmetic/compare immediate forms.
+    if((op&0xffc0)===0x0c40)label='CMPI.W #imm,<ea>';
+    if((op&0xffc0)===0x0640)label='ADDI.W #imm,<ea>';
+    if((op&0xffc0)===0x0440)label='SUBI.W #imm,<ea>';
+    if((op&0xf1ff)===0xd0fc)label=`ADDA.W #imm,A${(op>>9)&7}`;
+    if((op&0xf1ff)===0xc0fc)label=`MULU.W #imm,D${(op>>9)&7}`;
+    if((op&0xf1ff)===0xc1fc)label=`MULS.W #imm,D${(op>>9)&7}`;
+    if((op&0xf1ff)===0x303c)label=`MOVE.W #imm,D${(op>>9)&7}`;
+    refs.push({operandOffset:off,instructionOffset:off-2,runtimeInstruction:0x1000+off-2,
+      opcode:op,label,context:bytesHex(main,off-18,off+20)});
+  }
+  return refs;
+}
+
+function scanMoveq(main,immSigned){
+  const refs=[];
+  const want=immSigned&255;
+  for(let off=0;off+2<=main.length;off+=2){
+    const op=be16(main,off);
+    if((op&0xf100)!==0x7000)continue;
+    if((op&255)!==want)continue;
+    refs.push({instructionOffset:off,runtimeInstruction:0x1000+off,opcode:op,
+      register:(op>>9)&7,immediate:s8(op&255),context:bytesHex(main,off-16,off+22)});
+  }
+  return refs;
+}
+
+function scanPointerArrays(main,recordAddresses){
+  const set=new Set(recordAddresses.map(x=>x&0xffff));
+  const out=[];
+  // Word arrays of record addresses.
+  for(let off=0;off+6<=main.length;off+=2){
+    if(!set.has(be16(main,off)))continue;
+    const vals=[];let p=off;
+    while(p+2<=main.length&&set.has(be16(main,p))&&vals.length<64){vals.push(be16(main,p));p+=2;}
+    if(vals.length>=2){out.push({kind:'word-array',offset:off,runtimeAddress:0x1000+off,values:vals});off=p-2;}
+  }
+  // Long arrays of zero-extended record addresses.
+  for(let off=0;off+8<=main.length;off+=2){
+    const v=be32(main,off);
+    if(v>0xffff||!set.has(v))continue;
+    const vals=[];let p=off;
+    while(p+4<=main.length){const q=be32(main,p);if(q>0xffff||!set.has(q))break;vals.push(q);p+=4;if(vals.length>=64)break;}
+    if(vals.length>=2){out.push({kind:'long-array',offset:off,runtimeAddress:0x1000+off,values:vals});off=p-2;}
+  }
+  return out;
+}
+
+function candidateWindows(main,features){
+  const points=[];
+  for(const f of features){
+    const off=f.instructionOffset??f.offset;
+    if(off==null)continue;
+    points.push({off,why:f.why||f.label||f.kind||'feature'});
+  }
+  points.sort((a,b)=>a.off-b.off);
+  const clusters=[];
+  for(const p of points){
+    let c=clusters[clusters.length-1];
+    if(!c||p.off-c.end>96){c={start:Math.max(0,p.off-128),end:Math.min(main.length,p.off+160),features:[]};clusters.push(c);}
+    c.end=Math.max(c.end,Math.min(main.length,p.off+160));c.features.push(p);
+  }
+  return clusters.map((c,i)=>({
+    index:i+1,start:c.start,end:c.end,runtimeStart:0x1000+c.start,runtimeEnd:0x1000+c.end,
+    features:c.features,
+    hex:bytesHex(main,c.start,c.end),
+    ascii:asciiSafe(main,c.start,c.end)
+  }));
+}
+
+function eventRecordReport(main){
+  const records=IndyHeatTools.parseRaceRecords(main);
+  return records.map(r=>({
+    index:r.index,
+    mainOffset:r.offset,
+    runtimeAddress:0x1000+r.offset,
+    name:r.name,
+    laps:r.field28,
+    field2A:r.field2A,
+    descriptors:r.descriptors,
+    coordXOriginRaw:r.coordXOriginRaw,
+    coordYOriginRaw:r.coordYOriginRaw,
+    coordFlipWord:r.coordFlipWord,
+    rawHex:bytesHex(r.raw,0,r.raw.length)
+  }));
+}
+
+function compareIndianapolis(main,records){
+  const a=records[1],b=records[10];
+  const ranges=diffRanges(a.raw,b.raw);
+  return {
+    event2:{name:a.name,laps:a.field28,mainOffset:a.offset,runtimeAddress:0x1000+a.offset,descriptors:a.descriptors},
+    event11:{name:b.name,laps:b.field28,mainOffset:b.offset,runtimeAddress:0x1000+b.offset,descriptors:b.descriptors},
+    descriptorsIdentical:JSON.stringify(a.descriptors)===JSON.stringify(b.descriptors),
+    rawIdentical:ranges.length===0,
+    differingRanges:ranges.map(([s,e])=>({
+      start:s,endExclusive:e,
+      event2:bytesHex(a.raw,s,e),
+      event11:bytesHex(b.raw,s,e)
+    }))
+  };
+}
+
+function makeTextReport(report){
+  const s=[];
+  s.push('Indy Heat event / playlist selector probe');
+  s.push('========================================');
+  s.push(`Disk: ${report.disk.size} bytes`);
+  s.push(`Main: ${hex(report.disk.mainLength,5)} bytes`);
+  s.push(`Race table: runtime ${hex(report.raceTable.runtimeBase,4)}, main ${hex(report.raceTable.mainBase,4)}, stride ${hex(report.raceTable.stride,2)}, records ${report.raceTable.count}, end ${hex(report.raceTable.runtimeEnd,4)}`);
+  s.push('');
+  s.push('Retail events');
+  for(const r of report.events)s.push(`  ${String(r.index).padStart(2,'0')} ${r.name.padEnd(18,' ')} laps ${String(r.laps).padStart(2)} record ${hex(r.runtimeAddress,4)}`);
+  s.push('');
+  const ind=report.indianapolisComparison;
+  s.push('Indianapolis event 2 vs event 11');
+  s.push(`  laps: ${ind.event2.laps} vs ${ind.event11.laps}`);
+  s.push(`  waypoint descriptors identical: ${ind.descriptorsIdentical?'YES':'NO'}`);
+  s.push(`  whole $82 records identical: ${ind.rawIdentical?'YES':'NO'}`);
+  if(ind.differingRanges.length){
+    s.push('  differing byte ranges:');
+    for(const d of ind.differingRanges)s.push(`    +${hex(d.start,2)}..+${hex(d.endExclusive-1,2)}  E2 ${d.event2} | E11 ${d.event11}`);
+  }
+  s.push('');
+  s.push('Race-table address references');
+  for(const [k,v] of Object.entries(report.references.targets)){
+    s.push(`  ${k}: abs ${v.absolute.length}, PC-relative ${v.pcRelative.length}`);
+    for(const r of [...v.absolute,...v.pcRelative])s.push(`    ${hex(r.runtimeInstruction,4)} ${r.label} | ${r.context}`);
+  }
+  s.push('');
+  s.push('Stride/event-count constants');
+  s.push(`  immediate $0082 hits: ${report.references.stride82.length}`);
+  for(const r of report.references.stride82)s.push(`    ${hex(r.runtimeInstruction,4)} ${r.label} | ${r.context}`);
+  s.push(`  MOVEQ #10 hits: ${report.references.moveq10.length}`);
+  for(const r of report.references.moveq10)s.push(`    ${hex(r.runtimeInstruction,4)} MOVEQ #10,D${r.register} | ${r.context}`);
+  s.push(`  MOVEQ #11 hits: ${report.references.moveq11.length}`);
+  for(const r of report.references.moveq11)s.push(`    ${hex(r.runtimeInstruction,4)} MOVEQ #11,D${r.register} | ${r.context}`);
+  s.push('');
+  s.push(`Explicit arrays containing >=2 race-record addresses: ${report.references.pointerArrays.length}`);
+  for(const a of report.references.pointerArrays)s.push(`  ${hex(a.runtimeAddress,4)} ${a.kind}: ${a.values.map(v=>hex(v,4)).join(', ')}`);
+  s.push('');
+  s.push(`Candidate code clusters: ${report.candidateWindows.length}`);
+  for(const c of report.candidateWindows){
+    s.push(`  candidate_${String(c.index).padStart(2,'0')}.bin  main ${hex(c.start,5)}-${hex(c.end-1,5)} / runtime ${hex(c.runtimeStart,5)}-${hex(c.runtimeEnd-1,5)}`);
+    for(const f of c.features)s.push(`    ${hex(0x1000+f.off,5)} ${f.why}`);
+  }
+  s.push('');
+  s.push('Interpretation rule');
+  s.push('  This report intentionally does not claim that a literal hit is executable code.');
+  s.push('  Candidate windows must be disassembled/traced before a WHDLoad hook is chosen.');
+  s.push('');
+  return s.join('\n')+'\n';
+}
+
+// Minimal store-only ZIP writer.
+function utf8(s){return new TextEncoder().encode(s);}
+function concatArrays(arrs){const n=arrs.reduce((a,b)=>a+b.length,0),out=new Uint8Array(n);let p=0;for(const a of arrs){out.set(a,p);p+=a.length;}return out;}
+const CRC_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(bytes){let c=0xffffffff;for(const b of bytes)c=CRC_TABLE[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
+function le16(v){const b=new Uint8Array(2);new DataView(b.buffer).setUint16(0,v,true);return b;}
+function le32(v){const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,v>>>0,true);return b;}
+function dosTimeDate(d=new Date()){return {time:((d.getHours()&31)<<11)|((d.getMinutes()&63)<<5)|(Math.floor(d.getSeconds()/2)&31),date:(((d.getFullYear()-1980)&127)<<9)|(((d.getMonth()+1)&15)<<5)|(d.getDate()&31)};}
+async function toBytes(data){if(data instanceof Uint8Array)return data;if(typeof data==='string')return utf8(data);if(data instanceof Blob)return new Uint8Array(await data.arrayBuffer());return new Uint8Array(data);}
+async function makeZip(files){
+  const locals=[],centrals=[];let offset=0;const dt=dosTimeDate();
+  for(const f of files){
+    const name=utf8(f.name),data=await toBytes(f.data),crc=crc32(data);
+    const local=concatArrays([le32(0x04034b50),le16(20),le16(0),le16(0),le16(dt.time),le16(dt.date),le32(crc),le32(data.length),le32(data.length),le16(name.length),le16(0),name,data]);
+    locals.push(local);
+    const central=concatArrays([le32(0x02014b50),le16(20),le16(20),le16(0),le16(0),le16(dt.time),le16(dt.date),le32(crc),le32(data.length),le32(data.length),le16(name.length),le16(0),le16(0),le16(0),le16(0),le32(0),le32(offset),name]);
+    centrals.push(central);offset+=local.length;
+  }
+  const centralData=concatArrays(centrals);
+  const end=concatArrays([le32(0x06054b50),le16(0),le16(0),le16(files.length),le16(files.length),le32(centralData.length),le32(offset),le16(0)]);
+  return new Blob([...locals,centralData,end],{type:'application/zip'});
+}
+function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);}
+
+runButton.addEventListener('click',async()=>{
+  runButton.disabled=true;
+  try{
+    if(!globalThis.IndyHeatTools)throw new Error('indyheat.js was not loaded. Put this file in app/ beside indyheat.js.');
+    if(!selectedFile)throw new Error('Choose Disk.1 first.');
+    setStatus('Reading Disk.1…');
+    const disk=new Uint8Array(await selectedFile.arrayBuffer());
+    if(disk.length!==901120)throw new Error(`Unexpected size ${disk.length}; expected 901120.`);
+    log('Decompressing authoritative main image…');
+    const model=IndyHeatTools.makeDiskModel(disk);
+    const main=model.main;
+    const events=IndyHeatTools.parseRaceRecords(main);
+    const RUNTIME_BASE=0x5902,MAIN_BASE=0x4902,STRIDE=0x82,COUNT=11,RUNTIME_END=RUNTIME_BASE+STRIDE*COUNT;
+    const recordAddrs=Array.from({length:COUNT},(_,i)=>RUNTIME_BASE+i*STRIDE);
+
+    log('Comparing Indianapolis event records…');
+    const indianapolisComparison=compareIndianapolis(main,events);
+
+    log('Scanning references to race table and record addresses…');
+    const targets={};
+    const targetPairs=[
+      ['race_table_base',RUNTIME_BASE],
+      ['race_table_end',RUNTIME_END],
+      ...recordAddrs.map((v,i)=>[`event_${String(i+1).padStart(2,'0')}`,v])
+    ];
+    for(const [name,target] of targetPairs){
+      const absolute=scanAbsoluteRefs(main,target),pcRelative=scanPcRelativeRefs(main,target);
+      if(absolute.length||pcRelative.length||name==='race_table_base'||name==='race_table_end')
+        targets[name]={target,absolute,pcRelative};
+    }
+
+    log('Scanning stride/count constants and pointer arrays…');
+    const stride82=scanImmediateWord(main,0x82);
+    const imm10=scanImmediateWord(main,10);
+    const imm11=scanImmediateWord(main,11);
+    const moveq10=scanMoveq(main,10),moveq11=scanMoveq(main,11);
+    const pointerArrays=scanPointerArrays(main,recordAddrs);
+
+    const featureList=[];
+    for(const [name,v] of Object.entries(targets)){
+      for(const r of [...v.absolute,...v.pcRelative])featureList.push({...r,why:`${name} ${r.label}`});
+    }
+    for(const r of stride82)featureList.push({...r,why:`stride $82 ${r.label}`});
+    // Event-bound constants are very common; include only if near another strong feature.
+    const strongOffsets=featureList.map(f=>f.instructionOffset??f.offset).filter(x=>x!=null);
+    for(const r of [...moveq10,...moveq11,...imm10,...imm11]){
+      const o=r.instructionOffset;
+      if(strongOffsets.some(q=>Math.abs(q-o)<=128))featureList.push({...r,why:`event bound/count ${r.label||('MOVEQ #'+r.immediate)}`});
+    }
+    for(const a of pointerArrays)featureList.push({...a,instructionOffset:a.offset,why:`${a.kind} race-record address array`});
+
+    const windows=candidateWindows(main,featureList);
+    const report={
+      generatedAt:new Date().toISOString(),
+      disk:{name:selectedFile.name,size:disk.length,mainLength:main.length,resourceTableOffset:model.resourceTableOffset,resourceCount:model.resources.length,imploderBlocks:model.blocks.length},
+      raceTable:{mainBase:MAIN_BASE,runtimeBase:RUNTIME_BASE,stride:STRIDE,count:COUNT,runtimeEnd:RUNTIME_END},
+      events:eventRecordReport(main),
+      indianapolisComparison,
+      references:{targets,stride82,imm10,imm11,moveq10,moveq11,pointerArrays},
+      candidateWindows:windows.map(c=>({index:c.index,start:c.start,end:c.end,runtimeStart:c.runtimeStart,runtimeEnd:c.runtimeEnd,features:c.features,ascii:c.ascii})),
+      notes:[
+        'Literal/PC-relative hits are candidates only until executable control flow is disassembled.',
+        'No disk bytes are modified.',
+        'The full decrunched main is included solely to permit exact follow-up disassembly.'
+      ]
+    };
+
+    const files=[
+      {name:'SUMMARY.txt',data:makeTextReport(report)},
+      {name:'event_playlist_probe_report.json',data:JSON.stringify(report,null,2)},
+      {name:'main_decrunched_01206A.bin',data:main}
+    ];
+    for(const c of windows){
+      files.push({name:`candidate_windows/candidate_${String(c.index).padStart(2,'0')}_${c.runtimeStart.toString(16).toUpperCase()}-${(c.runtimeEnd-1).toString(16).toUpperCase()}.bin`,data:main.slice(c.start,c.end)});
+      const meta=[
+        `main ${hex(c.start,5)}-${hex(c.end-1,5)}`,
+        `runtime ${hex(c.runtimeStart,5)}-${hex(c.runtimeEnd-1,5)}`,
+        '',
+        ...c.features.map(f=>`${hex(0x1000+f.off,5)} ${f.why}`),
+        '',
+        c.hex,
+        '',
+        c.ascii,
+        ''
+      ].join('\n');
+      files.push({name:`candidate_windows/candidate_${String(c.index).padStart(2,'0')}.txt`,data:meta});
+    }
+
+    log(`Found ${windows.length} candidate code clusters.`);
+    log(`Indianapolis descriptors identical: ${indianapolisComparison.descriptorsIdentical?'YES':'NO'}.`);
+    log('Packaging report…');
+    const zip=await makeZip(files);
+    downloadBlob(zip,'indyheat_event_playlist_probe_output.zip');
+    log(`Finished. ${files.length} files written to ZIP.`);
+  }catch(e){
+    console.error(e);log(`ERROR: ${e&&e.stack||e}`);
+  }finally{runButton.disabled=false;}
+});
+</script>
+</body>
+</html>
