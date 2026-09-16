@@ -13,8 +13,10 @@
 
 
 ;
-; Development 1.3 test 2 additions/fixes:
+; Development 1.3 test 3 structural patch-list test:
 ; - preserve the 1.21 WHDLoad v17 header and original CUSTOM1 trainer options;
+; - CUSTOM2=1 enters PL_CUSTOMTRACKS, which chains to pl_boot with PL_NEXT;
+; - CUSTOM2<>1 starts directly at pl_boot;
 ; - retain external per-event setup overrides;
 ; - external decompressed background overrides require CUSTOM2=1;
 ; - retain the runtime-proven eleven-event retail-track playlist remap;
@@ -118,7 +120,7 @@ _config:	dc.b    "C1:X:Infinite coins:0;"	; ws_config;
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 2"
+	dc.b	"1.3 test 3"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -212,18 +214,64 @@ _custom2
 ;--------------------------------
 
 patch_boot
-	; Legacy per-event setup overrides remain independent of custom mode.
-	; Playlist remapping and external background assets require CUSTOM2=1.
+	; Legacy one-for-one per-event setup overrides remain independent of
+	; CUSTOM2 and are applied before either patch-list entry point.
 	bsr.w	load_race_setups
-	bsr.w	apply_playlist
 
+	; CUSTOM2=1 selects the custom-track entry list.  Any other value uses
+	; only the normal/common patch list.  Playlist processing is likewise
+	; performed only on the explicit custom-track path.
+	move.l	_custom2(pc),d0
+	cmp.l	#1,d0
+	bne.b	.retail_patches
+
+	bsr.w	apply_playlist
+	lea	PL_CUSTOMTRACKS(pc),a0
+	bra.b	.apply_patches
+
+.retail_patches
 	lea	pl_boot(pc),a0
+
+.apply_patches
 	sub.l	a1,a1
 	move.l	_resload(pc),a2
 	jsr	resload_Patch(a2)
 	bsr	_flushcache
 
 	jmp	$1050.w
+
+
+;---------------------------------------------------------------------------
+; CUSTOM2=1 ONLY
+;
+; This is the dedicated entry patch list for custom-track work.  Test 3 adds
+; no new game-code patches: it proves the entry/chaining structure using the
+; already-runtime-proven playlist/background behaviour only.
+;
+; Future custom-only game patches (lap-total renderer, Gasoline Alley maps,
+; preview hooks, etc.) belong here, before PL_NEXT.
+;
+; PL_NEXT terminates this list and continues with the normal/common pl_boot.
+;---------------------------------------------------------------------------
+
+PL_CUSTOMTRACKS
+	PL_START
+
+	PL_NEXT	pl_boot
+
+
+;---------------------------------------------------------------------------
+; COMMON PATCHES
+;
+; Applied in both retail and custom-track modes.  CUSTOM2<>1 starts directly
+; here; CUSTOM2=1 reaches it through PL_CUSTOMTRACKS above.
+;
+; $BDE4 -> Load is deliberately common because it is the WHDLoad replacement
+; for the game's disk/save access point in both modes.  The custom background
+; override is therefore gated inside that shared access routine; placing a
+; second $BDE4 patch in PL_CUSTOMTRACKS would be overwritten when PL_NEXT
+; continues into this list.
+;---------------------------------------------------------------------------
 
 pl_boot
 	PL_START
@@ -356,9 +404,9 @@ race_setup_buffer
 ; Playlist v1, explicitly opt-in through CUSTOM2=1.
 ;
 ; CUSTOM2 != 1:
-;   - return before resload_GetCustom and before any playlist file probe;
-;   - legacy per-event setup replacement remains unchanged;
-;   - external background replacement is also disabled.
+;   - patch_boot never calls this routine;
+;   - resload_GetCustom and playlist file probing are therefore never reached;
+;   - legacy per-event setup replacement remains unchanged.
 ;
 ; CUSTOM2 = 1:
 ;   - CUSTOM=<filename> selects that exact relative WHDLoad data filename;
@@ -372,11 +420,7 @@ race_setup_buffer
 apply_playlist
 	movem.l	d0-d7/a0-a6,-(a7)
 
-	; Exact opt-in gate. CUSTOM=<name> alone deliberately does nothing.
-	move.l	_custom2(pc),d0
-	cmp.l	#1,d0
-	bne.w	.done
-
+	; Called only from patch_boot's CUSTOM2=1 branch.
 	bsr.w	resolve_playlist_name
 	tst.l	d0
 	beq.w	.done
@@ -596,12 +640,7 @@ apply_pending_background
 arm_background_override
 	movem.l	d0-d4/a0-a3,-(a7)
 
-	; External track backgrounds are part of custom-track mode.
-	; CUSTOM2 values other than exactly 1 must never probe/apply them.
-	move.l	_custom2(pc),d0
-	cmp.l	#1,d0
-	bne.w	.done
-
+	; Called only from Load while CUSTOM2=1.
 	move.w	d1,d4
 	lea	RESOURCE_TABLE_RUNTIME.w,a1
 	moveq	#RESOURCE_ENTRY_COUNT-1,d3
@@ -733,7 +772,15 @@ loop
 Load
 		movem.l	d0-a6,-(a7)
 
+		; $BDE4 is a shared WHDLoad disk/save access point and is patched in
+		; pl_boot for both modes.  This is the one custom-mode gate retained
+		; inside a common routine: custom background files must never be
+		; probed or applied unless CUSTOM2 is exactly 1.
+		move.l	_custom2(pc),d4
+		cmp.l	#1,d4
+		bne.b	.no_pending_background
 		bsr.w	apply_pending_background
+.no_pending_background
 
 		tst.w	d2
 		beq.b	.skip
@@ -741,7 +788,10 @@ Load
 		btst	#0,d3
 		bne.b	Save
 
+		cmp.l	#1,d4
+		bne.b	.no_background_override
 		bsr.w	arm_background_override
+.no_background_override
 
 		moveq	#0,D0
 		move.w	D1,D0
