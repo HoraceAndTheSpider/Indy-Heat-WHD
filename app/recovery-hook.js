@@ -153,6 +153,9 @@ function loadEditorExtensions(){
   if(!document.querySelector('script[data-indyheat-circuit-package]')){
     const s=document.createElement('script');s.src='circuit-package.js';s.dataset.indyheatCircuitPackage='1';document.head.appendChild(s);
   }
+  if(!document.querySelector('script[data-indyheat-editor-fixes-v0193]')){
+    const s=document.createElement('script');s.src='editor-fixes-v0193.js';s.dataset.indyheatEditorFixesV0193='1';document.head.appendChild(s);
+  }
 }
 if(document.readyState==='complete')setTimeout(loadEditorExtensions,0);
 else root.addEventListener('load',()=>setTimeout(loadEditorExtensions,0),{once:true});

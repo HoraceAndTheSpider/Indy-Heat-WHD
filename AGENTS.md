@@ -1,5 +1,20 @@
+## Mandatory startup protocol
+
+- Read this `AGENTS.md` before doing any project work.
+- Treat the current checked-in `master`, current pushed wiki, checked-in tests and the latest project handover/runtime-proof documents as authority.
+- Do not repeat settled reverse-engineering merely because work has moved to a new conversation. Re-open an established finding only when current source/data or a new runtime test contradicts it.
+- When the user reports behaviour observed in the live editor or Amiga runtime, treat that observation as the acceptance result. The presence of source code or a passing static test is not proof that a UI/runtime feature works.
+
+## User deliverables
+
+- For HTML5 editor/app changes, deliver a ZIP containing the **complete replacement app files** at their repository-relative paths. The ZIP must be suitable for extraction over the repository. Do not present `.patch`, `.diff`, installer/apply scripts, or partial code fragments as the user deliverable.
+- Do **not** present Node test/helper files as a user deliverable and do not ask the user to run Node tests unless the user explicitly requests them. Checked-in tests may still be inspected or maintained internally when useful.
+- For WHDLoad slave changes, deliver the **complete changed `.asm` source file** for the user to compile/test. Do not substitute a patch, diff or apply script for the full source.
+- If `AGENTS.md` itself is changed, provide the complete replacement `AGENTS.md` for upload.
+- Runtime fixture/data files may be included when genuinely required by the feature, but they do not replace the complete app files or complete `.asm` source required above.
+
 ## WHDLoad slave development rules
 
 - Treat the current checked-in WHDLoad slave source as authoritative. Before applying new changes, confirm that existing WHDLoad header fields, `ws_config` entries, CUSTOM options and trainer behaviour are preserved unless the user explicitly asks to change them.
-- ChatGPT is **not expected to compile the WHDLoad slave**. The user will compile/test the Amiga slave source. Provide source changes, focused static/contract tests and any required runtime fixture files; do not treat the absence of a local Amiga assembler as a blocker or limitation requiring discussion each time.
+- ChatGPT is **not expected to compile the WHDLoad slave**. The user will compile/test the Amiga slave source. Do not treat the absence of a local Amiga assembler as a blocker. Static/source inspection may be used internally, but the user-facing deliverable remains the complete changed `.asm` source.
 - The project is developing the next and final WHDLoad slave release as **version 1.3**. Development builds must be labelled sequentially as **`1.3 test 1`**, **`1.3 test 2`**, etc. Do not create intermediate version numbers such as 1.4. When the work is release-ready, the final version string is simply **`1.3`**.
