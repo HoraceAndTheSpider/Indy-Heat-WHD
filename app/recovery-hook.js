@@ -70,18 +70,23 @@ root.IndyHeatEditorBridge={
 // Shared main/race capture for the race-setup editor.  This is intentionally hooked
 // before app.js runs, just like the established recovery capture, so the editor can
 // modify the same decrunched main image without adding another Disk.1 loader.
-const raceCapture=root.IndyHeatRaceSetupCapture={generation:0,model:null,originalMain:null,records:null};
+const raceCapture=root.IndyHeatRaceSetupCapture={generation:0,model:null,originalMain:null,records:null,coreModel:null,layerModel:null,models:[],recordsByMain:new Map()};
 const trackIndex=()=>Number(document.getElementById('trackSelect')?.value||0);
 const trim=a=>{if(a.length>80)a.splice(0,a.length-80);};
 function emitRaceCapture(type){document.dispatchEvent(new CustomEvent('indyheat-race-setup-capture',{detail:{type,generation:raceCapture.generation,trackIndex:trackIndex()}}));}
 
 const makeDiskModel=T.makeDiskModel.bind(T);
 T.makeDiskModel=function(disk){
-  const model=makeDiskModel(disk);
+  const model=makeDiskModel(disk),stack=String(new Error().stack||'');
   raceCapture.generation++;
   raceCapture.model=model;
   raceCapture.originalMain=model.main.slice();
   raceCapture.records=null;
+  if(!raceCapture.models.includes(model))raceCapture.models.push(model);
+  if(/(?:^|\/)app\.js(?::|\?)/.test(stack))raceCapture.coreModel=model;
+  else if(/layer-editor\.js(?::|\?)/.test(stack))raceCapture.layerModel=model;
+  else if(!raceCapture.coreModel)raceCapture.coreModel=model;
+  else if(!raceCapture.layerModel&&raceCapture.coreModel!==model)raceCapture.layerModel=model;
   emitRaceCapture('model');
   return model;
 };
@@ -89,11 +94,15 @@ T.makeDiskModel=function(disk){
 const parseRaceRecords=T.parseRaceRecords.bind(T);
 T.parseRaceRecords=function(main,...args){
   const records=parseRaceRecords(main,...args);
+  raceCapture.recordsByMain.set(main,records);
   if(raceCapture.model&&main===raceCapture.model.main){raceCapture.records=records;emitRaceCapture('records');}
   return records;
 };
 
-function bumpGeneration(){capture.generation++;capture.epoch++;capture.heading.length=0;capture.surface.length=0;capture.background.length=0;}
+function bumpGeneration(){
+  capture.generation++;capture.epoch++;capture.heading.length=0;capture.surface.length=0;capture.background.length=0;
+  raceCapture.model=null;raceCapture.originalMain=null;raceCapture.records=null;raceCapture.coreModel=null;raceCapture.layerModel=null;raceCapture.models=[];raceCapture.recordsByMain=new Map();
+}
 document.getElementById('fileInput')?.addEventListener('change',bumpGeneration,true);
 document.getElementById('dropZone')?.addEventListener('drop',bumpGeneration,true);
 document.getElementById('trackSelect')?.addEventListener('change',()=>{capture.epoch++;},true);
@@ -140,6 +149,9 @@ function loadEditorExtensions(){
   }
   if(!document.querySelector('script[data-indyheat-track-backdrop]')){
     const s=document.createElement('script');s.src='track-backdrop.js';s.dataset.indyheatTrackBackdrop='1';document.head.appendChild(s);
+  }
+  if(!document.querySelector('script[data-indyheat-circuit-package]')){
+    const s=document.createElement('script');s.src='circuit-package.js';s.dataset.indyheatCircuitPackage='1';document.head.appendChild(s);
   }
 }
 if(document.readyState==='complete')setTimeout(loadEditorExtensions,0);

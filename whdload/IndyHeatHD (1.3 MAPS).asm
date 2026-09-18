@@ -13,11 +13,10 @@
 
 
 ;
-; Development 1.3 test 15 consolidated custom-track presentation build:
+; Development 1.3 test 5 regional-map runtime test:
 ; - preserve the 1.21 WHDLoad v17 header and original CUSTOM1 trainer options;
 ; - CUSTOM2=1 enters PL_CUSTOMTRACKS, which chains to pl_boot with PL_NEXT;
 ; - CUSTOM2<>1 starts directly at pl_boot;
-; - CUSTOM2=1 composes arbitrary 0-99 on-track lap totals into retail frame 0;
 ; - CUSTOM2=1 enables event-local Gasoline Alley regional map replacement;
 ; - retain external per-event setup overrides;
 ; - external decompressed background overrides require CUSTOM2=1;
@@ -128,7 +127,7 @@ _config:	dc.b    "C1:X:Infinite coins:0;"	; ws_config;
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 15"
+	dc.b	"1.3 test 5"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -255,17 +254,10 @@ patch_boot
 ;
 ; This is the dedicated entry patch list for custom-track work.
 ;
-; Test 15 combines the two runtime-proven custom-mode branches without
-; changing either proven draw/load mechanism:
-;
-; - Test 14 hook at $66C2 composes arbitrary 0-99 lap totals into the existing
-;   retail frame-0 live payload, then resumes the untouched $66CA renderer.
-; - Test 5 regional-map replacement stays inside the existing common $BDE4
-;   Load hook, exact-CUSTOM2=1 gated, because that hook is shared by retail and
-;   custom modes and PL_NEXT would overwrite a second patch at the same site.
-;
-; Gasoline Alley lap text still needs no patch: it reads race+$28 directly and
-; passes the value to the normal numeric formatter at $6F24.
+; Test 5 deliberately adds no second patch at $BDE4: the existing common
+; Load hook is required in both modes, and its CUSTOM2=1 branch is also the
+; access point for regional-map replacement.  Future direct custom-only game
+; patches still belong here before PL_NEXT.
 ;
 ; PL_NEXT terminates this list and continues with the normal/common pl_boot.
 ;---------------------------------------------------------------------------
@@ -273,160 +265,7 @@ patch_boot
 PL_CUSTOMTRACKS
 	PL_START
 
-	; Replace the lap-value load plus unsafe retail 8-12 lookup (8 bytes).
-	; PL_PSS emits the JSR at $66C2 and skips the final two bytes so RTS resumes
-	; at the untouched $66CA LEA $4270,A0.
-	PL_PSS	$66C2,custom_lap_total,2
-
 	PL_NEXT	pl_boot
-
-
-;---------------------------------------------------------------------------
-; CUSTOM ON-TRACK TOTAL-LAPS GRAPHIC — TEST 15 (TEST-14 PROVEN CODE)
-;
-; The earlier failed experiments manipulated the descriptor path unnecessarily.
-; Live debugger evidence establishes a much simpler contract:
-;
-;   $4270.l -> runtime descriptor array
-;   descriptor 0 +$0E.l -> live retail "8" 50-byte pixel payload
-;   five planes, five rows, one 16-bit word per row = 50 bytes, plane-major
-;
-; The descriptor already carries the parsed dimensions/origins/transparency, so
-; +$0E is the payload pointer rather than a 62-byte frame-header pointer.
-; We therefore reuse one already-valid retail object. D0/D1 positioning,
-; descriptor selection and the complete draw path after $66CA are untouched.
-;---------------------------------------------------------------------------
-
-custom_lap_total
-	; Entry replaces $66C2-$66C9.  A0 is still the active $82-byte race record;
-	; D0/D1 already contain the normal retail draw position.
-	movem.l	d3-d7/a1-a4,-(a7)
-
-	moveq	#0,d3
-	move.w	$28(a0),d3		; requested event total laps
-
-	; Presentation contract is 0-99; normal authored tracks should use 1-99.
-	cmp.w	#99,d3
-	bls.b	.lap_in_range
-	moveq	#99,d3
-.lap_in_range
-
-	; Resolve the game's OWN valid frame-0 pixel payload:
-	;   $4270.l -> descriptor array
-	;   descriptor 0 +$0E.l -> 50-byte plane-major payload
-	movea.l	$4270.w,a1
-	move.l	a1,d7
-	tst.l	d7
-	beq.w	.draw_frame0
-	movea.l	$0E(a1),a1
-	move.l	a1,d7
-	tst.l	d7
-	beq.w	.draw_frame0
-
-	; DIVU result: quotient/tens in low word, remainder/units in high word.
-	move.l	d3,d4
-	divu	#10,d4
-	moveq	#0,d5
-	move.w	d4,d5
-	swap	d4
-	moveq	#0,d6
-	move.w	d4,d6
-
-	lea	lap_digit_masks(pc),a2
-
-	; A3 -> tens glyph.  Blank the leading tens cell for a single digit.
-	move.l	a2,a3
-	tst.w	d5
-	bne.b	.have_tens
-	moveq	#10,d5
-.have_tens
-	mulu	#10,d5
-	adda.w	d5,a3
-
-	; A4 -> units glyph.
-	move.l	a2,a4
-	mulu	#10,d6
-	adda.w	d6,a4
-
-	; descriptor+$0E already addresses the first payload byte. Test 12's
-	; +12 offset only rewrote the tail and produced the observed 0-like result.
-	; Rewrite the complete 50-byte plane-major payload in place.
-	moveq	#4,d7			; five rows
-
-.row
-	; Dark shade ($05), tens x=1..3 then units x=5..7.
-	moveq	#0,d3
-	move.b	(a3)+,d3
-	lsl.w	#8,d3
-	lsl.w	#4,d3
-
-	; Light shade ($06).
-	moveq	#0,d4
-	move.b	(a3)+,d4
-	lsl.w	#8,d4
-	lsl.w	#4,d4
-
-	moveq	#0,d5
-	move.b	(a4)+,d5
-	lsl.w	#8,d5
-	or.w	d5,d3
-
-	moveq	#0,d6
-	move.b	(a4)+,d6
-	lsl.w	#8,d6
-	or.w	d6,d4
-
-	; Source colours:
-	;   field $01 = plane0 set
-	;   shade $05 = planes0+2
-	;   shade $06 = planes1+2
-	; Valid 9 pixels occupy word bits 15..7.
-	move.w	#$FF80,d5
-	move.w	d4,d6
-	not.w	d6
-	and.w	d6,d5
-
-	move.w	d5,(a1)		; plane 0
-	move.w	d4,10(a1)		; plane 1
-	or.w	d3,d4
-	move.w	d4,20(a1)		; plane 2
-	clr.w	30(a1)			; plane 3
-	clr.w	40(a1)			; plane 4
-	addq.l	#2,a1
-	dbf	d7,.row
-
-.draw_frame0
-	moveq	#0,d2			; always select the modified retail "8" slot
-	movem.l	(a7)+,d3-d7/a1-a4
-	rts
-
-
-; Per digit: five rows of [dark-mask, light-mask], each three bits wide.
-; Derived directly from the supplied digits.iff.
-lap_digit_masks
-	; 0
-	dc.b	$05,$02,$00,$05,$05,$00,$00,$05,$05,$02
-	; 1
-	dc.b	$02,$00,$00,$02,$00,$02,$00,$02,$02,$00
-	; 2
-	dc.b	$05,$02,$00,$01,$05,$02,$00,$04,$05,$02
-	; 3
-	dc.b	$05,$02,$00,$01,$05,$02,$00,$01,$05,$02
-	; 4
-	dc.b	$05,$00,$00,$05,$05,$02,$00,$01,$01,$00
-	; 5
-	dc.b	$05,$02,$00,$04,$05,$02,$00,$01,$05,$02
-	; 6
-	dc.b	$05,$02,$00,$04,$05,$02,$00,$05,$05,$02
-	; 7
-	dc.b	$05,$02,$00,$01,$01,$00,$00,$01,$01,$00
-	; 8
-	dc.b	$05,$02,$00,$05,$05,$02,$00,$05,$05,$02
-	; 9
-	dc.b	$05,$02,$00,$05,$05,$02,$00,$01,$05,$02
-	; blank tens glyph
-	dc.b	$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-	even
 
 
 ;---------------------------------------------------------------------------
@@ -660,13 +499,6 @@ apply_playlist
 	move.w	2(a4),d0
 	cmp.w	#PLAYLIST_INHERIT_LAPS,d0
 	beq.b	.laps_done
-
-	; Custom playlist values are intentionally bounded to the two-digit
-	; presentation/race contract.  $FFFF above still means inherit.
-	cmp.w	#99,d0
-	bls.b	.lap_override_in_range
-	moveq	#99,d0
-.lap_override_in_range
 	move.w	d0,$28(a3)
 .laps_done
 
@@ -941,14 +773,14 @@ region_map_name_offsets
 	dc.w	region_map_5_name-region_map_name_offsets
 	dc.w	region_map_6_name-region_map_name_offsets
 	dc.w	region_map_7_name-region_map_name_offsets
-region_map_0_name	dc.b	"maps/indyheat_map_0_usa.bin",0
-region_map_1_name	dc.b	"maps/indyheat_map_1_world.bin",0
-region_map_2_name	dc.b	"maps/indyheat_map_2_north_america.bin",0
-region_map_3_name	dc.b	"maps/indyheat_map_3_south_america.bin",0
-region_map_4_name	dc.b	"maps/indyheat_map_4_europe.bin",0
-region_map_5_name	dc.b	"maps/indyheat_map_5_africa.bin",0
-region_map_6_name	dc.b	"maps/indyheat_map_6_asia.bin",0
-region_map_7_name	dc.b	"maps/indyheat_map_7_australasia.bin",0
+region_map_0_name	dc.b	"indyheat_map_0_usa.bin",0
+region_map_1_name	dc.b	"indyheat_map_1_world.bin",0
+region_map_2_name	dc.b	"indyheat_map_2_north_america.bin",0
+region_map_3_name	dc.b	"indyheat_map_3_south_america.bin",0
+region_map_4_name	dc.b	"indyheat_map_4_europe.bin",0
+region_map_5_name	dc.b	"indyheat_map_5_africa.bin",0
+region_map_6_name	dc.b	"indyheat_map_6_asia.bin",0
+region_map_7_name	dc.b	"indyheat_map_7_australasia.bin",0
 	even
 pending_region_map_name	dc.l	0
 pending_region_map_dest	dc.l	0

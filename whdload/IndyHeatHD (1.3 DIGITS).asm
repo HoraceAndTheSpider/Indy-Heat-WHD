@@ -13,12 +13,11 @@
 
 
 ;
-; Development 1.3 test 15 consolidated custom-track presentation build:
+; Development 1.3 test 14 live frame-0 lap-total compositor:
 ; - preserve the 1.21 WHDLoad v17 header and original CUSTOM1 trainer options;
 ; - CUSTOM2=1 enters PL_CUSTOMTRACKS, which chains to pl_boot with PL_NEXT;
 ; - CUSTOM2<>1 starts directly at pl_boot;
 ; - CUSTOM2=1 composes arbitrary 0-99 on-track lap totals into retail frame 0;
-; - CUSTOM2=1 enables event-local Gasoline Alley regional map replacement;
 ; - retain external per-event setup overrides;
 ; - external decompressed background overrides require CUSTOM2=1;
 ; - retain the runtime-proven eleven-event retail-track playlist remap;
@@ -56,12 +55,6 @@ TRACK_BACKGROUND_SIZE   EQU     $C800
 RESOURCE_TABLE_RUNTIME  EQU     $4C6A
 RESOURCE_ENTRY_SIZE     EQU     22
 RESOURCE_ENTRY_COUNT    EQU     108
-REGION_MAP_COUNT        EQU     8
-REGION_SELECTOR_SIZE    EQU     RACE_RECORD_COUNT
-REGION_MAP_RESOURCE_ID  EQU     $16
-REGION_MAP_RESOURCE_SIZE EQU    $20B6
-REGION_MAP_FRAME_OFFSET EQU     $177C
-REGION_MAP_BOB_SIZE     EQU     $093A
 
 	INCDIR	Includes:
 	INCLUDE	whdload.i
@@ -128,7 +121,7 @@ _config:	dc.b    "C1:X:Infinite coins:0;"	; ws_config;
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 15"
+	dc.b	"1.3 test 14"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -234,7 +227,6 @@ patch_boot
 	bne.b	.retail_patches
 
 	bsr.w	apply_playlist
-	bsr.w	load_region_selector
 	lea	PL_CUSTOMTRACKS(pc),a0
 	bra.b	.apply_patches
 
@@ -255,16 +247,23 @@ patch_boot
 ;
 ; This is the dedicated entry patch list for custom-track work.
 ;
-; Test 15 combines the two runtime-proven custom-mode branches without
-; changing either proven draw/load mechanism:
+; Test 11 adds the corrected arbitrary-lap presentation hook.  Runtime tracing
+; proved the retail path:
 ;
-; - Test 14 hook at $66C2 composes arbitrary 0-99 lap totals into the existing
-;   retail frame-0 live payload, then resumes the untouched $66CA renderer.
-; - Test 5 regional-map replacement stays inside the existing common $BDE4
-;   Load hook, exact-CUSTOM2=1 gated, because that hook is shared by retail and
-;   custom modes and PL_NEXT would overwrite a second patch at the same site.
+;   $66C2  MOVE.W  $28(A0),D2
+;   $66C6  MOVE.B  lookup(PC,D2.W),D2
+;   $66CA  LEA     $4270,A0
+;   $66CE  BRA.W   $48E4
 ;
-; Gasoline Alley lap text still needs no patch: it reads race+$28 directly and
+; $4270 contains the live descriptor-array pointer.  Descriptor 0 is the
+; retail "8 laps" frame.  Its +$0E LONG is the live 62-byte resource-$00 BOB
+; pointer (observed $0003ECE4); subsequent frames are +$3E apart. Test 12
+; proved writes through that pointer change the displayed 8, and test 13
+; corrects the interpretation: +$0E is already the 50-byte pixel-payload
+; pointer. Test 14 rewrites those 50 bytes directly and forces frame index 0.
+; The original $66CA -> $48E4 -> $4916 renderer remains completely untouched.
+;
+; Gasoline Alley needs no patch: tracing proved it reads race+$28 directly and
 ; passes the value to the normal numeric formatter at $6F24.
 ;
 ; PL_NEXT terminates this list and continues with the normal/common pl_boot.
@@ -282,7 +281,7 @@ PL_CUSTOMTRACKS
 
 
 ;---------------------------------------------------------------------------
-; CUSTOM ON-TRACK TOTAL-LAPS GRAPHIC — TEST 15 (TEST-14 PROVEN CODE)
+; CUSTOM ON-TRACK TOTAL-LAPS GRAPHIC — TEST 14
 ;
 ; The earlier failed experiments manipulated the descriptor path unnecessarily.
 ; Live debugger evidence establishes a much simpler contract:
@@ -779,181 +778,6 @@ track_template_buffer
 	even
 
 ;---------------------------------------------------------------------------
-; Gasoline Alley regional map override — CUSTOM2=1 only.
-;
-; Map IDs are event-local presentation metadata and deliberately remain
-; separate from playlist v1.  Optional file "indyheat_region_select.bin" is
-; exactly 11 bytes: one map ID (0..7) for each championship event slot.
-; Missing/wrong-sized selector -> all events use map ID 0 (USA).
-;
-; Fixed map IDs:
-;   0 USA (original)       1 World              2 North America
-;   3 South America       4 Europe             5 Africa
-;   6 Asia                7 Australasia
-;
-; Resource $16 is $20B6 bytes decompressed.  Its second/final BOB begins at
-; +$177C and is the 78x47 Gasoline Alley regional map.  Each external map is
-; the complete replacement BOB ($093A / 2362 bytes), not a whole resource.
-;
-; The game's normal load/decrunch path remains authoritative.  When Load sees
-; resource $16 it arms a pending replacement for frame +$177C.  The next game
-; Load call occurs after the resource has been decrunched; apply_pending_map
-; then replaces only that frame.  Missing/wrong-sized map file fails closed,
-; leaving the original USA map intact.
-;---------------------------------------------------------------------------
-
-load_region_selector
-	movem.l	d0-d2/a0-a2,-(a7)
-
-	; Deterministic fallback: all event slots use the original USA map.
-	lea	region_selector(pc),a0
-	moveq	#0,d0
-	moveq	#REGION_SELECTOR_SIZE-1,d1
-.clear
-	move.b	d0,(a0)+
-	dbf	d1,.clear
-
-	lea	region_selector_name(pc),a0
-	move.l	_resload(pc),a2
-	jsr	resload_GetFileSize(a2)
-	cmp.l	#REGION_SELECTOR_SIZE,d0
-	bne.b	.done
-
-	lea	region_selector_name(pc),a0
-	lea	region_selector(pc),a1
-	move.l	_resload(pc),a2
-	jsr	resload_LoadFile(a2)
-
-	; Validate every byte before runtime use.  Invalid bytes become USA rather
-	; than rejecting otherwise useful event selections.
-	lea	region_selector(pc),a0
-	moveq	#REGION_SELECTOR_SIZE-1,d1
-.validate
-	cmp.b	#REGION_MAP_COUNT-1,(a0)
-	bls.b	.next
-	clr.b	(a0)
-.next
-	addq.l	#1,a0
-	dbf	d1,.validate
-.done
-	movem.l	(a7)+,d0-d2/a0-a2
-	rts
-
-
-apply_pending_region_map
-	movem.l	d0-d2/a0-a4,-(a7)
-	lea	pending_region_map_name(pc),a3
-	move.l	(a3),d0
-	beq.b	.done
-	move.l	d0,a0
-	lea	pending_region_map_dest(pc),a4
-	move.l	(a4),d1
-	beq.b	.clear
-	move.l	d1,a1
-	clr.l	(a3)
-	clr.l	(a4)
-	move.l	a0,a3
-	move.l	a1,a4
-	move.l	_resload(pc),a2
-	jsr	resload_GetFileSize(a2)
-	cmp.l	#REGION_MAP_BOB_SIZE,d0
-	bne.b	.done
-	move.l	a3,a0
-	move.l	a4,a1
-	move.l	_resload(pc),a2
-	jsr	resload_LoadFile(a2)
-	bra.b	.done
-.clear
-	clr.l	(a3)
-	clr.l	(a4)
-.done
-	movem.l	(a7)+,d0-d2/a0-a4
-	rts
-
-
-; D1.w = disk sector requested by game, A0 = compressed/decrunch destination,
-; A6 = normal game base register from the caller.
-arm_region_map_override
-	movem.l	d0-d5/a0-a4,-(a7)
-	move.w	d1,d5
-	lea	RESOURCE_TABLE_RUNTIME.w,a1
-	moveq	#RESOURCE_ENTRY_COUNT-1,d4
-.find_resource
-	cmp.w	2(a1),d5
-	bne.b	.next_resource
-	cmp.w	#REGION_MAP_RESOURCE_ID,(a1)
-	bne.b	.done
-	cmp.l	#REGION_MAP_RESOURCE_SIZE,6(a1)
-	bne.b	.done
-
-	; Resolve current event slot from the runtime-proven A6+$3DD6 pointer.
-	; If called outside a valid event window, fall back to slot 0 / USA.
-	moveq	#0,d3
-	move.l	$3DD6(a6),d0
-	cmp.l	#RACE_RUNTIME_BASE,d0
-	blo.b	.have_event
-	cmp.l	#RACE_RUNTIME_BASE+(RACE_RECORD_COUNT*RACE_RECORD_SIZE),d0
-	bhs.b	.have_event
-	sub.l	#RACE_RUNTIME_BASE,d0
-	divu	#RACE_RECORD_SIZE,d0
-	move.w	d0,d3
-.have_event
-
-	lea	region_selector(pc),a2
-	moveq	#0,d0
-	move.b	0(a2,d3.w),d0
-	cmp.w	#REGION_MAP_COUNT-1,d0
-	bls.b	.map_ok
-	moveq	#0,d0
-.map_ok
-	add.w	d0,d0			; word-offset table
-	lea	region_map_name_offsets(pc),a2
-	move.w	0(a2,d0.w),d1
-	lea	region_map_name_offsets(pc),a3
-	adda.w	d1,a3
-
-	lea	pending_region_map_name(pc),a2
-	move.l	a3,(a2)
-	lea	pending_region_map_dest(pc),a2
-	lea	REGION_MAP_FRAME_OFFSET(a0),a3
-	move.l	a3,(a2)
-	bra.b	.done
-.next_resource
-	lea	RESOURCE_ENTRY_SIZE(a1),a1
-	dbf	d4,.find_resource
-.done
-	movem.l	(a7)+,d0-d5/a0-a4
-	rts
-
-region_selector_name
-	dc.b	"indyheat_region_select.bin",0
-	even
-region_selector
-	ds.b	REGION_SELECTOR_SIZE
-	even
-
-region_map_name_offsets
-	dc.w	region_map_0_name-region_map_name_offsets
-	dc.w	region_map_1_name-region_map_name_offsets
-	dc.w	region_map_2_name-region_map_name_offsets
-	dc.w	region_map_3_name-region_map_name_offsets
-	dc.w	region_map_4_name-region_map_name_offsets
-	dc.w	region_map_5_name-region_map_name_offsets
-	dc.w	region_map_6_name-region_map_name_offsets
-	dc.w	region_map_7_name-region_map_name_offsets
-region_map_0_name	dc.b	"maps/indyheat_map_0_usa.bin",0
-region_map_1_name	dc.b	"maps/indyheat_map_1_world.bin",0
-region_map_2_name	dc.b	"maps/indyheat_map_2_north_america.bin",0
-region_map_3_name	dc.b	"maps/indyheat_map_3_south_america.bin",0
-region_map_4_name	dc.b	"maps/indyheat_map_4_europe.bin",0
-region_map_5_name	dc.b	"maps/indyheat_map_5_africa.bin",0
-region_map_6_name	dc.b	"maps/indyheat_map_6_asia.bin",0
-region_map_7_name	dc.b	"maps/indyheat_map_7_australasia.bin",0
-	even
-pending_region_map_name	dc.l	0
-pending_region_map_dest	dc.l	0
-
-;---------------------------------------------------------------------------
 ; External decompressed circuit-background override.
 ;---------------------------------------------------------------------------
 
@@ -1125,14 +949,13 @@ Load
 
 		; $BDE4 is a shared WHDLoad disk/save access point and is patched in
 		; pl_boot for both modes.  This is the one custom-mode gate retained
-		; inside a common routine: custom background/map files must never be
+		; inside a common routine: custom background files must never be
 		; probed or applied unless CUSTOM2 is exactly 1.
 		move.l	_custom2(pc),d4
 		cmp.l	#1,d4
-		bne.b	.no_pending_custom_assets
+		bne.b	.no_pending_background
 		bsr.w	apply_pending_background
-		bsr.w	apply_pending_region_map
-.no_pending_custom_assets
+.no_pending_background
 
 		tst.w	d2
 		beq.b	.skip
@@ -1141,10 +964,9 @@ Load
 		bne.b	Save
 
 		cmp.l	#1,d4
-		bne.b	.no_custom_asset_override
+		bne.b	.no_background_override
 		bsr.w	arm_background_override
-		bsr.w	arm_region_map_override
-.no_custom_asset_override
+.no_background_override
 
 		moveq	#0,D0
 		move.w	D1,D0

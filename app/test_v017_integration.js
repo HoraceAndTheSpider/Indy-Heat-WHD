@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('fs'),assert=require('assert');
+const pkg=fs.readFileSync('circuit-package.js','utf8');
+const patch=fs.readFileSync('editor-v0.17-integration.patch','utf8');
+assert(pkg.includes("const PRESENTATION_MAGIC='IHPR'"));assert(pkg.includes("const WAYPOINT_MAGIC='IHWP'"));
+assert(pkg.includes('presentation.bin'));assert(pkg.includes('waypoints.bin'));assert(!pkg.includes("folder+'circuit.json'"));assert(!pkg.includes("folder+'waypoints.json'"));
+assert(pkg.includes('id="circuitNumber" type="number" min="0" max="99"'));assert(pkg.includes('Export circuit ZIP'));
+assert(pkg.includes('Unpack into data/ to create data/${folder}/'));
+assert(patch.includes("s.src='circuit-package.js'"));assert(patch.includes("clampInt(values.laps,1,99,'Lap count')"));
+console.log('Indy Heat v0.17 integration static checks OK');
