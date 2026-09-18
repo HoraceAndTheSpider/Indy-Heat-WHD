@@ -38,8 +38,8 @@ if(!T||typeof document==='undefined')return;
 const capture=root.IndyHeatRecoveryCapture={generation:0,epoch:0,seq:0,heading:[],surface:[],background:[]};
 
 // Capture app.js's own Circuit <select> change listener while app.js is loaded after
-// this hook.  Backdrop import can then ask the core editor to re-run selectTrack()
-// directly instead of relying on a synthetic DOM change event.  The wrapper is
+// this hook. Backdrop import can then ask the core editor to re-run selectTrack()
+// directly instead of relying on a synthetic DOM change event. The wrapper is
 // restored before extension scripts are injected, so later editor modes see the
 // normal addEventListener implementation.
 const trackSelectElement=document.getElementById('trackSelect');
@@ -67,7 +67,7 @@ root.IndyHeatEditorBridge={
   }
 };
 
-// Shared main/race capture for the race-setup editor.  This is intentionally hooked
+// Shared main/race capture for the race-setup editor. This is intentionally hooked
 // before app.js runs, just like the established recovery capture, so the editor can
 // modify the same decrunched main image without adding another Disk.1 loader.
 const raceCapture=root.IndyHeatRaceSetupCapture={generation:0,model:null,originalMain:null,records:null,coreModel:null,layerModel:null,models:[],recordsByMain:new Map()};
@@ -110,9 +110,6 @@ document.getElementById('trackSelect')?.addEventListener('change',()=>{capture.e
 const decodePlanar=T.decodePlanar.bind(T);
 T.decodePlanar=function(data,width,height,planes,offset=0){
   const result=decodePlanar(data,width,height,planes,offset);
-  // app.js stores this exact returned Uint8Array in state.bg. Capture the object,
-  // not just the source resource, so backdrop import can update the live preview
-  // in place without trying to call app.js's private selectTrack()/render functions.
   if(width===320&&height===256&&planes===5){
     capture.background.push({generation:capture.generation,epoch:capture.epoch,trackIndex:trackIndex(),seq:++capture.seq,data,offset,result});
     trim(capture.background);
@@ -139,9 +136,17 @@ T.decodeSurface2bpp=function(data,offset=0){
   return result;
 };
 
+function loadV0196(){
+  if(document.querySelector('script[data-indyheat-editor-fixes-v0196]'))return;
+  const s=document.createElement('script');
+  s.src='editor-fixes-v0196.js';
+  s.dataset.indyheatEditorFixesV0196='1';
+  document.head.appendChild(s);
+}
+
 // Load the post-v0.11 editor extensions after the existing static editor scripts have
-// initialised. Keeping the bootstrap here avoids changing index.html while preserving the
-// required pre-app parser capture above.
+// initialised. v0.19.6 is explicitly chained after v0.19.5 so its global HUD capture
+// listener and final mode ordering win deterministically.
 function loadEditorExtensions(){
   if(restoreTrackAddListener)restoreTrackAddListener();
   if(!document.querySelector('script[data-indyheat-race-setup]')){
@@ -153,8 +158,19 @@ function loadEditorExtensions(){
   if(!document.querySelector('script[data-indyheat-circuit-package]')){
     const s=document.createElement('script');s.src='circuit-package.js';s.dataset.indyheatCircuitPackage='1';document.head.appendChild(s);
   }
-  if(!document.querySelector('script[data-indyheat-editor-fixes-v0193]')){
-    const s=document.createElement('script');s.src='editor-fixes-v0193.js';s.dataset.indyheatEditorFixesV0193='1';document.head.appendChild(s);
+
+  const existing=document.querySelector('script[data-indyheat-editor-fixes-v0193]');
+  if(!existing){
+    const s=document.createElement('script');
+    s.src='editor-fixes-v0193.js';
+    s.dataset.indyheatEditorFixesV0193='1';
+    s.addEventListener('load',loadV0196,{once:true});
+    document.head.appendChild(s);
+  }else{
+    // This branch is mainly defensive for hot reloads. The v0.19.6 module retries
+    // its own installation until the v0.19.5-created UI exists.
+    existing.addEventListener('load',loadV0196,{once:true});
+    setTimeout(loadV0196,100);
   }
 }
 if(document.readyState==='complete')setTimeout(loadEditorExtensions,0);
