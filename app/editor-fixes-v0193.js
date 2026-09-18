@@ -2,26 +2,20 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.19.4 corrective UI layer.
+ * Indy Heat Circuit Editor v0.19.5 corrective UI layer.
  *
  * Loader compatibility:
  *   The filename remains editor-fixes-v0193.js because recovery-hook.js on the
  *   current master already loads that path.  This replacement deliberately
- *   updates the visible editor version to v0.19.4 without changing the circuit
+ *   updates the visible editor version to v0.19.5 without changing the circuit
  *   package/runtime formats.
  *
- * v0.19.4 fixes:
- * - reliable Recovery/other-mode exclusion;
- * - deterministic mode-button ordering;
- * - consistent default overlay ownership on mode changes;
- * - fold headers with adjacent master checkboxes;
- * - Zoom label simplification;
- * - authored lap range 1..20;
- * - exact 8-bit retail current-lap/timer glyph positioning;
- * - on-track total-laps preview changed to 20 using the race palette;
- * - direct drag of the visible Race HUD/lap tower;
- * - removal of the old top-left "LAPS n" debug label;
- * - family-aware race->Gasoline Alley miniature recolouring.
+ * v0.19.5 consolidates the remaining Race-HUD/UI fixes:
+ * - render the genuine $6B02 two-tone/masked current-lap and timer cells;
+ * - move HUD dragging onto a dedicated hit-region aligned with the visible HUD;
+ * - keep a stable-width editor column whether or not vertical scrolling is needed;
+ * - defer MiniMap recolouring until the project supplies an explicit remap table;
+ * - keep the established v0.19.4 mode, fold and 1..20-lap behaviour.
  */
 
 if(typeof document==='undefined')return;
@@ -34,8 +28,15 @@ const HUD_LAYOUT=Object.freeze({
   totalLaps:Object.freeze({x:-4,y:43}),
   timerDigits:Object.freeze([{x:-8,y:47},{x:0,y:47},{x:8,y:47}])
 });
-const HUD_CAR_COLOURS=Object.freeze([7,24,23,15]); // red, yellow, blue, grey in presentation palette
-const HUD_TIMER_GREY=15;
+const HUD_CAR_SOURCE_ORDER=Object.freeze([0,2,1,3]); // retail source blocks: red, yellow, blue, grey
+const HUD_TIMER_SOURCE=3;
+const RETAIL_HUD_MASK_SINGLE=Object.freeze([0x1C,0xBE,0xBE,0x1C,0xBE,0xBE,0x1C]);
+const RETAIL_HUD_SOURCE_ROWS=Object.freeze([
+  Object.freeze([0x7F,0x7F,0x7F,0x7F,0x7F]), // red source
+  Object.freeze([0x7F,0x7F,0x7F,0x7F,0x00]), // blue source
+  Object.freeze([0x7F,0x7F,0x7F,0x00,0x7F]), // yellow source
+  Object.freeze([0x7F,0x7F,0x7F,0x00,0x00])  // grey source / timer
+]);
 const LAP_TOTAL_ORIGIN=Object.freeze({x:5,y:3});
 
 let hudDrag=null;
@@ -122,24 +123,33 @@ function presentation(){
 }
 
 function setVersionLabel(){
-  const re=/v0\.(?:11|12|13|14|15|16|17|18|19(?:\.[1-4])?)/i;
+  const re=/v0\.(?:11|12|13|14|15|16|17|18|19(?:\.[1-5])?)/i;
   const h=document.querySelector('header h1');
-  if(h)h.textContent=h.textContent.replace(re,'v0.19.4');
-  document.title=document.title.replace(re,'v0.19.4');
+  if(h)h.textContent=h.textContent.replace(re,'v0.19.5');
+  document.title=document.title.replace(re,'v0.19.5');
 }
 
 function installStyle(){
-  if($('indyheatFix0194Style'))return;
+  if($('indyheatFix0195Style'))return;
   const s=document.createElement('style');
-  s.id='indyheatFix0194Style';
+  s.id='indyheatFix0195Style';
   s.textContent=`
-    body[data-indyheat-v0194-fix="1"] #circuitRaceHudCanvas,
-    body[data-indyheat-v0194-fix="1"] #editorFixHudCanvas{display:none!important}
+    body[data-indyheat-v0195-fix="1"] #circuitRaceHudCanvas,
+    body[data-indyheat-v0195-fix="1"] #editorFixHudCanvas{display:none!important}
     #editorFixHudCanvas194{
       position:absolute;inset:0;z-index:6;display:block;pointer-events:none;
       image-rendering:pixelated;image-rendering:crisp-edges
     }
     #editorFixHudCanvas194[hidden]{display:none!important}
+    #editorFixHudDragHit194{
+      position:absolute;z-index:7;display:block;cursor:move;touch-action:none;
+      background:transparent;user-select:none;-webkit-user-select:none
+    }
+    #editorFixHudDragHit194[hidden]{display:none!important}
+    #layerEditorColumn{
+      box-sizing:border-box!important;width:286px!important;min-width:286px!important;max-width:286px!important;
+      overflow-y:scroll!important;overflow-x:hidden!important;scrollbar-gutter:stable!important
+    }
 
     #layerModeButtons{
       grid-template-columns:repeat(3,minmax(0,1fr))!important
@@ -165,6 +175,7 @@ function installStyle(){
     details.indyheatViewFold .classToggles{padding-left:12px}
     .indyheatViewToggleBody,.circuitViewToggleBody{padding:3px 0 4px 12px}
     .indyheatViewToggleBody label,.circuitViewToggleBody label{margin:5px 0}
+    @media(max-width:1050px){#layerEditorColumn{width:100%!important;min-width:0!important;max-width:none!important;overflow-y:visible!important;scrollbar-gutter:auto!important}}
   `;
   document.head.appendChild(s);
 }
@@ -492,27 +503,7 @@ function installLapGuards(){
  * Remove old Race canvas top-left "LAPS n" debug label without touching the
  * authentic pit/start/flag graphics on that canvas.
  * ---------------------------------------------------------------------- */
-function patchRaceCanvasDebugLabel(){
-  const c=$('raceSetupCanvas');
-  if(!c||raceCanvasPatched)return !!c;
-  const ctx=c.getContext('2d');
-  if(!ctx)return false;
-
-  const fillText=ctx.fillText.bind(ctx);
-  ctx.fillText=function(text,...args){
-    if(/^LAPS\s+\d+$/i.test(String(text)))return;
-    return fillText(text,...args);
-  };
-
-  const fillRect=ctx.fillRect.bind(ctx);
-  ctx.fillRect=function(x,y,w,h,...args){
-    const S=(c.width||960)/TRACK_W;
-    if(Math.abs(x-4*S)<0.75&&Math.abs(y-4*S)<0.75&&Math.abs(h-7*S)<0.75)return;
-    return fillRect(x,y,w,h,...args);
-  };
-  raceCanvasPatched=true;
-  return true;
-}
+function patchRaceCanvasDebugLabel(){return true;}
 
 /* -------------------------------------------------------------------------
  * Pixel-accurate Race HUD.
@@ -530,16 +521,26 @@ function raceRgb(index){
   const T=indyTools(),w=T?.VERIFIED_TRACK_PALETTE_WORDS?.[index]??0xfff;
   return rgb(w);
 }
-function drawRetailGlyph(ctx,digit,x,y,S,colourIndex){
+function drawRetailGlyph(ctx,digit,x,y,S,sourceIndex){
   const rows=packageTools()?.GAME_HUD_DIGITS?.[Number(digit)];
-  if(!rows)return;
-  const c=presentationRgb(colourIndex);
-  ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+  const source=RETAIL_HUD_SOURCE_ROWS[Number(sourceIndex)];
+  if(!rows||!source)return;
   for(let yy=0;yy<7;yy++){
-    const bits=rows[yy]||0;
+    const glyph=rows[yy]||0,mask=RETAIL_HUD_MASK_SINGLE[yy]||0;
     for(let xx=0;xx<8;xx++){
-      if(bits&(1<<(7-xx)))
-        ctx.fillRect((x+xx)*S,(y+yy)*S,Math.max(1,S),Math.max(1,S));
+      const bit=0x80>>>xx;
+      let colourIndex=1; // $6B02 leaves the cell background as race palette colour 1 (black).
+      if(glyph&bit){
+        colourIndex=0;
+        if(source[0]&bit)colourIndex|=1;
+        if((source[1]&bit)&&(mask&bit))colourIndex|=2;
+        if(source[2]&bit)colourIndex|=4;
+        if(source[3]&bit)colourIndex|=8;
+        if(source[4]&bit)colourIndex|=16;
+      }
+      const c=raceRgb(colourIndex);
+      ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+      ctx.fillRect((x+xx)*S,(y+yy)*S,Math.max(1,S),Math.max(1,S));
     }
   }
 }
@@ -587,15 +588,41 @@ function ensureHudCanvas(){
     c.hidden=true;
     stack.appendChild(c);
   }
+  let hit=$('editorFixHudDragHit194');
+  if(!hit){
+    hit=document.createElement('div');
+    hit.id='editorFixHudDragHit194';
+    hit.hidden=true;
+    hit.title='Drag lap tower / HUD';
+    stack.appendChild(hit);
+  }
   if(c.width!==view.width||c.height!==view.height){
     c.width=view.width;c.height=view.height;
     c.getContext('2d').imageSmoothingEnabled=false;
   }
   if(!resizeObserver&&typeof ResizeObserver!=='undefined'){
-    resizeObserver=new ResizeObserver(renderHud);
+    resizeObserver=new ResizeObserver(()=>renderHud());
     resizeObserver.observe(view);
   }
   return true;
+}
+function syncHudDragHit(p){
+  const hit=$('editorFixHudDragHit194'),view=$('view'),stack=viewerStack();
+  if(!hit||!view||!stack||!p||!raceActive()){
+    if(hit)hit.hidden=true;
+    return;
+  }
+  const baseX=Number(p.lapDisplayX)||0,baseY=Number(p.lapDisplayY)||0;
+  const x0=Math.max(0,baseX-14),x1=Math.min(TRACK_W,baseX+14);
+  const y0=Math.max(0,baseY-4),y1=Math.min(TRACK_H,baseY+58);
+  if(x1<=x0||y1<=y0){hit.hidden=true;return;}
+  const vr=view.getBoundingClientRect(),sr=stack.getBoundingClientRect();
+  const sx=vr.width/TRACK_W,sy=vr.height/TRACK_H;
+  hit.style.left=`${vr.left-sr.left+x0*sx}px`;
+  hit.style.top=`${vr.top-sr.top+y0*sy}px`;
+  hit.style.width=`${(x1-x0)*sx}px`;
+  hit.style.height=`${(y1-y0)*sy}px`;
+  hit.hidden=false;
 }
 function hudEnabled(id){const e=$(id);return e?!!e.checked:true;}
 function hudHandle(p){
@@ -615,7 +642,7 @@ function renderHud(){
   const c=hudCanvas(),ctx=c.getContext('2d');
   ctx.clearRect(0,0,c.width,c.height);
   c.hidden=!raceActive();
-  if(c.hidden)return;
+  if(c.hidden){syncHudDragHit(null);return;}
 
   const q=presentation();
   if(!q)return;
@@ -626,14 +653,14 @@ function renderHud(){
 
   if(hudEnabled('circuitShowCurrentLaps')){
     for(let i=0;i<4;i++)
-      drawRetailGlyph(ctx,i+1,p.lapDisplayX,p.lapDisplayY+HUD_LAYOUT.currentLapRows[i],S,HUD_CAR_COLOURS[i]);
+      drawRetailGlyph(ctx,i+1,p.lapDisplayX,p.lapDisplayY+HUD_LAYOUT.currentLapRows[i],S,HUD_CAR_SOURCE_ORDER[i]);
   }
   if(hudEnabled('circuitShowTotalLaps')){
     drawTotal20(ctx,p.lapDisplayX+HUD_LAYOUT.totalLaps.x,p.lapDisplayY+HUD_LAYOUT.totalLaps.y,S);
   }
   if(hudEnabled('circuitShowTimer')){
     for(const d of HUD_LAYOUT.timerDigits)
-      drawRetailGlyph(ctx,0,p.lapDisplayX+d.x,p.lapDisplayY+d.y,S,HUD_TIMER_GREY);
+      drawRetailGlyph(ctx,0,p.lapDisplayX+d.x,p.lapDisplayY+d.y,S,HUD_TIMER_SOURCE);
   }
 
   const h=hudHandle(p),x=h.x*S,y=h.y*S;
@@ -657,6 +684,7 @@ function renderHud(){
   }
   ctx.restore();
 
+  syncHudDragHit(p);
   if($('circuitHudX'))$('circuitHudX').value=String(p.lapDisplayX);
   if($('circuitHudY'))$('circuitHudY').value=String(p.lapDisplayY);
 }
@@ -713,7 +741,7 @@ function ensureHudControls(){
     help.dataset.v0194HudHelp='1';
     if(!old)controls.appendChild(help);
   }
-  help.textContent='Drag the visible lap tower/HUD directly, or use HUD X/Y. Current-lap and timer digits use the retail 8-bit glyph cells; total laps previews the authored maximum 20.';
+  help.textContent='Drag the visible lap tower/HUD directly, or use HUD X/Y. Current-lap and timer cells reproduce the retail $6B02 glyph, mask and source-plane shading; total laps previews the authored maximum 20.';
 
   const apply=$('circuitHudApply');
   if(apply&&!apply.dataset.v0194){
@@ -732,63 +760,42 @@ function ensureHudControls(){
   return true;
 }
 function raceCanvasPoint(e){
-  const c=$('raceSetupCanvas');
+  const c=$('view');
   if(!c)return null;
   const r=c.getBoundingClientRect();
   return {x:(e.clientX-r.left)*TRACK_W/r.width,y:(e.clientY-r.top)*TRACK_H/r.height};
 }
-function hudHit(q,p){
-  if(!q||!p)return {hit:false,handle:false};
-  const h=hudHandle(p),hdx=q.x-h.x,hdy=q.y-h.y;
-  if(hdx*hdx+hdy*hdy<=13*13)return {hit:true,handle:true};
-  const x=Number(p.lapDisplayX)||0,y=Number(p.lapDisplayY)||0;
-  // Covers the four current-lap cells plus total-laps and three timer cells.
-  const inside=q.x>=x-11&&q.x<=x+18&&q.y>=y-3&&q.y<=y+57;
-  return {hit:inside,handle:false};
-}
+function hudHit(q,p){return {hit:!!(q&&p),handle:false};}
 function installHudPointer(){
-  if(document.body?.dataset.v0194HudPointer)return true;
-  const c=$('raceSetupCanvas');
-  if(!c)return false;
-  document.body.dataset.v0194HudPointer='1';
-
-  document.addEventListener('pointerdown',e=>{
-    if(e.target!==c||!raceActive()||e.button!==0)return;
+  const hit=$('editorFixHudDragHit194');
+  if(!hit||hit.dataset.v0195HudPointer)return !!hit;
+  hit.dataset.v0195HudPointer='1';
+  hit.addEventListener('pointerdown',e=>{
+    if(!raceActive()||e.button!==0)return;
     const q=raceCanvasPoint(e),p=presentation()?.p;
-    const hit=hudHit(q,p);
-    if(!q||!p||!hit.hit)return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    let offsetX=q.x-p.lapDisplayX,offsetY=q.y-p.lapDisplayY;
-    if(hit.handle&&hudHandle(p).clamped){
-      offsetX=0;offsetY=0;
-      writeHud(q.x,q.y);
-    }
-    hudDrag={pointerId:e.pointerId,offsetX,offsetY};
-    try{c.setPointerCapture?.(e.pointerId);}catch(_e){}
-  },true);
-
-  document.addEventListener('pointermove',e=>{
+    if(!q||!p)return;
+    e.preventDefault();e.stopPropagation();
+    hudDrag={
+      pointerId:e.pointerId,
+      offsetX:q.x-(Number(p.lapDisplayX)||0),
+      offsetY:q.y-(Number(p.lapDisplayY)||0)
+    };
+    try{hit.setPointerCapture?.(e.pointerId);}catch(_e){}
+  });
+  hit.addEventListener('pointermove',e=>{
     if(!hudDrag||hudDrag.pointerId!==e.pointerId)return;
-    const q=raceCanvasPoint(e);
-    if(!q)return;
-    e.preventDefault();
-    e.stopPropagation();
+    const q=raceCanvasPoint(e);if(!q)return;
+    e.preventDefault();e.stopPropagation();
     writeHud(q.x-hudDrag.offsetX,q.y-hudDrag.offsetY);
-  },true);
-
+  });
   const end=e=>{
     if(!hudDrag||hudDrag.pointerId!==e.pointerId)return;
-    e.preventDefault();
-    e.stopPropagation();
-    try{c.releasePointerCapture?.(e.pointerId);}catch(_e){}
-    hudDrag=null;
-    renderHud();
+    e.preventDefault();e.stopPropagation();
+    try{hit.releasePointerCapture?.(e.pointerId);}catch(_e){}
+    hudDrag=null;renderHud();
   };
-  document.addEventListener('pointerup',end,true);
-  document.addEventListener('pointercancel',end,true);
+  hit.addEventListener('pointerup',end);
+  hit.addEventListener('pointercancel',end);
   return true;
 }
 
@@ -887,12 +894,8 @@ function correctBackdropMiniature(){
   }
 }
 function installBackdropFix(){
-  const b=$('circuitPreviewFromBackdrop');
-  if(!b||paletteFixInstalled)return !!b;
-  paletteFixInstalled=true;
-  // The existing package handler first creates its package-aware Undo baseline.
-  // Replace its result immediately afterwards with the corrected mapping.
-  b.addEventListener('click',()=>setTimeout(correctBackdropMiniature,0));
+  // Deliberately deferred in v0.19.5. The project owner will provide an
+  // explicit circuit-palette -> Gasoline Alley palette lookup table.
   return true;
 }
 
@@ -938,7 +941,7 @@ function installUiEvents(){
 }
 
 function tick(){
-  document.body?.setAttribute('data-indyheat-v0194-fix','1');
+  document.body?.setAttribute('data-indyheat-v0195-fix','1');
   installStyle();
   setVersionLabel();
   renameZoom();

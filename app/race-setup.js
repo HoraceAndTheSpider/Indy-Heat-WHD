@@ -7,6 +7,8 @@ const PIT_RECORD_SIZE=0x16;
 const PIT_RECORD_COUNT=4;
 const PIT_BLOCK_SIZE=PIT_RECORD_SIZE*PIT_RECORD_COUNT; // $58
 const COMPACT_SIZE=0x68;
+const LAP_MIN=1;
+const LAP_MAX=20;
 const OFF=Object.freeze({
   laps:0x28,
   pitPointer:0x32,
@@ -84,7 +86,7 @@ function parseRaceSetup(main,record){
 }
 
 function writeCommon(main,recordOffset,values={}){
-  if(values.laps!=null)wr16(main,recordOffset+OFF.laps,clampInt(values.laps,0,65535,'Lap count'));
+  if(values.laps!=null)wr16(main,recordOffset+OFF.laps,clampInt(values.laps,LAP_MIN,LAP_MAX,'Lap count'));
   if(values.flagX!=null)wr16(main,recordOffset+OFF.flagX,clampInt(values.flagX,-32768,32767,'Flag X')&0xffff);
   if(values.flagY!=null)wr16(main,recordOffset+OFF.flagY,clampInt(values.flagY,-32768,32767,'Flag Y')&0xffff);
   if(values.startX!=null)wr32(main,recordOffset+OFF.startX,Number(values.startX)>>>0);
@@ -163,7 +165,7 @@ function pitHeadingFromRoute(record,pit){
   return angle16FromWorldVector(dx,dy);
 }
 
-const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,COMPACT_SIZE,OFF,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
+const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
   be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
   writeCommon,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
   addFixed32,gridCarPositions,angle16ToCanvasRadians,angle16FromWorldVector,pitHeadingFromRoute};
@@ -235,7 +237,7 @@ function injectUi(){
         <label><input id="raceShowPitCars" type="checkbox"> Cars in pits</label>
       </div>
       <div class="raceSetupGrid">
-        <label>Laps <input id="raceLaps" type="number" min="0" max="65535" step="1"></label>
+        <label>Laps <input id="raceLaps" type="number" min="1" max="20" step="1" title="Authored custom range: 1–20"></label>
         <label>Start orient <input id="raceStartOrient" type="number" min="-32768" max="32767" step="1"></label>
         <label>Flag X <input id="raceFlagX" type="number" min="-32768" max="32767" step="1"></label>
         <label>Flag Y <input id="raceFlagY" type="number" min="-32768" max="32767" step="1"></label>
@@ -330,7 +332,7 @@ function drawCarFootprint(ctx,x,y,S,heading16,text){
 function draw(){
   const c=overlayCanvas(),v=viewCanvas();if(!c||!v)return;syncSize();const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);hitTargets=[];if(!active)return;
   const s=currentSetup();if(!s)return;const S=c.width/320,alpha=Math.max(.25,Math.min(1,Number($('opacity')?.value||55)/100));ctx.globalAlpha=alpha;
-  if($('raceShowStart')?.checked){const q=projectFixedXZ(s.startX,s.startY);if(q)anchor(ctx,q.x,q.y,S,'START GRID', 'start');}
+  if($('raceShowStart')?.checked){const q=projectFixedXZ(s.startX,s.startY);if(q)anchor(ctx,q.x,q.y,S,'START GRID','start');}
   if($('raceShowGridCars')?.checked){for(const car of gridCarPositions(s)){const q=projectFixedXZ(car.x,car.y);if(q)drawCarFootprint(ctx,q.x,q.y,S,car.heading16,`C${car.index+1}`);}}
   const record=currentRecord();
   for(const p of s.pits){
@@ -340,7 +342,9 @@ function draw(){
     if($('raceShowBoards')?.checked){const q=projectFixedXZ(p.boardX,p.boardY);if(q)drawSprite(ctx,0x08,0,q.x,q.y,S,`P${p.index+1} PIT`,'board',p.index);}
   }
   if($('raceShowFlag')?.checked&&s.flagX>=0&&s.flagX<320&&s.flagY>=0&&s.flagY<256)drawSprite(ctx,0x0F,26,s.flagX,s.flagY,S,'FLAG','flag');
-  ctx.globalAlpha=1;ctx.save();ctx.font=`700 ${Math.max(10,Math.round(4*S))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;const t=`LAPS ${s.laps}`;const tw=ctx.measureText(t).width;ctx.fillStyle='rgba(0,0,0,.78)';ctx.fillRect(4*S,4*S,tw+6*S,7*S);ctx.fillStyle='#fff';ctx.fillText(t,7*S,9*S);ctx.restore();
+  // v0.19.5: the old top-left browser-only "LAPS n" diagnostic was removed.
+  // The authentic on-track lap presentation is rendered by the Race HUD layer.
+  ctx.globalAlpha=1;
 }
 function eventXY(e){const c=overlayCanvas(),r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*320/r.width,y:(e.clientY-r.top)*256/r.height};}
 function nearestTarget(x,y){let best=null,bd=14*14;for(const t of hitTargets){const dx=t.x-x,dy=t.y-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=t;}}return best;}
@@ -359,7 +363,7 @@ function pointerMove(e){if(!drag||drag.pointerId!==e.pointerId)return;const p=ev
 function pointerUp(e){if(!drag||drag.pointerId!==e.pointerId)return;try{overlayCanvas().releasePointerCapture?.(e.pointerId);}catch(_e){}drag=null;overlayCanvas().classList.remove('dragging');refreshPanel();draw();}
 
 function init(){
-  if(!injectUi())return;const title=document.querySelector('header h1');if(title)title.textContent=title.textContent.replace(/v0\.(?:11|12)/i,'v0.13');document.title=document.title.replace(/v0\.(?:11|12)/i,'v0.13');ensureGraphics();refreshPanel();draw();
+  if(!injectUi())return;ensureGraphics();refreshPanel();draw();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,0));else setTimeout(init,0);
 })(typeof globalThis!=='undefined'?globalThis:this);
