@@ -122,7 +122,34 @@ const $=id=>document.getElementById(id);const originals=new Map(),imports=new Ma
 function downloadBytes(bytes,name){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 function trackIndex(){return Number($('trackSelect')?.value||0);}
 function baseId(){return T.TRACK_BASE_IDS?.[trackIndex()]??null;}
-function currentResource(){const b=baseId();if(b==null||!C.model)return null;const r=C.model.getResource(b);if(!originals.has(b))originals.set(b,r.data.slice());return r;}
+function capturedModels(){
+  const out=[],seen=new Set();
+  for(const m of [C.coreModel,C.layerModel,C.model,...(Array.isArray(C.models)?C.models:[])]){
+    if(!m||seen.has(m)||typeof m.getResource!=='function')continue;
+    seen.add(m);out.push(m);
+  }
+  return out;
+}
+function resourceFor(model,b){try{return model?.getResource?.(b)||null;}catch(_){return null;}}
+function currentResource(){
+  const b=baseId();if(b==null)return null;
+  for(const model of capturedModels()){
+    const r=resourceFor(model,b);
+    if(!r)continue;
+    if(!originals.has(b))originals.set(b,r.data.slice());
+    return r;
+  }
+  return null;
+}
+function syncBackdropResource(b,bytes){
+  let count=0;
+  for(const model of capturedModels()){
+    const r=resourceFor(model,b);
+    if(!r||r.data.length<TRACK_BYTES)continue;
+    r.data.set(bytes.subarray(0,TRACK_BYTES),0);count++;
+  }
+  return count;
+}
 function dirty(){const b=baseId(),r=currentResource(),o=originals.get(b);return !!(r&&o&&!arraysEqual(r.data,o));}
 function setStatus(text){const e=$('backdropStatus');if(e)e.textContent=text;}
 function refresh(){
@@ -159,10 +186,12 @@ function redrawTrack(pixels=null){
     const live=liveBackgroundCapture();
     if(live)live.result.set(pixels);
   }
-  if(!requestCoreRender()){
-    const bridge=root.IndyHeatEditorBridge;
-    if(bridge&&typeof bridge.refreshSelectedTrack==='function')bridge.refreshSelectedTrack();
-  }
+  // Re-run the real selected-track loader after a resource edit. The main viewer
+  // owns a separate core Disk model, so repainting a previously captured bg array
+  // alone can leave the visible canvas showing stale pixels.
+  const bridge=root.IndyHeatEditorBridge;
+  const refreshed=!!(bridge&&typeof bridge.refreshSelectedTrack==='function'&&bridge.refreshSelectedTrack());
+  if(!refreshed)requestCoreRender();
   if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>refresh());
   else setTimeout(refresh,0);
 }
@@ -172,7 +201,9 @@ async function importIff(file){
   try{
     const bytes=new Uint8Array(await file.arrayBuffer()),result=convertIlbmToTrack(bytes,T.VERIFIED_TRACK_PALETTE_WORDS,{remap:$('backdropRemap').checked});
     if(r.data.length<TRACK_BYTES)throw new Error(`Selected background resource is only ${r.data.length} bytes; expected at least $C800`);
-    r.data.set(result.trackBytes,0);imports.set(b,{name:file.name,paletteExact:result.paletteExact,changedIndices:result.changedIndices,remapped:result.remapped});redrawTrack(result.pixels);
+    const synced=syncBackdropResource(b,result.trackBytes);
+    if(!synced)throw new Error('No active editor model accepted the imported backdrop resource');
+    imports.set(b,{name:file.name,paletteExact:result.paletteExact,changedIndices:result.changedIndices,remapped:result.remapped});redrawTrack(result.pixels);
     setStatus(`Imported ${file.name}. ${result.paletteExact?'CMAP matches the Indy Heat game palette.':result.remapped?`Palette remapped to the nearest game colours (${result.changedIndices} used indices changed).`:'Source indices kept without remapping.'}\nExported runtime payload remains exactly $C800 bytes.`);
   }catch(e){setStatus(`ERROR: ${e.message}`);}
 }
@@ -204,7 +235,7 @@ function inject(){
   ['layerModeWaypoints','layerEditSurface','layerEditMask','layerEditRecovery','layerEditRaceSetup'].forEach(id=>$(id)?.addEventListener('click',()=>{if(active)deactivate();}));
   $('backdropIffInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importIff(f);e.target.value='';});
   $('backdropExport').addEventListener('click',()=>{const r=currentResource(),b=baseId();if(!r||b==null)return;downloadBytes(r.data.slice(0,TRACK_BYTES),backdropFilename(b));setStatus(`Exported ${backdropFilename(b)} · ${TRACK_BYTES} bytes ($C800).\nThis is the raw decompressed track bitmap payload for WHDLoad injection.`);});
-  $('backdropRevert').addEventListener('click',()=>{const r=currentResource(),b=baseId(),o=originals.get(b);if(!r||!o)return;r.data.set(o);imports.delete(b);redrawTrack(decodeTrackPlanar(o));setStatus('Backdrop restored to the loaded Disk.1 resource.');});
+  $('backdropRevert').addEventListener('click',()=>{const r=currentResource(),b=baseId(),o=originals.get(b);if(!r||!o)return;syncBackdropResource(b,o);imports.delete(b);redrawTrack(decodeTrackPlanar(o));setStatus('Backdrop restored to the loaded Disk.1 resource.');});
   $('trackSelect')?.addEventListener('change',()=>setTimeout(refresh,0));
   document.addEventListener('indyheat-race-setup-capture',e=>{if(e.detail?.type==='model'){originals.clear();imports.clear();}setTimeout(refresh,0);});
   return true;
@@ -215,6 +246,6 @@ function activate(){
 }
 function buttonsClear(){$('layerModeButtons')?.querySelectorAll('button').forEach(b=>b.classList.remove('active'));}
 function deactivate(){active=false;$('layerEditBackdrop')?.classList.remove('active');$('backdropEditorPane').hidden=true;}
-function init(){if(!inject())return;const title=document.querySelector('header h1');if(title)title.textContent=title.textContent.replace(/v0\.(?:11|12|13|14)/i,'v0.15');document.title=document.title.replace(/v0\.(?:11|12|13|14)/i,'v0.15');refresh();}
+function init(){if(!inject())return;refresh();}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,0));else setTimeout(init,0);
 })(typeof globalThis!=='undefined'?globalThis:this);

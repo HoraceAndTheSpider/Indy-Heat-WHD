@@ -2,7 +2,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.19.6 focused acceptance fix.
+ * Indy Heat Circuit Editor v0.22 focused acceptance fix.
  *
  * This module intentionally runs after editor-fixes-v0193.js (currently v0.19.5).
  *
@@ -127,10 +127,9 @@ function currentPresentation(){
 }
 
 function setVersion(){
-  const re=/v0\.(?:11|12|13|14|15|16|17|18|19(?:\.[1-6])?)/i;
   const h=document.querySelector('header h1');
-  if(h)h.textContent=h.textContent.replace(re,'v0.19.6');
-  document.title=document.title.replace(re,'v0.19.6');
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.22';
+  document.title='Indy Heat Amiga – Circuit Editor v0.22';
 }
 
 function reorderModes(){
@@ -333,15 +332,10 @@ function setMiniStatus(text){
   const e=$('circuitAuxStatusMini');
   if(e)e.textContent=text;
 }
-function safeMiniMapPixels(pixels,transparent,P){
-  const out=Uint8Array.from(pixels);if(transparent==null)return out;
-  const palette=P?.PRESENTATION_PALETTE_RGB||[],src=palette[transparent]||[0,0,0];let replacement=transparent===10?13:10,bestD=Infinity;
-  for(let i=0;i<palette.length;i++){
-    if(i===transparent)continue;const c=palette[i],d=(src[0]-c[0])**2+(src[1]-c[1])**2+(src[2]-c[2])**2;
-    if(d<bestD){bestD=d;replacement=i;}
-  }
-  for(let i=0;i<out.length;i++)if(out[i]===transparent)out[i]=replacement;
-  return out;
+function chooseUnusedMiniTransparency(pixels,currentTransparent){
+  const used=new Set(pixels);if(!used.has(currentTransparent))return currentTransparent;
+  for(let i=0;i<32;i++)if(!used.has(i))return i;
+  throw new Error('The generated MiniMap uses all 32 palette indices; no unused transparency index is available.');
 }
 function applyExplicitPaletteMap(){
   const P=packageTools(),T=tools(),model=resourceModel(),r=recordFor(model);
@@ -355,22 +349,16 @@ function applyExplicitPaletteMap(){
     const pixels=reduceBackdropWithLookup(source);
 
     for(const m of models()){
-      const mr=recordFor(m);
-      if(!mr)continue;
-      const q=P.resolvePreviewResource(m,mr);
-      if(P.migratePreviewTransparency&&P.decodePreviewBob(q.resource.data).transparent!==P.MINIMAP_TEMPLATE_TRANSPARENT)
-        q.resource.data.set(P.migratePreviewTransparency(q.resource.data,P.MINIMAP_TEMPLATE_TRANSPARENT));
-      const transparent=P.decodePreviewBob(q.resource.data).transparent,safe=safeMiniMapPixels(pixels,transparent,P);
-      const encoded=P.encodePreviewPixels(safe,q.resource.data,transparent);
-      q.resource.data.set(encoded);
+      const mr=recordFor(m);if(!mr)continue;
+      const q=P.resolvePreviewResource(m,mr),decoded=P.decodePreviewBob(q.resource.data);
+      const transparent=chooseUnusedMiniTransparency(pixels,decoded.transparent);
+      q.resource.data.set(P.encodePreviewPixels(pixels,q.resource.data,transparent));
     }
 
-    setMiniStatus('Miniature rebuilt using the explicit Race → Garage palette lookup. MiniMap colour 8 is transparency; mapped colour 8 is redirected to its nearest visible Garage colour while colour 0 remains black.');
-    // Re-entering MiniMap calls its native renderer against the now-updated BOB.
     setTimeout(()=>$('layerEditMini')?.click(),0);
     return true;
   }catch(err){
-    setMiniStatus(`ERROR: ${err.message}`);
+    const top=$('circuitPackageTopStatus');if(top){top.textContent=`ERROR: ${err.message}`;top.classList.add('bad');}
     return false;
   }
 }
@@ -386,12 +374,6 @@ function installPaletteMap(){
   // pixels with the authoritative lookup result.
   b.addEventListener('click',()=>setTimeout(applyExplicitPaletteMap,0));
 
-  const controls=$('circuitPreviewControls');
-  if(controls){
-    const notes=[...controls.querySelectorAll('.muted')];
-    const help=notes[notes.length-1];
-    if(help)help.textContent='From backdrop shrinks the current 320×224 race image to 78×51, then remaps every Race palette index through the project-supplied Race → Garage lookup table. Right-click paints transparent colour 0.';
-  }
   return true;
 }
 
