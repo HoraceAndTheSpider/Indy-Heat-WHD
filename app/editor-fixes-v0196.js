@@ -2,11 +2,11 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.22 focused acceptance fix.
+ * Indy Heat Circuit Editor v0.24 focused acceptance fix.
  *
  * This module intentionally runs after editor-fixes-v0193.js (currently v0.19.5).
  *
- * It addresses three live-editor acceptance failures:
+ * It carries the focused live-editor acceptance fixes plus the v0.24 Recovery interaction update and the existing lap slider:
  * 1. Lap-tower dragging no longer depends on any particular canvas/div receiving
  *    the pointer event. A document-level capture listener checks the pointer's
  *    coordinates against the visible HUD rectangle before any editor canvas sees it.
@@ -128,8 +128,80 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.22';
-  document.title='Indy Heat Amiga – Circuit Editor v0.22';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.24';
+  document.title='Indy Heat Amiga – Circuit Editor v0.24';
+}
+
+/* -------------------------------------------------------------------------
+ * Race lap authoring: slider, 1..20.
+ *
+ * Keep the existing #raceLaps element so all existing authoring/apply guards
+ * remain attached. Only its presentation changes from numeric entry to range.
+ * ---------------------------------------------------------------------- */
+function lapSliderValue(){
+  const e=$('raceLaps'),out=$('raceLapsSliderValue');
+  if(!e||!out)return false;
+  let v=Math.round(Number(e.value));
+  if(!Number.isFinite(v))v=1;
+  v=Math.max(1,Math.min(20,v));
+  if(String(v)!==e.value)e.value=String(v);
+  out.value=String(v);
+  out.textContent=String(v);
+  out.setAttribute('aria-label',`${v} laps`);
+  return true;
+}
+function installLapSlider(){
+  const e=$('raceLaps');
+  if(!e)return false;
+
+  e.type='range';
+  e.min='1';
+  e.max='20';
+  e.step='1';
+  e.title='Authored custom range: 1–20. Lap 20 is displayed as F during gameplay.';
+  e.setAttribute('aria-label','Race laps');
+
+  let out=$('raceLapsSliderValue');
+  if(!out){
+    const row=document.createElement('div');
+    row.className='raceLapSliderRow';
+    const parent=e.parentNode;
+    if(parent){
+      parent.insertBefore(row,e);
+      row.appendChild(e);
+      out=document.createElement('output');
+      out.id='raceLapsSliderValue';
+      out.className='raceLapSliderValue';
+      out.htmlFor='raceLaps';
+      row.appendChild(out);
+    }
+  }
+
+  if(!document.getElementById('indyheatLapSliderStyle023')){
+    const style=document.createElement('style');
+    style.id='indyheatLapSliderStyle023';
+    style.textContent=`
+      .raceLapSliderRow{display:flex;align-items:center;gap:8px;width:100%}
+      .raceLapSliderRow #raceLaps{flex:1 1 auto;width:auto!important;min-width:0;margin:0}
+      .raceLapSliderValue{flex:0 0 2ch;min-width:2ch;text-align:right;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
+    `;
+    document.head.appendChild(style);
+  }
+
+  if(!e.dataset.v023LapSlider){
+    e.dataset.v023LapSlider='1';
+    e.addEventListener('input',lapSliderValue);
+    e.addEventListener('change',lapSliderValue);
+
+    $('trackSelect')?.addEventListener('change',()=>setTimeout(lapSliderValue,0));
+    document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(lapSliderValue,0));
+    document.addEventListener('click',ev=>{
+      const id=ev.target?.closest?.('button')?.id;
+      if(id==='raceApply'||id==='raceRevert')setTimeout(lapSliderValue,0);
+    });
+  }
+
+  return lapSliderValue();
 }
 
 function reorderModes(){
@@ -380,6 +452,7 @@ function installPaletteMap(){
 function tick(){
   setVersion();
   installModeOrder();
+  installLapSlider();
   installHudDrag();
   installPaletteMap();
 
