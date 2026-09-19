@@ -2,11 +2,11 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.24 focused acceptance fix.
+ * Indy Heat Circuit Editor v0.25 focused acceptance fix.
  *
  * This module intentionally runs after editor-fixes-v0193.js (currently v0.19.5).
  *
- * It carries the focused live-editor acceptance fixes plus the v0.24 Recovery interaction update and the existing lap slider:
+ * It carries the focused live-editor acceptance fixes plus the v0.25 overlay-colour controls, v0.24 Recovery interaction update and the existing lap slider:
  * 1. Lap-tower dragging no longer depends on any particular canvas/div receiving
  *    the pointer event. A document-level capture listener checks the pointer's
  *    coordinates against the visible HUD rectangle before any editor canvas sees it.
@@ -128,9 +128,156 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.24';
-  document.title='Indy Heat Amiga – Circuit Editor v0.24';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.25';
+  document.title='Indy Heat Amiga – Circuit Editor v0.25';
 }
+
+
+/* -------------------------------------------------------------------------
+ * Overlay display colours.
+ *
+ * layer-editor.js owns the Foreground/Surface drawing canvas and historically
+ * used literal colours inside its private draw functions. Keep that owner
+ * untouched in this focused pass, but remap only its known overlay fillRect
+ * colours at the canvas boundary. This changes presentation only; resource
+ * bytes, surface classes and mask bits are never modified.
+ * ---------------------------------------------------------------------- */
+const OVERLAY_COLOUR_STORAGE='indyheat-overlay-colours-v025';
+const OVERLAY_COLOUR_DEFAULTS=Object.freeze({
+  foreground:'#f5bd4f',
+  surface0:'#ffffff',
+  surface1:'#dc4545',
+  surface2:'#5ed46c',
+  surface3:'#4a79e8'
+});
+const overlayColours={...OVERLAY_COLOUR_DEFAULTS};
+let overlayColourObserver=null;
+
+function validHexColour(v){return /^#[0-9a-f]{6}$/i.test(String(v||''));}
+function loadOverlayColours(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(OVERLAY_COLOUR_STORAGE)||'{}');
+    for(const k of Object.keys(OVERLAY_COLOUR_DEFAULTS))if(validHexColour(saved[k]))overlayColours[k]=saved[k].toLowerCase();
+  }catch(_e){}
+}
+function saveOverlayColours(){
+  try{localStorage.setItem(OVERLAY_COLOUR_STORAGE,JSON.stringify(overlayColours));}catch(_e){}
+}
+function colourRgba(hex,a){
+  const n=parseInt(String(hex).slice(1),16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+function compactColour(v){return String(v||'').toLowerCase().replace(/\s+/g,'');}
+function remapLayerFillStyle(style){
+  const s=compactColour(style);
+  if(s==='#f5bd4f'||s==='rgb(245,189,79)')return overlayColours.foreground;
+  if(s==='#dc4545'||s==='rgb(220,69,69)')return overlayColours.surface1;
+  if(s==='#5ed46c'||s==='rgb(94,212,108)')return overlayColours.surface2;
+  if(s==='#4a79e8'||s==='rgb(74,121,232)')return overlayColours.surface3;
+  if(s==='rgba(255,255,255,0.15)'||s==='rgba(255,255,255,.15)')return colourRgba(overlayColours.surface0,.15);
+  return style;
+}
+function installLayerFillColourBridge(){
+  const proto=root.CanvasRenderingContext2D?.prototype;
+  if(!proto||proto.__indyHeatOverlayColours025)return !!proto;
+  const native=proto.fillRect;
+  if(typeof native!=='function')return false;
+  proto.__indyHeatOverlayColours025=true;
+  proto.fillRect=function(x,y,w,h){
+    if(this?.canvas?.id==='layerEditCanvas'){
+      const before=this.fillStyle,mapped=remapLayerFillStyle(before);
+      if(mapped!==before){
+        this.fillStyle=mapped;
+        try{return native.call(this,x,y,w,h);}finally{this.fillStyle=before;}
+      }
+    }
+    return native.call(this,x,y,w,h);
+  };
+  return true;
+}
+function requestOverlayRedraw(){
+  const opacity=$('opacity');
+  if(opacity)opacity.dispatchEvent(new Event('input',{bubbles:true}));
+}
+function makeColourWheel(id,key,title){
+  const input=document.createElement('input');
+  input.type='color';input.id=id;input.className='overlayColourWheel';
+  input.value=overlayColours[key];input.title=title;input.setAttribute('aria-label',title);
+  input.dataset.overlayColourKey=key;
+  input.addEventListener('pointerdown',e=>e.stopPropagation());
+  input.addEventListener('click',e=>e.stopPropagation());
+  input.addEventListener('input',()=>{
+    if(validHexColour(input.value)){
+      overlayColours[key]=input.value.toLowerCase();
+      saveOverlayColours();syncLayerPaintSwatches();requestOverlayRedraw();
+    }
+  });
+  return input;
+}
+function syncLayerPaintSwatches(){
+  const map={
+    '.paint-fg':'foreground',
+    '.paint-normal':'surface0',
+    '.paint-edge':'surface1',
+    '.paint-slowA':'surface2',
+    '.paint-slowB':'surface3'
+  };
+  for(const [sel,key] of Object.entries(map))document.querySelectorAll(sel).forEach(e=>e.style.background=overlayColours[key]);
+}
+function wrapSurfaceLabelText(label){
+  let span=label.querySelector('.overlayColourLabelText');
+  if(span)return span;
+  span=document.createElement('span');span.className='overlayColourLabelText';
+  const nodes=[...label.childNodes].filter(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());
+  if(nodes.length){
+    span.textContent=nodes.map(n=>n.textContent).join(' ').trim();
+    for(const n of nodes)n.remove();
+  }
+  label.appendChild(span);
+  return span;
+}
+function installOverlayColourControls(){
+  const mask=$('layerShowMask');
+  const surfaceChecks=[...document.querySelectorAll('.surfaceClass')];
+  if(!mask||surfaceChecks.length<4)return false;
+
+  if(!document.getElementById('indyheatOverlayColourStyle025')){
+    const style=document.createElement('style');style.id='indyheatOverlayColourStyle025';
+    style.textContent=`
+      .overlayColourWheel{width:21px!important;height:21px!important;min-width:21px!important;padding:0!important;border:1px solid #687282!important;border-radius:50%!important;background:transparent!important;overflow:hidden;cursor:pointer;box-sizing:border-box}
+      .overlayColourWheel::-webkit-color-swatch-wrapper{padding:0}
+      .overlayColourWheel::-webkit-color-swatch{border:0;border-radius:50%}
+      .overlayColourWheel::-moz-color-swatch{border:0;border-radius:50%}
+      .surfaceClassColourLabel{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center}
+      .surfaceClassColourLabel .overlayColourLabelText{min-width:0}
+    `;
+    document.head.appendChild(style);
+  }
+
+  const maskRow=mask.closest('.layerControlRow')||mask.parentElement;
+  if(maskRow&&!$('overlayColourForeground')){
+    maskRow.style.gridTemplateColumns='auto minmax(0,1fr) auto';
+    maskRow.appendChild(makeColourWheel('overlayColourForeground','foreground','Foreground overlay colour'));
+  }
+
+  for(const c of surfaceChecks){
+    const n=Number(c.dataset.class);if(n<0||n>3)continue;
+    const label=c.closest('label');if(!label)continue;
+    label.classList.add('surfaceClassColourLabel');
+    wrapSurfaceLabelText(label);
+    const id=`overlayColourSurface${n}`;
+    if(!$(id))label.appendChild(makeColourWheel(id,`surface${n}`,`Surface class ${n} overlay colour`));
+  }
+
+  syncLayerPaintSwatches();
+  const paintHost=$('layerPaintChoices');
+  if(paintHost&&!overlayColourObserver&&typeof MutationObserver!=='undefined'){
+    overlayColourObserver=new MutationObserver(syncLayerPaintSwatches);
+    overlayColourObserver.observe(paintHost,{childList:true,subtree:true});
+  }
+  return true;
+}
+loadOverlayColours();
 
 /* -------------------------------------------------------------------------
  * Race lap authoring: slider, 1..20.
@@ -452,11 +599,14 @@ function installPaletteMap(){
 function tick(){
   setVersion();
   installModeOrder();
+  const colourBridgeReady=installLayerFillColourBridge();
+  const colourControlsReady=installOverlayColourControls();
   installLapSlider();
   installHudDrag();
   installPaletteMap();
 
   return !!(
+    colourBridgeReady&&colourControlsReady&&
     tools()&&packageTools()&&capture()&&
     $('layerModeButtons')&&$('layerEditRecovery')&&$('layerEditRaceSetup')&&
     $('circuitPreviewFromBackdrop')

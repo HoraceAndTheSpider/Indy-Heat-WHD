@@ -22,6 +22,12 @@ style.textContent=`
   .recoveryActions button{font-size:11px;padding:6px}
   #recoveryGrabGroup.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
   #recoveryStep{width:100%;margin-top:4px}
+  .recoveryColourGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 10px}
+  .recoveryColourControl{display:flex!important;align-items:center;justify-content:space-between;gap:7px;margin:0!important;padding:5px 7px;border:1px solid #3b424d;border-radius:5px;background:#20242b}
+  .recoveryColourWheel{width:21px!important;height:21px!important;min-width:21px!important;padding:0!important;border:1px solid #687282!important;border-radius:50%!important;background:transparent!important;overflow:hidden;cursor:pointer;box-sizing:border-box}
+  .recoveryColourWheel::-webkit-color-swatch-wrapper{padding:0}
+  .recoveryColourWheel::-webkit-color-swatch{border:0;border-radius:50%}
+  .recoveryColourWheel::-moz-color-swatch{border:0;border-radius:50%}
   #recoveryStatus{font-size:11px;line-height:1.4;min-height:54px;margin-top:8px}
   #recoveryEditCanvas{position:absolute;inset:0;z-index:2;display:block;image-rendering:pixelated;touch-action:none;user-select:none;pointer-events:none}
   #recoveryEditCanvas.editing{pointer-events:auto;cursor:crosshair}
@@ -40,6 +46,10 @@ pane.innerHTML=`
     <div class="recoveryRow muted">One byte per 8×8 gameplay cell. Full-strength arrows intersect Surface class 1 (Edge / collision); other stored arrows can be retained as a faint editing reference.</div>
     <div class="recoveryRow"><label><input id="recoveryShowDormant" type="checkbox" checked> Show non-active arrows faintly</label></div>
     <div class="recoveryRow"><label><input id="recoveryShowGrid" type="checkbox"> Show 8×8 recovery-cell grid</label></div>
+    <div class="recoveryColourGrid">
+      <label class="recoveryColourControl">Arrows <input id="recoveryArrowColour" class="recoveryColourWheel" type="color" value="#ffffff" title="Recovery arrow colour" aria-label="Recovery arrow colour"></label>
+      <label class="recoveryColourControl">Grid <input id="recoveryGridColour" class="recoveryColourWheel" type="color" value="#6ed2ff" title="Recovery grid colour" aria-label="Recovery grid colour"></label>
+    </div>
     <div class="recoveryRow"><label>Rotation step
       <select id="recoveryStep">
         <option value="1">1 raw step · 1.40625°</option>
@@ -71,7 +81,21 @@ const canvas=document.createElement('canvas');canvas.id='recoveryEditCanvas';sta
 const ctx=canvas.getContext('2d',{alpha:true});
 let active=false,grabGroup=false,pointerGesture=null;
 const selectedGroup=new Set();
-const states=new Map();
+const RECOVERY_COLOUR_STORAGE='indyheat-recovery-overlay-colours-v025';
+function recoveryColour(id,fallback){
+  const v=$(id)?.value;
+  return /^#[0-9a-f]{6}$/i.test(String(v||''))?v:fallback;
+}
+function loadRecoveryColours(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(RECOVERY_COLOUR_STORAGE)||'{}');
+    if(/^#[0-9a-f]{6}$/i.test(saved.arrow||''))$('recoveryArrowColour').value=saved.arrow;
+    if(/^#[0-9a-f]{6}$/i.test(saved.grid||''))$('recoveryGridColour').value=saved.grid;
+  }catch(_e){}
+}
+function saveRecoveryColours(){
+  try{localStorage.setItem(RECOVERY_COLOUR_STORAGE,JSON.stringify({arrow:recoveryColour('recoveryArrowColour','#ffffff'),grid:recoveryColour('recoveryGridColour','#6ed2ff')}));}catch(_e){}
+}
 
 function currentTrack(){return Number($('trackSelect')?.value||0);}
 function key(){return `${C.generation}:${currentTrack()}`;}
@@ -157,13 +181,13 @@ function arrow(cx,cy,v,alpha,scale,selected){
   ctx.globalAlpha=alpha;ctx.lineCap='round';ctx.lineJoin='round';
   ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(ex,ey);ctx.moveTo(ex,ey);ctx.lineTo(ex-Math.cos(a-aa)*head,ey-Math.sin(a-aa)*head);ctx.moveTo(ex,ey);ctx.lineTo(ex-Math.cos(a+aa)*head,ey-Math.sin(a+aa)*head);
   ctx.strokeStyle='rgba(0,0,0,.92)';ctx.lineWidth=Math.max(2.6,1.3*scale);ctx.stroke();
-  ctx.strokeStyle=selected?'rgba(255,220,90,.98)':'rgba(255,255,255,.96)';ctx.lineWidth=Math.max(1.2,.58*scale);ctx.stroke();
+  ctx.strokeStyle=selected?'rgba(255,220,90,.98)':recoveryColour('recoveryArrowColour','#ffffff');ctx.lineWidth=Math.max(1.2,.58*scale);ctx.stroke();
 }
 function drawGrid(scale,overlayAlpha){
   if(!$('recoveryShowGrid')?.checked)return;
   ctx.save();
   ctx.globalAlpha=Math.max(.18,Math.min(.55,overlayAlpha*.48));
-  ctx.strokeStyle='rgba(110,210,255,.9)';
+  ctx.strokeStyle=recoveryColour('recoveryGridColour','#6ed2ff');
   ctx.lineWidth=Math.max(.65,.55*scale);
   ctx.beginPath();
   for(let gx=0;gx<=GRID_W;gx++){
@@ -332,6 +356,7 @@ mode.addEventListener('click',e=>{e.preventDefault();activateRecovery();});
 ['layerModeWaypoints','layerEditSurface','layerEditMask'].forEach(id=>$(id)?.addEventListener('click',()=>{if(active)deactivateRecovery();}));
 $('recoveryShowDormant').addEventListener('change',draw);
 $('recoveryShowGrid').addEventListener('change',draw);
+['recoveryArrowColour','recoveryGridColour'].forEach(id=>$(id)?.addEventListener('input',()=>{saveRecoveryColours();draw();}));
 $('recoveryStep').addEventListener('change',draw);
 $('recoveryRotateLeft').addEventListener('click',()=>{const a=selectionIndices();if(a.length)applyDelta(a,step(),'Rotate left');else setStatus('Select one or more recovery cells first.');});
 $('recoveryRotateRight').addEventListener('click',()=>{const a=selectionIndices();if(a.length)applyDelta(a,-step(),'Rotate right');else setStatus('Select one or more recovery cells first.');});
@@ -347,5 +372,6 @@ $('editorScale')?.addEventListener('change',()=>setTimeout(draw,0));
 $('opacity')?.addEventListener('input',draw);
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>draw()).observe(view);
 
+loadRecoveryColours();
 setTimeout(()=>{updateStats();if(active)draw();},800);
 })();
