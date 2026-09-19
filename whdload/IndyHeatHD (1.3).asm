@@ -13,7 +13,7 @@
 
 
 ;
-; Development 1.3 test 22 corrected lap-specific tower calling convention:
+; Development 1.3 test 23 adds Gasoline Alley circuit-name package loading:
 ; - preserve the 1.21 WHDLoad v17 header and original CUSTOM1 trainer options;
 ; - CUSTOM2=1 enters PL_CUSTOMTRACKS, which chains to pl_boot with PL_NEXT;
 ; - CUSTOM2<>1 starts directly at pl_boot;
@@ -26,8 +26,10 @@
 ;   runtime addresses; test 16 private relocation is disabled after runtime failure;
 ; - this proof prioritises retail address compatibility over concurrent custom
 ;   circuits sharing the same structural template;
-; - all eight editor package files are consumed when valid: background,
+; - the eight established editor package files remain unchanged: background,
 ;   foreground, surface, recovery, preview, waypoints, race_setup, presentation;
+; - optional $12 name.bin copies the authored Gasoline Alley field to
+;   race+$70..+$81; no Gasoline Alley renderer patch is required;
 ; - explicit playlist lap override is applied last; for a custom event $FFFF
 ;   retains the package-authored race_setup lap total;
 ; - malformed playlist/header/custom waypoint topology fails closed before any
@@ -60,6 +62,7 @@ RACE_RUNTIME_BASE       EQU     $5902           ; main+$4902 plus runtime $1000
 RACE_RECORD_SIZE        EQU     $82
 RACE_RECORD_COUNT       EQU     11
 RACE_SETUP_SIZE         EQU     $68
+RACE_NAME_SIZE          EQU     $12             ; race+$70..+$81, 17 display bytes + NUL
 PIT_LONG_COUNT_MINUS1   EQU     21              ; $58 / 4 = 22 longs -> DBF 21
 TRACK_COUNT             EQU     10
 TRACK_TEMPLATE_SIZE     EQU     TRACK_COUNT*RACE_RECORD_SIZE
@@ -168,7 +171,7 @@ _config:	dc.b    "C1:X:Infinite coins:0;"	; ws_config;
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 22"
+	dc.b	"1.3 test 23"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -772,6 +775,7 @@ race_setup_buffer
 ;             /waypoints.bin
 ;             /race_setup.bin
 ;             /presentation.bin
+;             /name.bin          optional $12 Gasoline Alley circuit name
 ;
 ; circuit_00..09 remain direct substitutes for the ten proven physical retail
 ; templates.  Playlist v2 additionally selects circuit_10..99.  Those custom
@@ -782,6 +786,7 @@ race_setup_buffer
 ;   race_setup.bin    exact $68 legacy compact layout
 ;   presentation.bin  IHPR v2 / $14
 ;   waypoints.bin     IHWP v1, three route payloads
+;   name.bin          optional exact $12 copy of race+$70..+$81
 ;
 ; Decompressed resources are replaced through the same proven deferred Load
 ; mechanism already used by the background and regional-map tests. External
@@ -792,7 +797,6 @@ race_setup_buffer
 
 apply_circuit_packages
 	movem.l	d0-d7/a0-a6,-(a7)
-
 	lea	preview_resource_ids(pc),a0
 	moveq	#TRACK_COUNT-1,d0
 .clear_preview
@@ -947,6 +951,7 @@ build_circuit_path
 ; IN: D0.w circuit index, A3 race record
 apply_circuit_setup
 	movem.l	d0-d7/a0-a6,-(a7)
+	move.w	d0,d4			; preserve circuit index for optional name.bin
 
 	lea	circuit_leaf_race_setup(pc),a1
 	bsr.w	build_circuit_path
@@ -981,6 +986,32 @@ apply_circuit_setup
 .copy_pits
 	move.l	(a0)+,(a1)+
 	dbf	d6,.copy_pits
+
+	; Gasoline Alley already renders the final 18 bytes of the race record.
+	; Keep race_setup.bin at its proven $68 layout and load the name separately.
+	move.w	d4,d0
+	lea	circuit_leaf_name(pc),a1
+	bsr.w	build_circuit_path
+	move.l	a0,a5
+
+	move.l	_resload(pc),a2
+	jsr	resload_GetFileSize(a2)
+	cmp.l	#RACE_NAME_SIZE,d0
+	bne.b	.done
+
+	move.l	a5,a0
+	lea	race_setup_buffer(pc),a1
+	move.l	_resload(pc),a2
+	jsr	resload_LoadFile(a2)
+
+	lea	race_setup_buffer(pc),a0
+	cmp.b	#0,RACE_NAME_SIZE-1(a0)	; exact field must retain its NUL terminator
+	bne.b	.done
+	lea	$70(a3),a1
+	moveq	#8,d6			; 9 words = $12 bytes
+.copy_name
+	move.w	(a0)+,(a1)+
+	dbf	d6,.copy_name
 
 .done
 	movem.l	(a7)+,d0-d7/a0-a6
@@ -1153,6 +1184,7 @@ circuit_leaf_preview		dc.b	"preview.bin",0
 circuit_leaf_waypoints		dc.b	"waypoints.bin",0
 circuit_leaf_race_setup	dc.b	"race_setup.bin",0
 circuit_leaf_presentation	dc.b	"presentation.bin",0
+circuit_leaf_name		dc.b	"name.bin",0
 	even
 
 circuit_resource_leaf_offsets
