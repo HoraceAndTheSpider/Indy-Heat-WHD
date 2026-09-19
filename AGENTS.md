@@ -5,6 +5,17 @@
 - Do not repeat settled reverse-engineering merely because work has moved to a new conversation. Re-open an established finding only when current source/data or a new runtime test contradicts it.
 - When the user reports behaviour observed in the live editor or Amiga runtime, treat that observation as the acceptance result. The presence of source code or a passing static test is not proof that a UI/runtime feature works.
 
+## Editor versioning and file hygiene
+
+- Every HTML5 editor/app change must increment the editor's internal/visible version number.
+- Version increments do **not** justify creating another version-suffixed corrective JavaScript layer. Normal future changes must update/replace the existing canonical production files in place.
+- Do not accumulate chained files such as `editor-fixes-v026.js`, `editor-fixes-v027.js`, etc. simply to represent successive versions. Avoid app-file bloat and unnecessary loader chains.
+- When a change supersedes or extends an existing corrective layer, fold the new code into the appropriate existing production file(s), update the version string there, and adjust any loader/reference code so the obsolete successor layer is not required.
+- Add a new production file only when the feature genuinely requires a distinct module/resource with an independent responsibility, not merely because the editor version has increased.
+- Where an older version-suffixed corrective file is already the current canonical implementation, future work should update that file in place unless consolidation into a more appropriate existing module is part of the task. Do not create another numbered successor solely for the new version.
+- Replacement app ZIPs must contain the current canonical app file set suitable for extraction over the repository. Do not include both an obsolete corrective layer and a new successor layer when the latter replaces the former.
+- Visible/internal editor version numbering and physical filenames are separate concerns: increase the version number every time, while keeping the production file structure stable.
+
 ## User deliverables
 
 - For HTML5 editor/app changes, deliver a ZIP containing the **complete replacement app files** at their repository-relative paths. The ZIP must be suitable for extraction over the repository. Do not present `.patch`, `.diff`, installer/apply scripts, or partial code fragments as the user deliverable.

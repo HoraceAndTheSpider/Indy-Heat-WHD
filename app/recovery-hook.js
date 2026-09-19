@@ -40,8 +40,8 @@ const capture=root.IndyHeatRecoveryCapture={generation:0,epoch:0,seq:0,heading:[
 // Capture app.js's own Circuit <select> change listener while app.js is loaded after
 // this hook. Backdrop import can then ask the core editor to re-run selectTrack()
 // directly instead of relying on a synthetic DOM change event. The wrapper is
-// restored before extension scripts are injected, so later editor modes see the
-// normal addEventListener implementation.
+// restored once the initial script set has registered, so later editor modules see
+// the normal addEventListener implementation.
 const trackSelectElement=document.getElementById('trackSelect');
 let coreTrackChangeListener=null;
 let restoreTrackAddListener=null;
@@ -136,43 +136,11 @@ T.decodeSurface2bpp=function(data,offset=0){
   return result;
 };
 
-function loadV0196(){
-  if(document.querySelector('script[data-indyheat-editor-fixes-v0196]'))return;
-  const s=document.createElement('script');
-  s.src='editor-fixes-v0196.js';
-  s.dataset.indyheatEditorFixesV0196='1';
-  document.head.appendChild(s);
-}
-
-// Load the post-v0.11 editor extensions after the existing static editor scripts have
-// initialised. v0.19.6 is explicitly chained after v0.19.5 so its global HUD capture
-// listener and final mode ordering win deterministically.
-function loadEditorExtensions(){
+function restoreTrackListenerCapture(){
   if(restoreTrackAddListener)restoreTrackAddListener();
-  if(!document.querySelector('script[data-indyheat-race-setup]')){
-    const s=document.createElement('script');s.src='race-setup.js';s.dataset.indyheatRaceSetup='1';document.head.appendChild(s);
-  }
-  if(!document.querySelector('script[data-indyheat-track-backdrop]')){
-    const s=document.createElement('script');s.src='track-backdrop.js';s.dataset.indyheatTrackBackdrop='1';document.head.appendChild(s);
-  }
-  if(!document.querySelector('script[data-indyheat-circuit-package]')){
-    const s=document.createElement('script');s.src='circuit-package.js';s.dataset.indyheatCircuitPackage='1';document.head.appendChild(s);
-  }
-
-  const existing=document.querySelector('script[data-indyheat-editor-fixes-v0193]');
-  if(!existing){
-    const s=document.createElement('script');
-    s.src='editor-fixes-v0193.js';
-    s.dataset.indyheatEditorFixesV0193='1';
-    s.addEventListener('load',loadV0196,{once:true});
-    document.head.appendChild(s);
-  }else{
-    // This branch is mainly defensive for hot reloads. The v0.19.6 module retries
-    // its own installation until the v0.19.5-created UI exists.
-    existing.addEventListener('load',loadV0196,{once:true});
-    setTimeout(loadV0196,100);
-  }
 }
-if(document.readyState==='complete')setTimeout(loadEditorExtensions,0);
-else root.addEventListener('load',()=>setTimeout(loadEditorExtensions,0),{once:true});
+if(document.readyState==='loading')
+  document.addEventListener('DOMContentLoaded',restoreTrackListenerCapture,{once:true});
+else
+  setTimeout(restoreTrackListenerCapture,0);
 })(typeof globalThis!=='undefined'?globalThis:this);

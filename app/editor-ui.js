@@ -1,21 +1,18 @@
+/*
+ * Indy Heat Amiga Circuit Editor — consolidated UI module v0.26
+ *
+ * This replaces the historical corrective-layer file layering. The two internal scopes are deliberately retained to preserve the
+ * already accepted behaviour while presenting one stable runtime module.
+ */
+
 (function(root){
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.19.5 corrective UI layer.
+ * Indy Heat Circuit Editor v0.26 — consolidated UI coordination.
  *
- * Loader compatibility:
- *   The filename remains editor-fixes-v0193.js because recovery-hook.js on the
- *   current master already loads that path.  This replacement deliberately
- *   updates the visible editor version to v0.19.5 without changing the circuit
- *   package/runtime formats.
- *
- * v0.19.5 consolidates the remaining Race-HUD/UI fixes:
- * - render the genuine $6B02 two-tone/masked current-lap and timer cells;
- * - move HUD dragging onto a dedicated hit-region aligned with the visible HUD;
- * - keep a stable-width editor column whether or not vertical scrolling is needed;
- * - defer MiniMap recolouring until the project supplies an explicit remap table;
- * - keep the established v0.19.4 mode, fold and 1..20-lap behaviour.
+ * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
+ * opacity policy and Race presentation controls already accepted by the project.
  */
 
 if(typeof document==='undefined')return;
@@ -45,7 +42,6 @@ let resizeObserver=null;
 let opacityObserver=null;
 let modeCoordinatorInstalled=false;
 let foldSyncInstalled=false;
-let paletteFixInstalled=false;
 let raceCanvasPatched=false;
 let lapObserver=null;
 let modeGuard=false;
@@ -61,10 +57,10 @@ const MODE_ORDER=Object.freeze([
   'layerEditMask',
   'layerEditSurface',
   'layerModeWaypoints',
+  'layerEditRecovery',
   'layerEditRaceSetup',
   'layerEditMini',
-  'layerEditMap',
-  'layerEditRecovery'
+  'layerEditMap'
 ]);
 
 const PIT_TOGGLES=Object.freeze(['circuitShowPits','circuitShowBoards','circuitShowPitCars']);
@@ -123,29 +119,27 @@ function presentation(){
 }
 
 function setVersionLabel(){
-  const re=/v0\.(?:11|12|13|14|15|16|17|18|19(?:\.[1-5])?)/i;
   const h=document.querySelector('header h1');
-  if(h)h.textContent=h.textContent.replace(re,'v0.19.5');
-  document.title=document.title.replace(re,'v0.19.5');
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.26';
+  document.title='Indy Heat Amiga – Circuit Editor v0.26';
 }
 
 function installStyle(){
-  if($('indyheatFix0195Style'))return;
+  if($('indyheatEditorUiStyle'))return;
   const s=document.createElement('style');
-  s.id='indyheatFix0195Style';
+  s.id='indyheatEditorUiStyle';
   s.textContent=`
-    body[data-indyheat-v0195-fix="1"] #circuitRaceHudCanvas,
-    body[data-indyheat-v0195-fix="1"] #editorFixHudCanvas{display:none!important}
-    #editorFixHudCanvas194{
+    body[data-indyheat-editor-ui="1"] #circuitRaceHudCanvas{display:none!important}
+    #editorUiHudCanvas{
       position:absolute;inset:0;z-index:6;display:block;pointer-events:none;
       image-rendering:pixelated;image-rendering:crisp-edges
     }
-    #editorFixHudCanvas194[hidden]{display:none!important}
-    #editorFixHudDragHit194{
+    #editorUiHudCanvas[hidden]{display:none!important}
+    #editorUiHudDragHit{
       position:absolute;z-index:7;display:block;cursor:move;touch-action:none;
       background:transparent;user-select:none;-webkit-user-select:none
     }
-    #editorFixHudDragHit194[hidden]{display:none!important}
+    #editorUiHudDragHit[hidden]{display:none!important}
     #layerEditorColumn{
       box-sizing:border-box!important;width:286px!important;min-width:286px!important;max-width:286px!important;
       overflow-y:scroll!important;overflow-x:hidden!important;scrollbar-gutter:stable!important
@@ -453,8 +447,8 @@ function ensureLapContract(){
   e.min=String(AUTHORED_LAP_MIN);
   e.max=String(AUTHORED_LAP_MAX);
   e.title='Authored custom range: 1–20. Lap 20 is displayed as F during gameplay.';
-  if(!e.dataset.v0194LapGuard){
-    e.dataset.v0194LapGuard='1';
+  if(!e.dataset.editorUiLapGuard){
+    e.dataset.editorUiLapGuard='1';
     e.addEventListener('input',()=>{
       if(e.value==='')return;
       let v=Number(e.value);
@@ -474,8 +468,8 @@ function ensureLapContract(){
   return true;
 }
 function installLapGuards(){
-  if(document.body?.dataset.v0194LapGuards)return;
-  document.body.dataset.v0194LapGuards='1';
+  if(document.body?.dataset.editorUiLapGuards)return;
+  document.body.dataset.editorUiLapGuards='1';
 
   document.addEventListener('click',e=>{
     const b=e.target?.closest?.('button');
@@ -577,21 +571,21 @@ function raceActive(){
 function viewerStack(){
   return $('view')?.closest('.canvasStack')||$('view')?.parentElement||null;
 }
-function hudCanvas(){return $('editorFixHudCanvas194');}
+function hudCanvas(){return $('editorUiHudCanvas');}
 function ensureHudCanvas(){
   const stack=viewerStack(),view=$('view');
   if(!stack||!view)return false;
   let c=hudCanvas();
   if(!c){
     c=document.createElement('canvas');
-    c.id='editorFixHudCanvas194';
+    c.id='editorUiHudCanvas';
     c.hidden=true;
     stack.appendChild(c);
   }
-  let hit=$('editorFixHudDragHit194');
+  let hit=$('editorUiHudDragHit');
   if(!hit){
     hit=document.createElement('div');
-    hit.id='editorFixHudDragHit194';
+    hit.id='editorUiHudDragHit';
     hit.hidden=true;
     hit.title='Drag lap tower / HUD';
     stack.appendChild(hit);
@@ -607,7 +601,7 @@ function ensureHudCanvas(){
   return true;
 }
 function syncHudDragHit(p){
-  const hit=$('editorFixHudDragHit194'),view=$('view'),stack=viewerStack();
+  const hit=$('editorUiHudDragHit'),view=$('view'),stack=viewerStack();
   if(!hit||!view||!stack||!p||!raceActive()){
     if(hit)hit.hidden=true;
     return;
@@ -717,7 +711,7 @@ function ensureHudControls(){
         <button id="circuitHudApply" type="button">Apply HUD anchor</button>
         <button id="circuitHudBring" type="button">Bring into view</button>
       </div>
-      <div class="muted" data-v0194-hud-help="1"></div>`;
+      <div class="muted" data-editor-ui-hud-help="1"></div>`;
     const grid=pane.querySelector('.raceSetupGrid');
     pane.insertBefore(controls,grid||pane.firstChild);
   }
@@ -733,23 +727,23 @@ function ensureHudControls(){
     bring.id='circuitHudBring';bring.type='button';bring.textContent='Bring into view';
     actions.appendChild(bring);
   }
-  let help=controls.querySelector('[data-v0194-hud-help]');
+  let help=controls.querySelector('[data-editor-ui-hud-help]');
   if(!help){
     const old=[...controls.querySelectorAll('.muted')].pop();
     help=old||document.createElement('div');
     help.classList.add('muted');
-    help.dataset.v0194HudHelp='1';
+    help.dataset.editorUiHudHelp='1';
     if(!old)controls.appendChild(help);
   }
   help.textContent='Drag the visible lap tower/HUD directly, or use HUD X/Y. Current-lap and timer cells reproduce the retail $6B02 glyph, mask and source-plane shading; total laps previews the authored maximum 20.';
 
   const apply=$('circuitHudApply');
-  if(apply&&!apply.dataset.v0194){
-    apply.dataset.v0194='1';
+  if(apply&&!apply.dataset.editorUiHudAction){
+    apply.dataset.editorUiHudAction='1';
     apply.addEventListener('click',()=>writeHud(Number($('circuitHudX')?.value||0),Number($('circuitHudY')?.value||0)));
   }
-  if(bring&&!bring.dataset.v0194){
-    bring.dataset.v0194='1';
+  if(bring&&!bring.dataset.editorUiHudAction){
+    bring.dataset.editorUiHudAction='1';
     bring.addEventListener('click',()=>{
       const q=presentation();
       if(!q)return;
@@ -767,9 +761,9 @@ function raceCanvasPoint(e){
 }
 function hudHit(q,p){return {hit:!!(q&&p),handle:false};}
 function installHudPointer(){
-  const hit=$('editorFixHudDragHit194');
-  if(!hit||hit.dataset.v0195HudPointer)return !!hit;
-  hit.dataset.v0195HudPointer='1';
+  const hit=$('editorUiHudDragHit');
+  if(!hit||hit.dataset.editorUiHudPointer)return !!hit;
+  hit.dataset.editorUiHudPointer='1';
   hit.addEventListener('pointerdown',e=>{
     if(!raceActive()||e.button!==0)return;
     const q=raceCanvasPoint(e),p=presentation()?.p;
@@ -796,106 +790,6 @@ function installHudPointer(){
   };
   hit.addEventListener('pointerup',end);
   hit.addEventListener('pointercancel',end);
-  return true;
-}
-
-/* -------------------------------------------------------------------------
- * Mini-map palette remap.
- *
- * The final explicit circuit->Gasoline Alley lookup supplied by the project
- * owner should supersede this when available.  This pass improves the old
- * global nearest-colour mapping by keeping neutrals/greens/blues/warm colours
- * in their own palette families and preserving exact non-transparent matches.
- * ---------------------------------------------------------------------- */
-function nibbleRgb(word){return [(word>>>8)&15,(word>>>4)&15,word&15];}
-function colourDistance(a,b){
-  const A=nibbleRgb(a),B=nibbleRgb(b);
-  const dr=A[0]-B[0],dg=A[1]-B[1],db=A[2]-B[2];
-  return dr*dr*3+dg*dg*6+db*db*2;
-}
-function colourFamily(word){
-  const [r,g,b]=nibbleRgb(word),hi=Math.max(r,g,b),lo=Math.min(r,g,b);
-  if(hi-lo<=1)return 'neutral';
-  if(g>=r*1.15&&g>=b*1.12)return 'green';
-  if(b>=r*1.10&&b>=g*.92)return 'blue';
-  return 'warm';
-}
-function buildPaletteMap(){
-  const P=packageTools(),T=indyTools();
-  const src=T?.VERIFIED_TRACK_PALETTE_WORDS,dst=P?.PRESENTATION_PALETTE_WORDS;
-  if(!src||!dst)return null;
-
-  const out=new Uint8Array(32);
-  const all=[...Array(31)].map((_,i)=>i+1); // colour 0 is transparent in miniature
-  const byFamily={neutral:[],green:[],blue:[],warm:[]};
-  for(const j of all)byFamily[colourFamily(dst[j])].push(j);
-
-  for(let i=0;i<32;i++){
-    // Exact shared RGB words are authoritative if they do not select transparent 0.
-    let exact=-1;
-    for(let j=1;j<32;j++)if(dst[j]===src[i]){exact=j;break;}
-    if(exact>=0){out[i]=exact;continue;}
-
-    const family=colourFamily(src[i]);
-    let candidates=byFamily[family];
-    if(!candidates?.length)candidates=all;
-
-    let best=candidates[0],bestD=Infinity;
-    for(const j of candidates){
-      const d=colourDistance(src[i],dst[j]);
-      if(d<bestD){bestD=d;best=j;}
-    }
-    out[i]=best;
-  }
-  return out;
-}
-function reduceBackdrop(source,map){
-  const out=new Uint8Array(PREVIEW_W*PREVIEW_H);
-  for(let dy=0;dy<PREVIEW_H;dy++){
-    const sy0=Math.floor(dy*TRACK_GAME_H/PREVIEW_H);
-    const sy1=Math.max(sy0+1,Math.floor((dy+1)*TRACK_GAME_H/PREVIEW_H));
-    for(let dx=0;dx<PREVIEW_W;dx++){
-      const sx0=Math.floor(dx*TRACK_W/PREVIEW_W);
-      const sx1=Math.max(sx0+1,Math.floor((dx+1)*TRACK_W/PREVIEW_W));
-      const counts=new Uint16Array(32);
-      for(let sy=sy0;sy<sy1;sy++)for(let sx=sx0;sx<sx1;sx++)
-        counts[map[source[sy*TRACK_W+sx]&31]]++;
-      let best=1,n=-1;
-      for(let i=1;i<32;i++)if(counts[i]>n){n=counts[i];best=i;}
-      out[dy*PREVIEW_W+dx]=best;
-    }
-  }
-  return out;
-}
-function setMiniStatus(text){
-  const e=$('circuitAuxStatusMini');
-  if(e)e.textContent=text;
-}
-function correctBackdropMiniature(){
-  const P=packageTools(),T=indyTools(),model=resourceModel(),record=recordForModel(model),map=buildPaletteMap();
-  if(!P||!T||!model||!record||!map)return;
-  try{
-    const bg=model.getResource(record.baseResourceId),TB=root.IndyHeatTrackBackdropTools;
-    const source=TB?.decodeTrackPlanar?TB.decodeTrackPlanar(bg.data):T.decodePlanar(bg.data,TRACK_W,TRACK_H,5,0);
-    const pixels=reduceBackdrop(source,map);
-    for(const m of authoringModels()){
-      const r=recordForModel(m);
-      if(!r)continue;
-      const q=P.resolvePreviewResource(m,r);
-      const encoded=P.encodePreviewPixels(pixels,q.resource.data);
-      q.resource.data.set(encoded);
-    }
-    setMiniStatus('Miniature rebuilt with family-aware race-to-Gasoline-Alley palette mapping. An explicit project lookup table can replace this mapping later for exact art direction.');
-    setTimeout(()=>{
-      if($('circuitPreviewControls')&&!$('circuitPreviewControls').hidden)$('layerEditMini')?.click();
-    },0);
-  }catch(e){
-    setMiniStatus(`ERROR: ${e.message}`);
-  }
-}
-function installBackdropFix(){
-  // Deliberately deferred in v0.19.5. The project owner will provide an
-  // explicit circuit-palette -> Gasoline Alley palette lookup table.
   return true;
 }
 
@@ -941,7 +835,7 @@ function installUiEvents(){
 }
 
 function tick(){
-  document.body?.setAttribute('data-indyheat-v0195-fix','1');
+  document.body?.setAttribute('data-indyheat-editor-ui','1');
   installStyle();
   setVersionLabel();
   renameZoom();
@@ -956,7 +850,6 @@ function tick(){
   ensureHudControls();
   patchRaceCanvasDebugLabel();
   installHudPointer();
-  installBackdropFix();
   renderHud();
 
   return !!(
@@ -977,6 +870,608 @@ function boot(){
   },50);
   setTimeout(tick,1000);
   setTimeout(tick,2500);
+}
+if(document.readyState==='loading')
+  document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});
+else
+  setTimeout(boot,0);
+
+})(typeof globalThis!=='undefined'?globalThis:this);
+
+(function(root){
+'use strict';
+
+/*
+ * Indy Heat Circuit Editor v0.26 — consolidated accepted refinements.
+ *
+ * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
+ * Race-to-Garage MiniMap palette map and final editor-mode ordering.
+ */
+
+if(typeof document==='undefined')return;
+
+const $=id=>document.getElementById(id);
+const TRACK_W=320,TRACK_H=256;
+const PREVIEW_W=78,PREVIEW_H=51,TRACK_GAME_H=224;
+
+// Explicit lookup supplied by the project owner.
+// Source = Race palette index. Destination = Garage / Gasoline Alley palette index.
+// The spreadsheet row labelled Hex Index 028:$900 contains "Race # 29"; because
+// the Hex Index is 028 and the following row is the genuine 029 entry, that row
+// is treated as the evident source-index typo 28 -> 4.
+const RACE_TO_GARAGE=Object.freeze([
+  14, //  0 -> 14
+   0, //  1 -> 0
+  19, //  2 -> 19
+   3, //  3 -> 3
+  12, //  4 -> 12
+  13, //  5 -> 13
+  14, //  6 -> 14
+  15, //  7 -> 15
+  29, //  8 -> 29
+  27, //  9 -> 27
+  17, // 10 -> 17
+  31, // 11 -> 31
+  20, // 12 -> 20
+  21, // 13 -> 21
+  22, // 14 -> 22
+  23, // 15 -> 23
+  25, // 16 -> 25
+  25, // 17 -> 25
+  26, // 18 -> 26
+  19, // 19 -> 19
+  28, // 20 -> 28
+  31, // 21 -> 31
+  30, // 22 -> 30
+  31, // 23 -> 31
+  24, // 24 -> 24
+   8, // 25 -> 8
+   9, // 26 -> 9
+  10, // 27 -> 10
+   4, // 28 -> 4  (spreadsheet Hex Index 028)
+   6, // 29 -> 6
+   5, // 30 -> 5
+   7  // 31 -> 7
+]);
+
+const MODE_ORDER=Object.freeze([
+  'layerEditBackdrop',
+  'layerEditMask',
+  'layerEditSurface',
+  'layerModeWaypoints',
+  'layerEditRecovery',
+  'layerEditRaceSetup',
+  'layerEditMini',
+  'layerEditMap'
+]);
+
+let hudDrag=null;
+let paletteInstalled=false;
+let bootTimer=null;
+
+function tools(){return root.IndyHeatTools||null;}
+function packageTools(){return root.IndyHeatCircuitPackage||null;}
+function capture(){return root.IndyHeatRaceSetupCapture||null;}
+function trackIndex(){return Number($('trackSelect')?.value||0);}
+
+function uniq(items){
+  const out=[];
+  for(const x of items)if(x&&!out.includes(x))out.push(x);
+  return out;
+}
+function models(){
+  const C=capture();
+  return C?uniq([C.coreModel,C.layerModel,C.model,...(C.models||[])]):[];
+}
+function primaryModel(){
+  const C=capture();
+  return C?.model||C?.layerModel||C?.coreModel||models()[0]||null;
+}
+function resourceModel(){
+  const C=capture();
+  return C?.layerModel||C?.model||C?.coreModel||models()[0]||null;
+}
+function recordsFor(model){
+  const C=capture(),T=tools();
+  if(!model||!T)return [];
+  let records=C?.recordsByMain?.get(model.main)||null;
+  if(!records){
+    records=T.parseRaceRecords(model.main);
+    C?.recordsByMain?.set(model.main,records);
+  }
+  for(const r of records){
+    if(r.baseResourceId==null&&typeof T.raceBaseResourceId==='function')
+      r.baseResourceId=T.raceBaseResourceId(r,model.resourceTableOffset+0x1000);
+  }
+  return records;
+}
+function recordFor(model,index=trackIndex()){
+  const T=tools();
+  if(!model||!T)return null;
+  const base=T.TRACK_BASE_IDS?.[index];
+  return recordsFor(model).find(r=>r.baseResourceId===base)||null;
+}
+function currentPresentation(){
+  const P=packageTools(),m=primaryModel(),r=recordFor(m);
+  return P&&m&&r?P.readPresentation(m.main,r.offset):null;
+}
+
+function setVersion(){
+  const h=document.querySelector('header h1');
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.26';
+  document.title='Indy Heat Amiga – Circuit Editor v0.26';
+}
+
+
+/* -------------------------------------------------------------------------
+ * Overlay display colours.
+ *
+ * Foreground/Surface display colours are shared with layer-editor.js through
+ * root.IndyHeatOverlayColours. They affect presentation only; resource bytes,
+ * surface classes and foreground mask bits are never modified.
+ * ---------------------------------------------------------------------- */
+const OVERLAY_COLOUR_STORAGE='indyheat-overlay-colours';
+const OVERLAY_COLOUR_STORAGE_LEGACY='indyheat-overlay-colours-v025';
+const OVERLAY_COLOUR_DEFAULTS=Object.freeze({
+  foreground:'#f5bd4f',
+  surface0:'#ffffff',
+  surface1:'#dc4545',
+  surface2:'#5ed46c',
+  surface3:'#4a79e8'
+});
+const overlayColours={...OVERLAY_COLOUR_DEFAULTS};
+let overlayColourObserver=null;
+
+function validHexColour(v){return /^#[0-9a-f]{6}$/i.test(String(v||''));}
+function loadOverlayColours(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(OVERLAY_COLOUR_STORAGE)||localStorage.getItem(OVERLAY_COLOUR_STORAGE_LEGACY)||'{}');
+    for(const k of Object.keys(OVERLAY_COLOUR_DEFAULTS))if(validHexColour(saved[k]))overlayColours[k]=saved[k].toLowerCase();
+  }catch(_e){}
+}
+function saveOverlayColours(){
+  try{localStorage.setItem(OVERLAY_COLOUR_STORAGE,JSON.stringify(overlayColours));}catch(_e){}
+}
+function colourRgba(hex,a){
+  const n=parseInt(String(hex).slice(1),16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+function requestOverlayRedraw(){
+  const opacity=$('opacity');
+  if(opacity)opacity.dispatchEvent(new Event('input',{bubbles:true}));
+}
+function makeColourWheel(id,key,title){
+  const input=document.createElement('input');
+  input.type='color';input.id=id;input.className='overlayColourWheel';
+  input.value=overlayColours[key];input.title=title;input.setAttribute('aria-label',title);
+  input.dataset.overlayColourKey=key;
+  input.addEventListener('pointerdown',e=>e.stopPropagation());
+  input.addEventListener('click',e=>e.stopPropagation());
+  input.addEventListener('input',()=>{
+    if(validHexColour(input.value)){
+      overlayColours[key]=input.value.toLowerCase();
+      saveOverlayColours();syncLayerPaintSwatches();requestOverlayRedraw();
+    }
+  });
+  return input;
+}
+function syncLayerPaintSwatches(){
+  const map={
+    '.paint-fg':'foreground',
+    '.paint-normal':'surface0',
+    '.paint-edge':'surface1',
+    '.paint-slowA':'surface2',
+    '.paint-slowB':'surface3'
+  };
+  for(const [sel,key] of Object.entries(map))document.querySelectorAll(sel).forEach(e=>e.style.background=overlayColours[key]);
+}
+function wrapSurfaceLabelText(label){
+  let span=label.querySelector('.overlayColourLabelText');
+  if(span)return span;
+  span=document.createElement('span');span.className='overlayColourLabelText';
+  const nodes=[...label.childNodes].filter(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());
+  if(nodes.length){
+    span.textContent=nodes.map(n=>n.textContent).join(' ').trim();
+    for(const n of nodes)n.remove();
+  }
+  label.appendChild(span);
+  return span;
+}
+function installOverlayColourControls(){
+  const mask=$('layerShowMask');
+  const surfaceChecks=[...document.querySelectorAll('.surfaceClass')];
+  if(!mask||surfaceChecks.length<4)return false;
+
+  if(!document.getElementById('indyheatOverlayColourStyle')){
+    const style=document.createElement('style');style.id='indyheatOverlayColourStyle';
+    style.textContent=`
+      .overlayColourWheel{width:21px!important;height:21px!important;min-width:21px!important;padding:0!important;border:1px solid #687282!important;border-radius:50%!important;background:transparent!important;overflow:hidden;cursor:pointer;box-sizing:border-box}
+      .overlayColourWheel::-webkit-color-swatch-wrapper{padding:0}
+      .overlayColourWheel::-webkit-color-swatch{border:0;border-radius:50%}
+      .overlayColourWheel::-moz-color-swatch{border:0;border-radius:50%}
+      .surfaceClassColourLabel{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center}
+      .surfaceClassColourLabel .overlayColourLabelText{min-width:0}
+    `;
+    document.head.appendChild(style);
+  }
+
+  const maskRow=mask.closest('.layerControlRow')||mask.parentElement;
+  if(maskRow&&!$('overlayColourForeground')){
+    maskRow.style.gridTemplateColumns='auto minmax(0,1fr) auto';
+    maskRow.appendChild(makeColourWheel('overlayColourForeground','foreground','Foreground overlay colour'));
+  }
+
+  for(const c of surfaceChecks){
+    const n=Number(c.dataset.class);if(n<0||n>3)continue;
+    const label=c.closest('label');if(!label)continue;
+    label.classList.add('surfaceClassColourLabel');
+    wrapSurfaceLabelText(label);
+    const id=`overlayColourSurface${n}`;
+    if(!$(id))label.appendChild(makeColourWheel(id,`surface${n}`,`Surface class ${n} overlay colour`));
+  }
+
+  syncLayerPaintSwatches();
+  const paintHost=$('layerPaintChoices');
+  if(paintHost&&!overlayColourObserver&&typeof MutationObserver!=='undefined'){
+    overlayColourObserver=new MutationObserver(syncLayerPaintSwatches);
+    overlayColourObserver.observe(paintHost,{childList:true,subtree:true});
+  }
+  if(!document.documentElement.dataset.editorUiOverlayColoursReady){
+    document.documentElement.dataset.editorUiOverlayColoursReady='1';
+    requestOverlayRedraw();
+  }
+  return true;
+}
+loadOverlayColours();
+root.IndyHeatOverlayColours=overlayColours;
+
+/* -------------------------------------------------------------------------
+ * Race lap authoring: slider, 1..20.
+ *
+ * Keep the existing #raceLaps element so all existing authoring/apply guards
+ * remain attached. Only its presentation changes from numeric entry to range.
+ * ---------------------------------------------------------------------- */
+function lapSliderValue(){
+  const e=$('raceLaps'),out=$('raceLapsSliderValue');
+  if(!e||!out)return false;
+  let v=Math.round(Number(e.value));
+  if(!Number.isFinite(v))v=1;
+  v=Math.max(1,Math.min(20,v));
+  if(String(v)!==e.value)e.value=String(v);
+  out.value=String(v);
+  out.textContent=String(v);
+  out.setAttribute('aria-label',`${v} laps`);
+  return true;
+}
+function installLapSlider(){
+  const e=$('raceLaps');
+  if(!e)return false;
+
+  e.type='range';
+  e.min='1';
+  e.max='20';
+  e.step='1';
+  e.title='Authored custom range: 1–20. Lap 20 is displayed as F during gameplay.';
+  e.setAttribute('aria-label','Race laps');
+
+  let out=$('raceLapsSliderValue');
+  if(!out){
+    const row=document.createElement('div');
+    row.className='raceLapSliderRow';
+    const parent=e.parentNode;
+    if(parent){
+      parent.insertBefore(row,e);
+      row.appendChild(e);
+      out=document.createElement('output');
+      out.id='raceLapsSliderValue';
+      out.className='raceLapSliderValue';
+      out.htmlFor='raceLaps';
+      row.appendChild(out);
+    }
+  }
+
+  if(!document.getElementById('indyheatLapSliderStyle')){
+    const style=document.createElement('style');
+    style.id='indyheatLapSliderStyle';
+    style.textContent=`
+      .raceLapSliderRow{display:flex;align-items:center;gap:8px;width:100%}
+      .raceLapSliderRow #raceLaps{flex:1 1 auto;width:auto!important;min-width:0;margin:0}
+      .raceLapSliderValue{flex:0 0 2ch;min-width:2ch;text-align:right;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
+    `;
+    document.head.appendChild(style);
+  }
+
+  if(!e.dataset.editorUiLapSlider){
+    e.dataset.editorUiLapSlider='1';
+    e.addEventListener('input',lapSliderValue);
+    e.addEventListener('change',lapSliderValue);
+
+    $('trackSelect')?.addEventListener('change',()=>setTimeout(lapSliderValue,0));
+    document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(lapSliderValue,0));
+    document.addEventListener('click',ev=>{
+      const id=ev.target?.closest?.('button')?.id;
+      if(id==='raceApply'||id==='raceRevert')setTimeout(lapSliderValue,0);
+    });
+  }
+
+  return lapSliderValue();
+}
+
+function reorderModes(){
+  const host=$('layerModeButtons');
+  if(!host)return false;
+
+  const wanted=MODE_ORDER.filter(id=>{
+    const b=$(id);
+    return !!(b&&b.parentNode===host);
+  });
+  const current=[...host.children]
+    .map(el=>el.id)
+    .filter(id=>wanted.includes(id));
+
+  const same=current.length===wanted.length&&current.every((id,i)=>id===wanted[i]);
+  if(!same){
+    for(const id of wanted){
+      const b=$(id);
+      if(id==='layerEditMini')b.textContent='MiniMap';
+      host.appendChild(b);
+    }
+  }else{
+    const mini=$('layerEditMini');
+    if(mini&&mini.textContent!=='MiniMap')mini.textContent='MiniMap';
+  }
+  return MODE_ORDER.every(id=>!!$(id));
+}
+
+function installModeOrder(){
+  const host=$('layerModeButtons');
+  if(!host)return false;
+
+  // Important: do NOT observe childList mutations here. Reordering existing
+  // buttons itself mutates childList; observing and re-appending those nodes can
+  // create an event loop that starves the browser UI.
+  reorderModes();
+
+  if(!host.dataset.editorUiModeOrder){
+    host.dataset.editorUiModeOrder='1';
+
+    // the consolidated core UI layer also reorders after mode clicks. Queue ours afterwards so the
+    // project-approved order is the final DOM order without a MutationObserver.
+    host.addEventListener('click',()=>setTimeout(reorderModes,0));
+  }
+  return true;
+}
+
+/* -------------------------------------------------------------------------
+ * Lap tower: global capture drag.
+ * ---------------------------------------------------------------------- */
+function raceActive(){
+  const pane=$('raceSetupPane'),button=$('layerEditRaceSetup');
+  return !!(pane&&!pane.hidden&&button?.classList.contains('active'));
+}
+function eventGamePoint(e,{allowOutside=false}={}){
+  const view=$('view');
+  if(!view)return null;
+  const r=view.getBoundingClientRect();
+  if(!r.width||!r.height)return null;
+  const inside=e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;
+  if(!inside&&!allowOutside)return null;
+  return {
+    x:(e.clientX-r.left)*TRACK_W/r.width,
+    y:(e.clientY-r.top)*TRACK_H/r.height,
+    inside
+  };
+}
+function hudBounds(p){
+  const x=Number(p?.lapDisplayX)||0,y=Number(p?.lapDisplayY)||0;
+  // Generous visible-HUD rectangle: four current-lap cells, total-laps object,
+  // timer digits and a few pixels of grab margin.
+  return {x0:x-18,y0:y-8,x1:x+26,y1:y+66};
+}
+function pointInHud(q,p){
+  if(!q||!p)return false;
+  const b=hudBounds(p);
+  return q.x>=b.x0&&q.x<=b.x1&&q.y>=b.y0&&q.y<=b.y1;
+}
+function redrawHud(){
+  const opacity=$('opacity');
+  if(opacity)opacity.dispatchEvent(new Event('input',{bubbles:true}));
+}
+function writeHud(x,y){
+  const P=packageTools();
+  if(!P)return false;
+  x=Math.round(x);y=Math.round(y);
+  let wrote=false;
+  for(const m of models()){
+    const r=recordFor(m);
+    if(!r)continue;
+    P.writePresentation(m.main,r.offset,{lapDisplayX:x,lapDisplayY:y});
+    wrote=true;
+  }
+  if(!wrote)return false;
+  const X=$('circuitHudX'),Y=$('circuitHudY');
+  if(X)X.value=String(x);
+  if(Y)Y.value=String(y);
+  redrawHud();
+  return true;
+}
+function finishHudDrag(e){
+  if(!hudDrag)return;
+  if(e&&e.pointerId!=null&&hudDrag.pointerId!==e.pointerId)return;
+  try{hudDrag.capture?.releasePointerCapture?.(hudDrag.pointerId);}catch(_e){}
+  hudDrag=null;
+  document.documentElement.classList.remove('indyheatHudDragging');
+  redrawHud();
+}
+function installHudDrag(){
+  if(document.documentElement.dataset.editorUiHudDrag)return true;
+  document.documentElement.dataset.editorUiHudDrag='1';
+
+  // Retire the the consolidated core UI layer DOM hit target. It is no longer part of input routing.
+  const style=document.createElement('style');
+  style.id='indyheatHudCaptureStyle';
+  style.textContent=`
+    #editorUiHudDragHit{pointer-events:none!important}
+    html.indyheatHudDragging,html.indyheatHudDragging *{cursor:grabbing!important}
+  `;
+  document.head.appendChild(style);
+
+  document.addEventListener('pointerdown',e=>{
+    if(e.button!==0||!raceActive())return;
+    const q=eventGamePoint(e),p=currentPresentation();
+    if(!q||!p||!pointInHud(q,p))return;
+
+    // Capture before raceSetupCanvas, layer canvas or any future overlay can
+    // claim the gesture.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    hudDrag={
+      pointerId:e.pointerId,
+      offsetX:q.x-(Number(p.lapDisplayX)||0),
+      offsetY:q.y-(Number(p.lapDisplayY)||0),
+      capture:e.target instanceof Element?e.target:null
+    };
+    try{hudDrag.capture?.setPointerCapture?.(e.pointerId);}catch(_e){}
+    document.documentElement.classList.add('indyheatHudDragging');
+  },true);
+
+  window.addEventListener('pointermove',e=>{
+    if(hudDrag&&hudDrag.pointerId===e.pointerId){
+      const q=eventGamePoint(e,{allowOutside:true});
+      if(!q)return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      writeHud(q.x-hudDrag.offsetX,q.y-hudDrag.offsetY);
+      return;
+    }
+
+    // Cursor feedback is based on coordinates rather than event target too.
+    if(!raceActive())return;
+    const q=eventGamePoint(e),p=currentPresentation(),view=$('view');
+    if(view)view.style.cursor=(q&&p&&pointInHud(q,p))?'grab':'';
+  },true);
+
+  window.addEventListener('pointerup',e=>{
+    if(!hudDrag||hudDrag.pointerId!==e.pointerId)return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    finishHudDrag(e);
+  },true);
+  window.addEventListener('pointercancel',finishHudDrag,true);
+  window.addEventListener('blur',()=>finishHudDrag(null));
+
+  return true;
+}
+
+/* -------------------------------------------------------------------------
+ * Explicit race -> Garage palette lookup for "From backdrop".
+ * ---------------------------------------------------------------------- */
+function reduceBackdropWithLookup(source){
+  const out=new Uint8Array(PREVIEW_W*PREVIEW_H);
+  for(let dy=0;dy<PREVIEW_H;dy++){
+    const sy0=Math.floor(dy*TRACK_GAME_H/PREVIEW_H);
+    const sy1=Math.max(sy0+1,Math.floor((dy+1)*TRACK_GAME_H/PREVIEW_H));
+    for(let dx=0;dx<PREVIEW_W;dx++){
+      const sx0=Math.floor(dx*TRACK_W/PREVIEW_W);
+      const sx1=Math.max(sx0+1,Math.floor((dx+1)*TRACK_W/PREVIEW_W));
+      const counts=new Uint16Array(32);
+
+      // Remap every sampled race pixel first. Repeated destination colours in
+      // the supplied lookup deliberately combine before the area-mode choice.
+      for(let sy=sy0;sy<sy1;sy++)for(let sx=sx0;sx<sx1;sx++){
+        const raceIndex=source[sy*TRACK_W+sx]&31;
+        counts[RACE_TO_GARAGE[raceIndex]]++;
+      }
+
+      let best=0,bestN=-1;
+      for(let i=0;i<32;i++){
+        if(counts[i]>bestN){bestN=counts[i];best=i;}
+      }
+      out[dy*PREVIEW_W+dx]=best;
+    }
+  }
+  return out;
+}
+function setMiniStatus(text){
+  const e=$('circuitAuxStatusMini');
+  if(e)e.textContent=text;
+}
+function chooseUnusedMiniTransparency(pixels,currentTransparent){
+  const used=new Set(pixels);if(!used.has(currentTransparent))return currentTransparent;
+  for(let i=0;i<32;i++)if(!used.has(i))return i;
+  throw new Error('The generated MiniMap uses all 32 palette indices; no unused transparency index is available.');
+}
+function applyExplicitPaletteMap(){
+  const P=packageTools(),T=tools(),model=resourceModel(),r=recordFor(model);
+  if(!P||!T||!model||!r)return false;
+  try{
+    const bg=model.getResource(r.baseResourceId);
+    const TB=root.IndyHeatTrackBackdropTools;
+    const source=TB?.decodeTrackPlanar
+      ? TB.decodeTrackPlanar(bg.data)
+      : T.decodePlanar(bg.data,TRACK_W,TRACK_H,5,0);
+    const pixels=reduceBackdropWithLookup(source);
+
+    for(const m of models()){
+      const mr=recordFor(m);if(!mr)continue;
+      const q=P.resolvePreviewResource(m,mr),decoded=P.decodePreviewBob(q.resource.data);
+      const transparent=chooseUnusedMiniTransparency(pixels,decoded.transparent);
+      q.resource.data.set(P.encodePreviewPixels(pixels,q.resource.data,transparent));
+    }
+
+    setTimeout(()=>$('layerEditMini')?.click(),0);
+    return true;
+  }catch(err){
+    const top=$('circuitPackageTopStatus');if(top){top.textContent=`ERROR: ${err.message}`;top.classList.add('bad');}
+    return false;
+  }
+}
+function installPaletteMap(){
+  const b=$('circuitPreviewFromBackdrop');
+  if(!b)return false;
+  if(b.dataset.editorUiPaletteMap)return true;
+  b.dataset.editorUiPaletteMap='1';
+
+  // circuit-package.js registered its own handler when it created the button.
+  // Our later listener therefore runs after it. This intentionally preserves
+  // its existing package-aware Undo snapshot, then replaces the generated
+  // pixels with the authoritative lookup result.
+  b.addEventListener('click',()=>setTimeout(applyExplicitPaletteMap,0));
+
+  return true;
+}
+
+function tick(){
+  setVersion();
+  installModeOrder();
+  const colourControlsReady=installOverlayColourControls();
+  installLapSlider();
+  installHudDrag();
+  installPaletteMap();
+
+  return !!(
+    colourControlsReady&&
+    tools()&&packageTools()&&capture()&&
+    $('layerModeButtons')&&$('layerEditRecovery')&&$('layerEditRaceSetup')&&
+    $('circuitPreviewFromBackdrop')
+  );
+}
+function boot(){
+  let tries=0;
+  tick();
+  bootTimer=setInterval(()=>{
+    tries++;
+    if(tick()||tries>400){
+      clearInterval(bootTimer);
+      bootTimer=null;
+    }
+  },50);
+
+  // Reassert the accepted final order/version after the coordination scope's
+  // delayed startup timers have completed.
+  setTimeout(()=>{setVersion();reorderModes();},1000);
+  setTimeout(()=>{setVersion();reorderModes();},3000);
 }
 if(document.readyState==='loading')
   document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});

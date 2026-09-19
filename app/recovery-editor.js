@@ -81,14 +81,15 @@ const canvas=document.createElement('canvas');canvas.id='recoveryEditCanvas';sta
 const ctx=canvas.getContext('2d',{alpha:true});
 let active=false,grabGroup=false,pointerGesture=null;
 const selectedGroup=new Set();
-const RECOVERY_COLOUR_STORAGE='indyheat-recovery-overlay-colours-v025';
+const RECOVERY_COLOUR_STORAGE='indyheat-recovery-overlay-colours';
+const RECOVERY_COLOUR_STORAGE_LEGACY='indyheat-recovery-overlay-colours-v025';
 function recoveryColour(id,fallback){
   const v=$(id)?.value;
   return /^#[0-9a-f]{6}$/i.test(String(v||''))?v:fallback;
 }
 function loadRecoveryColours(){
   try{
-    const saved=JSON.parse(localStorage.getItem(RECOVERY_COLOUR_STORAGE)||'{}');
+    const saved=JSON.parse(localStorage.getItem(RECOVERY_COLOUR_STORAGE)||localStorage.getItem(RECOVERY_COLOUR_STORAGE_LEGACY)||'{}');
     if(/^#[0-9a-f]{6}$/i.test(saved.arrow||''))$('recoveryArrowColour').value=saved.arrow;
     if(/^#[0-9a-f]{6}$/i.test(saved.grid||''))$('recoveryGridColour').value=saved.grid;
   }catch(_e){}

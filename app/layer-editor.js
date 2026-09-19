@@ -18,6 +18,17 @@ const magnifier={active:false,placing:false,x:128,y:96};
 let manualLoadSerial=0,manualLayerRequested=false,redrawPending=false;
 const originals=new Map();
 const dirtyResources=new Set();
+const OVERLAY_COLOUR_DEFAULTS=Object.freeze({
+  foreground:'#f5bd4f',surface0:'#ffffff',surface1:'#dc4545',surface2:'#5ed46c',surface3:'#4a79e8'
+});
+function overlayColour(key){
+  const value=globalThis.IndyHeatOverlayColours?.[key];
+  return /^#[0-9a-f]{6}$/i.test(String(value||''))?value:OVERLAY_COLOUR_DEFAULTS[key];
+}
+function overlayColourRgba(key,a){
+  const hex=overlayColour(key),n=parseInt(hex.slice(1),16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function hex2(v){return Number(v).toString(16).toUpperCase().padStart(2,'0');}
@@ -425,7 +436,7 @@ function scale(){return overlay.width/320;}
 
 function drawMask(){
   if(!ui.showMask.checked||!mask)return;
-  const S=scale();octx.save();octx.globalAlpha=alpha();octx.fillStyle='#f5bd4f';
+  const S=scale();octx.save();octx.globalAlpha=alpha();octx.fillStyle=overlayColour('foreground');
   for(let y=0;y<256;y++){
     let run=-1;
     for(let x=0;x<=320;x++){
@@ -438,7 +449,7 @@ function drawMask(){
 }
 function drawSurface(){
   if(!ui.showSurface.checked||!surface)return;
-  const S=scale(),enabled=enabledSurfaceClasses(),colors=['rgba(255,255,255,.15)','#dc4545','#5ed46c','#4a79e8'];
+  const S=scale(),enabled=enabledSurfaceClasses(),colors=[overlayColourRgba('surface0',.15),overlayColour('surface1'),overlayColour('surface2'),overlayColour('surface3')];
   octx.save();octx.globalAlpha=alpha();
   for(let y=0;y<112;y++)for(let x=0;x<160;x++){
     const v=surface.cells[y*160+x];if(!enabled.has(v))continue;

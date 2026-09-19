@@ -342,7 +342,7 @@ function draw(){
     if($('raceShowBoards')?.checked){const q=projectFixedXZ(p.boardX,p.boardY);if(q)drawSprite(ctx,0x08,0,q.x,q.y,S,`P${p.index+1} PIT`,'board',p.index);}
   }
   if($('raceShowFlag')?.checked&&s.flagX>=0&&s.flagX<320&&s.flagY>=0&&s.flagY<256)drawSprite(ctx,0x0F,26,s.flagX,s.flagY,S,'FLAG','flag');
-  // v0.19.5: the old top-left browser-only "LAPS n" diagnostic was removed.
+  // The old top-left browser-only "LAPS n" diagnostic is intentionally omitted.
   // The authentic on-track lap presentation is rendered by the Race HUD layer.
   ctx.globalAlpha=1;
 }
