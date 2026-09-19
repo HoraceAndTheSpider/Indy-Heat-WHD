@@ -31,6 +31,17 @@ const PREVIEW_PLANES=5;
 const PREVIEW_ROW_BYTES=10;
 const PREVIEW_PLANE_BYTES=PREVIEW_ROW_BYTES*PREVIEW_HEIGHT;
 const PREVIEW_SIZE=12+PREVIEW_PLANE_BYTES*PREVIEW_PLANES; // $0A02
+const MINIMAP_TEMPLATE_TRANSPARENT=8;
+const MINIMAP_ALLOWED_TRANSPARENT=Object.freeze([PREVIEW_TRANSPARENT,MINIMAP_TEMPLATE_TRANSPARENT]);
+const MINIMAP_TEMPLATES=Object.freeze([
+  Object.freeze({key:"arrow",name:"Arrow",width:9,height:7,hotspotX:4,hotspotY:3,transparent:8,pixels:Object.freeze([8,8,8,12,12,12,8,8,8,8,8,8,12,3,3,12,8,8,12,12,12,12,12,3,3,12,8,12,3,3,3,3,3,3,3,12,12,12,12,12,12,3,3,12,8,8,8,8,12,3,3,12,8,8,8,8,8,12,12,12,8,8,8])}),
+  Object.freeze({key:"pitbox_blue",name:"Pit box Blue",width:6,height:2,hotspotX:3,hotspotY:1,transparent:8,pixels:Object.freeze([8,25,25,25,25,25,25,25,25,25,25,8])}),
+  Object.freeze({key:"pitbox_red",name:"Pit box Red",width:6,height:2,hotspotX:3,hotspotY:1,transparent:8,pixels:Object.freeze([8,5,5,5,5,5,5,5,5,5,5,8])}),
+  Object.freeze({key:"pitbox_white",name:"Pit box White",width:6,height:2,hotspotX:3,hotspotY:1,transparent:8,pixels:Object.freeze([8,3,3,3,3,3,3,3,3,3,3,8])}),
+  Object.freeze({key:"pitbox_yellow",name:"Pit box Yellow",width:6,height:2,hotspotX:3,hotspotY:1,transparent:8,pixels:Object.freeze([8,31,31,31,31,31,31,31,31,31,31,8])}),
+  Object.freeze({key:"startline",name:"Start line",width:7,height:5,hotspotX:3,hotspotY:2,transparent:8,pixels:Object.freeze([8,8,8,8,3,0,3,8,8,8,3,0,3,8,8,8,3,0,3,8,8,8,3,0,3,8,8,8,3,0,3,8,8,8,8])}),
+  Object.freeze({key:"tower",name:"Lap tower",width:9,height:16,hotspotX:4,hotspotY:8,transparent:8,pixels:Object.freeze([8,8,12,12,12,12,13,8,8,8,8,12,0,0,0,12,8,8,8,8,12,0,5,0,12,8,8,8,8,12,0,0,0,12,8,8,8,8,12,0,3,0,12,8,8,8,8,12,0,0,0,12,8,8,8,8,12,0,25,0,12,8,8,8,8,12,0,0,0,12,8,8,8,8,12,0,31,0,12,8,8,8,8,12,0,0,0,12,8,8,8,8,12,0,13,0,12,8,8,12,12,12,0,0,0,12,12,12,12,0,0,0,0,0,0,0,12,12,0,3,0,3,0,3,0,12,12,0,0,0,0,0,0,0,12,12,12,12,12,12,12,12,12,12])})
+]);
 const TRACK_BACKGROUND_SIZE=0xC800;
 const TRACK_FOREGROUND_SIZES=Object.freeze([0x2800,0x2804]);
 const TRACK_SURFACE_SIZE=0x1180;
@@ -213,7 +224,7 @@ function validatePreviewBob(bytes){
   const width=be16(bytes,0),height=be16(bytes,2),xOrigin=s16(be16(bytes,4)),yOrigin=s16(be16(bytes,6)),transparent=be16(bytes,8),planes=be16(bytes,10);
   if(width!==PREVIEW_WIDTH||height!==PREVIEW_HEIGHT||planes!==PREVIEW_PLANES)throw new Error(`Miniature preview BOB header must be ${PREVIEW_WIDTH}x${PREVIEW_HEIGHT}, ${PREVIEW_PLANES} planes`);
   if(xOrigin!==PREVIEW_ORIGIN_X||yOrigin!==PREVIEW_ORIGIN_Y)throw new Error(`Miniature preview origin must be ${PREVIEW_ORIGIN_X},${PREVIEW_ORIGIN_Y}`);
-  if(transparent!==PREVIEW_TRANSPARENT)throw new Error(`Miniature preview transparent source index must be ${PREVIEW_TRANSPARENT}`);
+  if(!MINIMAP_ALLOWED_TRANSPARENT.includes(transparent))throw new Error(`Miniature preview transparent source index must be ${MINIMAP_ALLOWED_TRANSPARENT.join(' or ')}`);
   return {width,height,xOrigin,yOrigin,transparent,planes,rowBytes:PREVIEW_ROW_BYTES,planeBytes:PREVIEW_PLANE_BYTES,payloadOffset:12,byteLength:bytes.length};
 }
 function decodePreviewBob(bytes){
@@ -225,10 +236,11 @@ function decodePreviewBob(bytes){
   }
   return {...h,pixels};
 }
-function encodePreviewPixels(pixels,template=null){
+function encodePreviewPixels(pixels,template=null,transparentOverride=null){
   if(!pixels||pixels.length!==PREVIEW_WIDTH*PREVIEW_HEIGHT)throw new Error(`Miniature preview pixels must contain ${PREVIEW_WIDTH*PREVIEW_HEIGHT} entries`);
   const out=template?Uint8Array.from(template):new Uint8Array(PREVIEW_SIZE);
   if(template)validatePreviewBob(out);else{wr16(out,0,PREVIEW_WIDTH);wr16(out,2,PREVIEW_HEIGHT);wr16(out,4,PREVIEW_ORIGIN_X);wr16(out,6,PREVIEW_ORIGIN_Y);wr16(out,8,PREVIEW_TRANSPARENT);wr16(out,10,PREVIEW_PLANES);}
+  if(transparentOverride!=null){const t=Number(transparentOverride);if(!MINIMAP_ALLOWED_TRANSPARENT.includes(t))throw new Error(`Miniature preview transparent source index must be ${MINIMAP_ALLOWED_TRANSPARENT.join(' or ')}`);wr16(out,8,t);}
   out.fill(0,12);
   for(let y=0;y<PREVIEW_HEIGHT;y++)for(let x=0;x<PREVIEW_WIDTH;x++){
     const v=Number(pixels[y*PREVIEW_WIDTH+x])&31,bi=x>>>3,mask=0x80>>>(x&7);
@@ -238,8 +250,55 @@ function encodePreviewPixels(pixels,template=null){
 }
 function previewBobToRgba(decoded,palette=PRESENTATION_PALETTE_RGB){
   const rgba=new Uint8ClampedArray(PREVIEW_WIDTH*PREVIEW_HEIGHT*4);
-  for(let i=0;i<decoded.pixels.length;i++){const v=decoded.pixels[i];if(v===PREVIEW_TRANSPARENT)continue;const c=palette[v]||[255,0,255],o=i*4;rgba[o]=c[0];rgba[o+1]=c[1];rgba[o+2]=c[2];rgba[o+3]=255;}
+  for(let i=0;i<decoded.pixels.length;i++){const v=decoded.pixels[i];if(v===decoded.transparent)continue;const c=palette[v]||[255,0,255],o=i*4;rgba[o]=c[0];rgba[o+1]=c[1];rgba[o+2]=c[2];rgba[o+3]=255;}
   return {width:PREVIEW_WIDTH,height:PREVIEW_HEIGHT,rgba};
+}
+function nearestPreviewColour(index,excluded=new Set()){
+  const src=PRESENTATION_PALETTE_RGB[index]||[0,0,0];let best=-1,bestD=Infinity;
+  for(let i=0;i<PRESENTATION_PALETTE_RGB.length;i++){
+    if(excluded.has(i))continue;const c=PRESENTATION_PALETTE_RGB[i],d=(src[0]-c[0])**2+(src[1]-c[1])**2+(src[2]-c[2])**2;
+    if(d<bestD){bestD=d;best=i;}
+  }
+  return best<0?12:best;
+}
+function migratePreviewTransparency(bytes,target=MINIMAP_TEMPLATE_TRANSPARENT){
+  const decoded=decodePreviewBob(bytes);target=Number(target);
+  if(!MINIMAP_ALLOWED_TRANSPARENT.includes(target))throw new Error(`Unsupported MiniMap transparency index ${target}`);
+  if(decoded.transparent===target)return Uint8Array.from(bytes);
+  const replacement=nearestPreviewColour(target,new Set([decoded.transparent,target])),pixels=decoded.pixels.slice();
+  for(let i=0;i<pixels.length;i++){
+    if(pixels[i]===decoded.transparent)pixels[i]=target;
+    else if(pixels[i]===target)pixels[i]=replacement;
+  }
+  return encodePreviewPixels(pixels,bytes,target);
+}
+function transformMiniMapTemplate(template,{rotation=0,flipH=false,flipV=false}={}){
+  if(!template||!template.pixels)throw new Error('MiniMap template is required');
+  rotation=((Number(rotation)||0)%360+360)%360;if(![0,90,180,270].includes(rotation))throw new Error('Template rotation must be 0, 90, 180 or 270 degrees');
+  let w=template.width,h=template.height,hx=template.hotspotX,hy=template.hotspotY,pixels=Uint8Array.from(template.pixels),nw=w,nh=h,nhx=hx,nhy=hy,out;
+  if(rotation){
+    nw=(rotation===90||rotation===270)?h:w;nh=(rotation===90||rotation===270)?w:h;out=new Uint8Array(nw*nh);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+      let dx,dy;if(rotation===90){dx=h-1-y;dy=x;}else if(rotation===180){dx=w-1-x;dy=h-1-y;}else{dx=y;dy=w-1-x;}
+      out[dy*nw+dx]=pixels[y*w+x];
+    }
+    if(rotation===90){nhx=h-1-hy;nhy=hx;}else if(rotation===180){nhx=w-1-hx;nhy=h-1-hy;}else{nhx=hy;nhy=w-1-hx;}
+    pixels=out;w=nw;h=nh;hx=nhx;hy=nhy;
+  }
+  if(flipH){out=new Uint8Array(w*h);for(let y=0;y<h;y++)for(let x=0;x<w;x++)out[y*w+(w-1-x)]=pixels[y*w+x];pixels=out;hx=w-1-hx;}
+  if(flipV){out=new Uint8Array(w*h);for(let y=0;y<h;y++)for(let x=0;x<w;x++)out[(h-1-y)*w+x]=pixels[y*w+x];pixels=out;hy=h-1-hy;}
+  return {key:template.key,name:template.name,width:w,height:h,hotspotX:hx,hotspotY:hy,transparent:template.transparent,pixels};
+}
+function stampMiniMapTemplate(pixels,template,anchorX,anchorY,options={}){
+  if(!pixels||pixels.length!==PREVIEW_WIDTH*PREVIEW_HEIGHT)throw new Error('MiniMap preview pixel buffer is invalid');
+  const t=transformMiniMapTemplate(template,options),out=Uint8Array.from(pixels);let written=0;
+  anchorX=Math.round(Number(anchorX)||0);anchorY=Math.round(Number(anchorY)||0);
+  for(let y=0;y<t.height;y++)for(let x=0;x<t.width;x++){
+    const v=t.pixels[y*t.width+x];if(v===t.transparent)continue;
+    const dx=anchorX-t.hotspotX+x,dy=anchorY-t.hotspotY+y;if(dx<0||dy<0||dx>=PREVIEW_WIDTH||dy>=PREVIEW_HEIGHT)continue;
+    out[dy*PREVIEW_WIDTH+dx]=v;written++;
+  }
+  return {pixels:out,template:t,written};
 }
 function resolvePreviewResource(model,record){
   if(!model?.main||record?.offset==null)throw new Error('Disk model and race record required for miniature preview');
@@ -250,11 +309,11 @@ function resolvePreviewResource(model,record){
   const resourceId=delta/RESOURCE_ENTRY_SIZE,resource=model.getResource(resourceId);validatePreviewBob(resource.data);
   return {descriptor,descriptorOffset,entryPtr,resourceId,resource};
 }
-function previewPixelsFromBackdrop(source,{sourceWidth=320,sourceHeight=256,cropHeight=224,zeroReplacement=12}={}){
+function previewPixelsFromBackdrop(source,{sourceWidth=320,sourceHeight=256,cropHeight=224,zeroReplacement=12,transparent=PREVIEW_TRANSPARENT}={}){
   if(!(source instanceof Uint8Array))source=new Uint8Array(source||[]);
   if(source.length<sourceWidth*sourceHeight)throw new Error('Backdrop pixel buffer is too short');
   cropHeight=Math.max(1,Math.min(sourceHeight,Math.floor(cropHeight)));
-  zeroReplacement=clampInt(zeroReplacement,1,31,'Backdrop colour-0 replacement');
+  transparent=clampInt(transparent,0,31,'Miniature transparency');zeroReplacement=clampInt(zeroReplacement,0,31,'Backdrop replacement');if(zeroReplacement===transparent)zeroReplacement=nearestPreviewColour(transparent,new Set([transparent]));
   const out=new Uint8Array(PREVIEW_WIDTH*PREVIEW_HEIGHT);
   for(let dy=0;dy<PREVIEW_HEIGHT;dy++){
     const sy0=Math.floor(dy*cropHeight/PREVIEW_HEIGHT),sy1=Math.max(sy0+1,Math.floor((dy+1)*cropHeight/PREVIEW_HEIGHT));
@@ -262,10 +321,9 @@ function previewPixelsFromBackdrop(source,{sourceWidth=320,sourceHeight=256,crop
       const sx0=Math.floor(dx*sourceWidth/PREVIEW_WIDTH),sx1=Math.max(sx0+1,Math.floor((dx+1)*sourceWidth/PREVIEW_WIDTH)),counts=new Uint16Array(32);
       for(let sy=sy0;sy<sy1;sy++)for(let sx=sx0;sx<sx1;sx++)counts[source[sy*sourceWidth+sx]&31]++;
       let best=0,bestN=-1;for(let i=0;i<32;i++)if(counts[i]>bestN){best=i;bestN=counts[i];}
-      // Miniature colour 0 is transparency, while the track backdrop legitimately
-      // uses colour 0 (notably for road).  Recolour it to the selected non-zero
-      // miniature colour so the shrunken preview does not acquire holes.
-      out[dy*PREVIEW_WIDTH+dx]=best===0?zeroReplacement:best;
+      // Preserve the preview's declared transparency index.  Authored MiniMaps use
+      // colour 8 for transparency so colour 0 remains available as visible black.
+      out[dy*PREVIEW_WIDTH+dx]=best===transparent?zeroReplacement:best;
     }
   }
   return out;
@@ -453,11 +511,11 @@ function makePackageFiles({circuitIndex,resources={},previewBin=null,waypointsBi
 }
 
 const api={VERSION,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
-  PREVIEW_WIDTH,PREVIEW_HEIGHT,PREVIEW_ORIGIN_X,PREVIEW_ORIGIN_Y,PREVIEW_TRANSPARENT,PREVIEW_PLANES,PREVIEW_SIZE,REGIONAL_MAP_SCREEN_X,REGIONAL_MAP_SCREEN_Y,
+  PREVIEW_WIDTH,PREVIEW_HEIGHT,PREVIEW_ORIGIN_X,PREVIEW_ORIGIN_Y,PREVIEW_TRANSPARENT,PREVIEW_PLANES,PREVIEW_SIZE,MINIMAP_TEMPLATE_TRANSPARENT,MINIMAP_TEMPLATES,REGIONAL_MAP_SCREEN_X,REGIONAL_MAP_SCREEN_Y,
   PRESENTATION_MAGIC,PRESENTATION_VERSION,PRESENTATION_SIZE,WAYPOINT_MAGIC,WAYPOINT_VERSION,WAYPOINT_ROUTE_COUNT,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,
   PRESENTATION_PALETTE_WORDS,PRESENTATION_PALETTE_RGB,PLAYLIST_V1,PLAYLIST_V2,HUD_LAYOUT,HUD_DIGITS,GAME_HUD_DIGITS,HUD_CAR_COLOURS,
   be16,be32,s16,wr16,wr32,hex,mapById,circuitFolder,stockTrackIdForCircuit,circuitIndexForStockTrackId,
-  readPresentation,writePresentation,validateMapBob,decodeMapBob,mapBobToRgba,embeddedRegionalMapBytes,retailMapBobFromModel,validatePreviewBob,decodePreviewBob,encodePreviewPixels,previewBobToRgba,previewPixelsFromBackdrop,resolvePreviewResource,encodePresentationBin,decodePresentationBin,encodeWaypointsBin,decodeWaypointsBin,
+  readPresentation,writePresentation,validateMapBob,decodeMapBob,mapBobToRgba,embeddedRegionalMapBytes,retailMapBobFromModel,validatePreviewBob,decodePreviewBob,encodePreviewPixels,previewBobToRgba,previewPixelsFromBackdrop,migratePreviewTransparency,transformMiniMapTemplate,stampMiniMapTemplate,resolvePreviewResource,encodePresentationBin,decodePresentationBin,encodeWaypointsBin,decodeWaypointsBin,
   validatePlaylistV1,encodePlaylistV2,decodePlaylistV2,crc32,zipStore,readZipStore,parseCircuitZip,inferTemplateIndex,makePackageFiles};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatCircuitPackage=api;
@@ -468,7 +526,7 @@ if(typeof document==='undefined')return;
 /* ---------------- v0.19 browser/editor integration ---------------- */
 const $=id=>document.getElementById(id);
 const mapIds=new Map(),circuitNumbers=new Map(),mapCache=new Map(),previewOriginals=new Map(),previewUndo=new Map();
-let markerGraphics=null,auxMode=null,auxLayout=null,dragMarker=false,previewGesture=null,previewColour=12,previewTool='pencil',previewBrush=1,raceHudDrag=null;
+let markerGraphics=null,auxMode=null,auxLayout=null,dragMarker=false,previewGesture=null,previewColour=12,previewTool='pencil',previewBrush=1,previewTemplateKey='arrow',previewTemplateRotation=0,previewTemplateFlipH=false,previewTemplateFlipV=false,raceHudDrag=null;
 const packageSlots=new Map();
 let activePackageSlot=null,selectionTransition=false;
 const ARROW_LABELS=Object.freeze(['Frame 0','Frame 1','Frame 2','Frame 3']);
@@ -557,7 +615,13 @@ function setExclusiveModeButton(buttonId){
   if(typeof requestAnimationFrame==='function')requestAnimationFrame(apply);
 }
 function setOverlayOpacityVisible(show){const e=$('overlayOpacityControl');if(e)e.hidden=!show;}
-function syncPreviewToolButtons(){document.querySelectorAll('[data-preview-tool]').forEach(b=>b.classList.toggle('active',b.dataset.previewTool===previewTool));}
+function syncPreviewToolButtons(){
+  document.querySelectorAll('[data-preview-tool]').forEach(b=>b.classList.toggle('active',b.dataset.previewTool===previewTool));
+  document.querySelectorAll('[data-preview-template]').forEach(b=>b.classList.toggle('active',previewTool==='template'&&b.dataset.previewTemplate===previewTemplateKey));
+  document.querySelectorAll('[data-template-rotation]').forEach(b=>b.classList.toggle('active',Number(b.dataset.templateRotation)===previewTemplateRotation));
+  $('circuitTemplateFlipH')?.classList.toggle('active',previewTemplateFlipH);$('circuitTemplateFlipV')?.classList.toggle('active',previewTemplateFlipV);
+  const t=MINIMAP_TEMPLATES.find(x=>x.key===previewTemplateKey);const st=$('circuitTemplateState');if(st&&t)st.textContent=`${t.name} · ${previewTemplateRotation}°${previewTemplateFlipH?' · flip H':''}${previewTemplateFlipV?' · flip V':''}`;
+}
 function deactivateAux(){auxMode=null;previewGesture=null;dragMarker=false;setCircuitHidden(false);setOverlayOpacityVisible(true);$('circuitAuxPane')&&($('circuitAuxPane').hidden=true);$('circuitMapControls')&&($('circuitMapControls').hidden=true);$('circuitPreviewControls')&&($('circuitPreviewControls').hidden=true);$('layerEditMap')?.classList.remove('active');$('layerEditMini')?.classList.remove('active');}
 function activateAux(mode){
   if(auxMode===mode){const buttonId=mode==='map'?'layerEditMap':'layerEditMini';setExclusiveModeButton(buttonId);syncPreviewToolButtons();renderAux();return;}deactivateAux();
@@ -588,9 +652,9 @@ async function renderMapMode(){
 function previewStateKey(q){return `${selectionKey()}:${q.resourceId}`;}
 function currentPreview(){const model=primaryModel(),r=currentRecord();if(!model||!r)return null;const q=resolvePreviewResource(model,r),key=previewStateKey(q);if(!previewOriginals.has(key))previewOriginals.set(key,q.resource.data.slice());return q;}
 function pushPreviewUndo(q){const key=previewStateKey(q),stack=previewUndo.get(key)||[];stack.push(q.resource.data.slice());if(stack.length>30)stack.shift();previewUndo.set(key,stack);}
-function writePreviewPixels(q,pixels){q.resource.data.set(encodePreviewPixels(pixels,q.resource.data));}
+function writePreviewPixels(q,pixels,transparentOverride=null){q.resource.data.set(encodePreviewPixels(pixels,q.resource.data,transparentOverride));}
 function previewPixels(){const q=currentPreview();return q?decodePreviewBob(q.resource.data).pixels:null;}
-function renderPreviewPalette(){const h=$('circuitPreviewPalette');if(!h)return;h.innerHTML='';for(let i=0;i<32;i++){const b=document.createElement('button');b.type='button';b.className='previewSwatch'+(i===previewColour?' selected':'');b.title=i===0?'0 · transparent':`${i} · $${PRESENTATION_PALETTE_WORDS[i].toString(16).toUpperCase().padStart(3,'0')}`;const c=PRESENTATION_PALETTE_RGB[i];b.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;b.dataset.colour=String(i);b.addEventListener('click',()=>{previewColour=i;renderPreviewPalette();});h.appendChild(b);}}
+function renderPreviewPalette(){const h=$('circuitPreviewPalette');if(!h)return;let transparent=PREVIEW_TRANSPARENT;try{const q=currentPreview();if(q)transparent=decodePreviewBob(q.resource.data).transparent;}catch(_e){}h.innerHTML='';for(let i=0;i<32;i++){const b=document.createElement('button');b.type='button';b.className='previewSwatch'+(i===previewColour?' selected':'');b.title=i===transparent?`${i} · transparent`:`${i} · $${PRESENTATION_PALETTE_WORDS[i].toString(16).toUpperCase().padStart(3,'0')}`;const c=PRESENTATION_PALETTE_RGB[i];b.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;b.dataset.colour=String(i);b.addEventListener('click',()=>{previewColour=i;renderPreviewPalette();});h.appendChild(b);}}
 function renderPreviewMode(){
   syncAuxSize();const c=auxCanvas(),ctx=c.getContext('2d'),q=currentPreview();ctx.fillStyle='#10131a';ctx.fillRect(0,0,c.width,c.height);if(!q)return;
   const decoded=decodePreviewBob(q.resource.data),rgba=previewBobToRgba(decoded),scale=Math.max(1,Math.floor(Math.min((c.width-32)/PREVIEW_WIDTH,(c.height-72)/PREVIEW_HEIGHT))),drawW=PREVIEW_WIDTH*scale,drawH=PREVIEW_HEIGHT*scale,x=Math.round((c.width-drawW)/2),y=Math.round((c.height-drawH)/2+16);auxLayout={mode:'mini',x,y,scale,w:PREVIEW_WIDTH,h:PREVIEW_HEIGHT};
@@ -637,15 +701,27 @@ function sourcePoint(e){if(!auxLayout)return null;const q=auxPoint(e),x=Math.flo
 function mapDrag(e){if(!dragMarker||auxMode!=='map')return;const q=sourcePoint(e),r=currentRecord(),C=currentCapture();if(!q?.inside||!r||!C?.model)return;const x=REGIONAL_MAP_SCREEN_X+q.x,y=REGIONAL_MAP_SCREEN_Y+q.y;writePresentation(C.model.main,r.offset,{markerX:x,markerY:y});$('circuitMarkerX').value=String(x);$('circuitMarkerY').value=String(y);renderMapMode();}
 function toolPoints(tool,a,b,T){if(tool==='line')return T?.linePoints?T.linePoints(a.x,a.y,b.x,b.y):[[b.x,b.y]];if(tool==='rect')return T?.rectanglePoints?T.rectanglePoints(a.x,a.y,b.x,b.y):[[b.x,b.y]];return [[b.x,b.y]];}
 function paintPreviewPoints(pixels,points,value){const T=root.IndyHeatLayerTools,expanded=T?.expandPointsWithBrush?T.expandPointsWithBrush(points,previewBrush,'square'):points;for(const [x,y] of expanded)if(x>=0&&y>=0&&x<PREVIEW_WIDTH&&y<PREVIEW_HEIGHT)pixels[y*PREVIEW_WIDTH+x]=value;}
-function beginPreview(e){if(auxMode!=='mini')return;const q=sourcePoint(e);if(!q?.inside)return;e.preventDefault();const pr=currentPreview();if(!pr)return;const pixels=decodePreviewBob(pr.resource.data).pixels;if(previewTool==='pick'){previewColour=pixels[q.y*PREVIEW_WIDTH+q.x];renderPreviewPalette();syncPreviewToolButtons();status(`Picked miniature colour ${previewColour} at ${q.x},${q.y}.`);return;}pushPreviewUndo(pr);const value=e.button===2?PREVIEW_TRANSPARENT:previewColour;if(previewTool==='fill'){const T=root.IndyHeatLayerTools,idx=T?.floodFillIndices?T.floodFillIndices(pixels,PREVIEW_WIDTH,PREVIEW_HEIGHT,q.x,q.y,value):[];for(const i of idx)pixels[i]=value;writePreviewPixels(pr,pixels);renderPreviewMode();return;}previewGesture={start:q,last:q,value,pointerId:e.pointerId};auxCanvas().setPointerCapture?.(e.pointerId);paintPreviewPoints(pixels,[[q.x,q.y]],value);writePreviewPixels(pr,pixels);renderPreviewMode();}
+function ensurePreviewTemplateTransparency(pr){
+  const decoded=decodePreviewBob(pr.resource.data);if(decoded.transparent===MINIMAP_TEMPLATE_TRANSPARENT)return decoded;
+  pr.resource.data.set(migratePreviewTransparency(pr.resource.data,MINIMAP_TEMPLATE_TRANSPARENT));
+  return decodePreviewBob(pr.resource.data);
+}
+function placePreviewTemplate(pr,q){
+  const source=MINIMAP_TEMPLATES.find(t=>t.key===previewTemplateKey);if(!source)return false;
+  pushPreviewUndo(pr);const decoded=ensurePreviewTemplateTransparency(pr);
+  const placed=stampMiniMapTemplate(decoded.pixels,source,q.x,q.y,{rotation:previewTemplateRotation,flipH:previewTemplateFlipH,flipV:previewTemplateFlipV});
+  writePreviewPixels(pr,placed.pixels,MINIMAP_TEMPLATE_TRANSPARENT);renderPreviewPalette();renderPreviewMode();
+  status(`${placed.template.name} template placed at ${q.x},${q.y} · ${previewTemplateRotation}°${previewTemplateFlipH?' · flip H':''}${previewTemplateFlipV?' · flip V':''}. Colour 8 is transparent; colour 0 remains black.`);return true;
+}
+function beginPreview(e){if(auxMode!=='mini')return;const q=sourcePoint(e);if(!q?.inside)return;e.preventDefault();const pr=currentPreview();if(!pr)return;if(previewTool==='template'&&e.button===0){placePreviewTemplate(pr,q);return;}const decoded=decodePreviewBob(pr.resource.data),pixels=decoded.pixels;if(previewTool==='pick'){previewColour=pixels[q.y*PREVIEW_WIDTH+q.x];renderPreviewPalette();syncPreviewToolButtons();status(`Picked miniature colour ${previewColour} at ${q.x},${q.y}.`);return;}pushPreviewUndo(pr);const value=e.button===2?decoded.transparent:previewColour;if(previewTool==='fill'){const T=root.IndyHeatLayerTools,idx=T?.floodFillIndices?T.floodFillIndices(pixels,PREVIEW_WIDTH,PREVIEW_HEIGHT,q.x,q.y,value):[];for(const i of idx)pixels[i]=value;writePreviewPixels(pr,pixels);renderPreviewMode();return;}previewGesture={start:q,last:q,value,pointerId:e.pointerId};auxCanvas().setPointerCapture?.(e.pointerId);paintPreviewPoints(pixels,[[q.x,q.y]],value);writePreviewPixels(pr,pixels);renderPreviewMode();}
 function movePreview(e){if(!previewGesture||auxMode!=='mini'||previewTool!=='pencil')return;const q=sourcePoint(e);if(!q?.inside)return;const pr=currentPreview(),pixels=decodePreviewBob(pr.resource.data).pixels,T=root.IndyHeatLayerTools,pts=T?.linePoints?T.linePoints(previewGesture.last.x,previewGesture.last.y,q.x,q.y):[[q.x,q.y]];paintPreviewPoints(pixels,pts,previewGesture.value);writePreviewPixels(pr,pixels);previewGesture.last=q;renderPreviewMode();}
 function endPreview(e){if(!previewGesture||auxMode!=='mini')return;const g=previewGesture;previewGesture=null;const q=sourcePoint(e),pr=currentPreview();if(!q?.inside||!pr)return;if(previewTool!=='pencil'&&previewTool!=='pick'){const pixels=decodePreviewBob(pr.resource.data).pixels,T=root.IndyHeatLayerTools,pts=toolPoints(previewTool,g.start,q,T);paintPreviewPoints(pixels,pts,g.value);writePreviewPixels(pr,pixels);}renderPreviewMode();}
 function previewUndoOnce(){const q=currentPreview();if(!q)return;const key=previewStateKey(q),st=previewUndo.get(key)||[],b=st.pop();if(b){q.resource.data.set(b);renderPreviewMode();}previewUndo.set(key,st);}
 function previewRevert(){const q=currentPreview();if(!q)return;const b=previewOriginals.get(previewStateKey(q));if(b){pushPreviewUndo(q);q.resource.data.set(b);renderPreviewMode();}}
-function previewBlank(){const q=currentPreview();if(!q)return;pushPreviewUndo(q);const px=new Uint8Array(PREVIEW_WIDTH*PREVIEW_HEIGHT);writePreviewPixels(q,px);renderPreviewMode();}
+function previewBlank(){const q=currentPreview();if(!q)return;pushPreviewUndo(q);const px=new Uint8Array(PREVIEW_WIDTH*PREVIEW_HEIGHT);px.fill(MINIMAP_TEMPLATE_TRANSPARENT);writePreviewPixels(q,px,MINIMAP_TEMPLATE_TRANSPARENT);renderPreviewPalette();renderPreviewMode();}
 function previewFromBackdrop(){
   const q=currentPreview(),T=root.IndyHeatTools,TB=root.IndyHeatTrackBackdropTools,model=resourceModel(),record=recordForTrackIndex(sourceTrackIndex(),model);if(!q||!T||!model||!record)return;
-  try{const bg=model.getResource(record.baseResourceId),source=TB?.decodeTrackPlanar?TB.decodeTrackPlanar(bg.data):T.decodePlanar(bg.data,320,256,5,0),replacement=previewColour===0?12:previewColour,pixels=previewPixelsFromBackdrop(source,{zeroReplacement:replacement});pushPreviewUndo(q);writePreviewPixels(q,pixels);renderPreviewMode();status(`Miniature rebuilt from the current 320×224 gameplay backdrop. Source colour 0 was recoloured to miniature colour ${replacement} before export.`);}catch(e){status(`ERROR: ${e.message}`);}
+  try{const bg=model.getResource(record.baseResourceId),source=TB?.decodeTrackPlanar?TB.decodeTrackPlanar(bg.data):T.decodePlanar(bg.data,320,256,5,0),transparent=MINIMAP_TEMPLATE_TRANSPARENT,replacement=previewColour===transparent?nearestPreviewColour(transparent,new Set([transparent])):previewColour,pixels=previewPixelsFromBackdrop(source,{zeroReplacement:replacement,transparent});pushPreviewUndo(q);writePreviewPixels(q,pixels,transparent);renderPreviewPalette();renderPreviewMode();status(`Miniature rebuilt from the current 320×224 gameplay backdrop. MiniMap transparency is colour ${transparent}; colour 0 remains available as black.`);}catch(e){status(`ERROR: ${e.message}`);}
 }
 
 function refreshUi(){
@@ -754,7 +830,7 @@ function injectUi(){
     #circuitAuxCanvas{position:absolute;inset:0;z-index:7;display:block;image-rendering:pixelated;touch-action:none;background:#10131a}
     #circuitAuxCanvas[hidden],#circuitRaceHudCanvas[hidden]{display:none} #circuitAuxPane[hidden],#circuitMapControls[hidden],#circuitPreviewControls[hidden]{display:none}
     #circuitArrowChoices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin:6px 0} .circuitArrowChoice{display:grid;grid-template-columns:48px 1fr;align-items:center;gap:4px;min-width:0}.circuitArrowChoice canvas{image-rendering:pixelated;background:#161a21}.circuitArrowChoice.selected{outline:2px solid #ffd84a}
-    #circuitPreviewPalette{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:7px 0}.previewSwatch{height:22px;min-width:0;border:1px solid #555}.previewSwatch.selected{outline:2px solid #fff;outline-offset:1px}
+    #circuitPreviewPalette{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:7px 0}.previewSwatch{height:22px;min-width:0;border:1px solid #555}.previewSwatch.selected{outline:2px solid #fff;outline-offset:1px} .circuitTemplateGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:5px 0}.circuitTemplateGrid button,.circuitTemplateTransform button{min-width:0;padding:5px 4px;font-size:10px}.circuitTemplateGrid button.active,.circuitTemplateTransform button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}.circuitTemplateTransform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:5px 0}#circuitTemplateState{font-size:10px;color:#aeb5c0;margin:4px 0 8px}
     .circuitAuxGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.circuitAuxGrid label{display:grid;gap:2px}.circuitAuxWide{grid-column:1/-1}.circuitToolRow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:6px 0}.circuitToolRow button{min-width:0;padding:6px 3px;font-size:11px}.circuitToolRow button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}#circuitRaceHudCanvas{position:absolute;inset:0;z-index:4;display:block;pointer-events:none;image-rendering:pixelated}.circuitViewToggleBody{padding:3px 0 4px 12px}.circuitViewToggleBody label{margin:5px 0}
     #circuitFileActions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-left:auto}#circuitPackageHeader{display:flex;align-items:center;gap:6px;flex-wrap:wrap}#circuitPackageHeader label{display:flex;align-items:center;gap:5px;margin:0;font-size:12px}#circuitPackageHeader input[type=number]{width:58px;background:#222730;color:#fff;border:1px solid #495162;border-radius:4px;padding:7px 5px}#circuitPackageHeader button{padding:8px 10px;white-space:nowrap}#circuitPackageTopStatus{font-size:10px;color:#9aa1ad;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#circuitPackageTopStatus.bad{color:#ff8585}
     @media(max-width:900px){#circuitFileActions{margin-left:0}}
@@ -772,13 +848,13 @@ function injectUi(){
 
   const pane=document.createElement('div');pane.id='circuitAuxPane';pane.hidden=true;pane.innerHTML=`
     <div id="circuitMapControls" class="toolGroup" hidden><div class="toolGroupTitle">Regional map arrow</div><label>Regional map <select id="circuitMapId">${REGIONAL_MAPS.map(m=>`<option value="${m.id}">${m.id} · ${m.name}</option>`).join('')}</select></label><div id="circuitArrowChoices"></div><details><summary>Raw game coordinates</summary><div class="circuitAuxGrid"><label>Arrow X <input id="circuitMarkerX" type="number"></label><label>Arrow Y <input id="circuitMarkerY" type="number"></label><label class="circuitAuxWide">Frame <input id="circuitMarkerFrame" type="number" min="0" max="3"></label></div><button id="circuitMapApply" type="button">Apply raw fields</button></details><div id="circuitAuxStatus" class="muted"></div><div class="muted">Retail USA is read directly from Disk.1. Added regional maps are bundled with the editor. Drag the arrow tip directly on the enlarged map. Game map rectangle: x 240–317, y 1–47.</div></div>
-    <div id="circuitPreviewControls" class="toolGroup" hidden><div class="toolGroupTitle">78×51 miniature circuit</div><div class="circuitToolRow"><button data-preview-tool="pencil" type="button">Pencil</button><button data-preview-tool="line" type="button">Line</button><button data-preview-tool="rect" type="button">Rect</button><button data-preview-tool="fill" type="button">Fill</button><button data-preview-tool="pick" type="button" title="Pick a colour from the miniature">Pick</button></div><label>Brush <input id="circuitPreviewBrush" type="range" min="1" max="5" step="1" value="1"> <span id="circuitPreviewBrushText">1</span></label><div id="circuitPreviewPalette"></div><div class="raceSetupActions"><button id="circuitPreviewUndo" type="button">Undo</button><button id="circuitPreviewRevert" type="button">Restore loaded</button></div><div class="raceSetupActions"><button id="circuitPreviewBlank" type="button">New blank miniature</button><button id="circuitPreviewFromBackdrop" type="button">From backdrop</button></div><div id="circuitAuxStatusMini" class="muted"></div><div class="muted">Pick samples a colour directly from the miniature. From backdrop shrinks the current 320×224 gameplay image to 78×51; backdrop colour 0 is recoloured to the currently selected non-zero miniature colour so it does not become transparent. Right-click paints transparent colour 0.</div></div>`;
+    <div id="circuitPreviewControls" class="toolGroup" hidden><div class="toolGroupTitle">78×51 miniature circuit</div><div class="circuitToolRow"><button data-preview-tool="pencil" type="button">Pencil</button><button data-preview-tool="line" type="button">Line</button><button data-preview-tool="rect" type="button">Rect</button><button data-preview-tool="fill" type="button">Fill</button><button data-preview-tool="pick" type="button" title="Pick a colour from the miniature">Pick</button></div><label>Brush <input id="circuitPreviewBrush" type="range" min="1" max="5" step="1" value="1"> <span id="circuitPreviewBrushText">1</span></label><div id="circuitPreviewPalette"></div><div class="toolGroupTitle">Templates</div><div class="circuitTemplateGrid"><button data-preview-template="arrow" type="button">Arrow</button><button data-preview-template="pitbox_blue" type="button">Pit box Blue</button><button data-preview-template="pitbox_red" type="button">Pit box Red</button><button data-preview-template="pitbox_white" type="button">Pit box White</button><button data-preview-template="pitbox_yellow" type="button">Pit box Yellow</button><button data-preview-template="startline" type="button">Start line</button><button data-preview-template="tower" type="button">Lap tower</button></div><div class="circuitTemplateTransform"><button data-template-rotation="0" type="button">0°</button><button data-template-rotation="90" type="button">90°</button><button data-template-rotation="180" type="button">180°</button><button data-template-rotation="270" type="button">270°</button><button id="circuitTemplateFlipH" type="button">Flip H</button><button id="circuitTemplateFlipV" type="button">Flip V</button></div><div id="circuitTemplateState"></div><div class="raceSetupActions"><button id="circuitPreviewUndo" type="button">Undo</button><button id="circuitPreviewRevert" type="button">Restore loaded</button></div><div class="raceSetupActions"><button id="circuitPreviewBlank" type="button">New blank miniature</button><button id="circuitPreviewFromBackdrop" type="button">From backdrop</button></div><div id="circuitAuxStatusMini" class="muted"></div><div class="muted">Pick samples a colour directly from the miniature. From backdrop shrinks the current 320×224 gameplay image to 78×51 using the project Race → Garage mapping. Templates are embedded in the app. For authored MiniMaps, colour 8 is transparent so colour 0 remains usable as black. Right-click paints the current MiniMap transparency colour.</div></div>`;
   buttons.insertAdjacentElement('afterend',pane);
   const stack=viewerStack();if(getComputedStyle(stack).position==='static')stack.style.position='relative';const cv=document.createElement('canvas');cv.id='circuitAuxCanvas';cv.hidden=true;stack.appendChild(cv);
   mapBtn.addEventListener('click',()=>activateAux('map'));miniBtn.addEventListener('click',()=>activateAux('mini'));buttons.addEventListener('click',e=>{if(e.target!==mapBtn&&e.target!==miniBtn&&e.target.closest('button'))deactivateAux();},true);
   $('circuitNumber').addEventListener('change',e=>{try{setCurrentCircuitIndex(Number(e.target.value));refreshUi();}catch(err){status(`ERROR: ${err.message}`);}});$('circuitMapId').addEventListener('change',e=>{setCurrentMapId(Number(e.target.value));refreshUi();});$('circuitMapApply').addEventListener('click',applyMapFields);$('circuitPackageImport').addEventListener('click',()=>$('circuitPackageInput').click());$('circuitPackageInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importCircuitZip(f);e.target.value='';});$('circuitPackageZip').addEventListener('click',exportZip);
   $('trackSelect')?.addEventListener('change',packageSelectionCapture,true);
-  document.querySelectorAll('[data-preview-tool]').forEach(b=>b.addEventListener('click',()=>{previewTool=b.dataset.previewTool;syncPreviewToolButtons();}));syncPreviewToolButtons();$('circuitPreviewBrush').addEventListener('input',e=>{previewBrush=Number(e.target.value);$('circuitPreviewBrushText').textContent=String(previewBrush);});$('circuitPreviewUndo').addEventListener('click',previewUndoOnce);$('circuitPreviewRevert').addEventListener('click',previewRevert);$('circuitPreviewBlank').addEventListener('click',previewBlank);$('circuitPreviewFromBackdrop').addEventListener('click',previewFromBackdrop);
+  document.querySelectorAll('[data-preview-tool]').forEach(b=>b.addEventListener('click',()=>{previewTool=b.dataset.previewTool;syncPreviewToolButtons();}));document.querySelectorAll('[data-preview-template]').forEach(b=>b.addEventListener('click',()=>{previewTemplateKey=b.dataset.previewTemplate;previewTool='template';syncPreviewToolButtons();}));document.querySelectorAll('[data-template-rotation]').forEach(b=>b.addEventListener('click',()=>{previewTemplateRotation=Number(b.dataset.templateRotation)||0;previewTool='template';syncPreviewToolButtons();}));$('circuitTemplateFlipH')?.addEventListener('click',()=>{previewTemplateFlipH=!previewTemplateFlipH;previewTool='template';syncPreviewToolButtons();});$('circuitTemplateFlipV')?.addEventListener('click',()=>{previewTemplateFlipV=!previewTemplateFlipV;previewTool='template';syncPreviewToolButtons();});syncPreviewToolButtons();$('circuitPreviewBrush').addEventListener('input',e=>{previewBrush=Number(e.target.value);$('circuitPreviewBrushText').textContent=String(previewBrush);});$('circuitPreviewUndo').addEventListener('click',previewUndoOnce);$('circuitPreviewRevert').addEventListener('click',previewRevert);$('circuitPreviewBlank').addEventListener('click',previewBlank);$('circuitPreviewFromBackdrop').addEventListener('click',previewFromBackdrop);
   cv.addEventListener('pointerdown',e=>{if(auxMode==='map'&&e.button===0){dragMarker=true;cv.setPointerCapture?.(e.pointerId);mapDrag(e);}else if(auxMode==='mini'&&(e.button===0||e.button===2))beginPreview(e);});cv.addEventListener('pointermove',e=>{mapDrag(e);movePreview(e);});cv.addEventListener('pointerup',e=>{if(auxMode==='map'){dragMarker=false;refreshUi();}endPreview(e);});cv.addEventListener('pointercancel',e=>{dragMarker=false;endPreview(e);});cv.addEventListener('contextmenu',e=>{if(auxMode==='mini')e.preventDefault();});
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{markerGraphics=null;refreshUi();},0));$('editorScale')?.addEventListener('input',()=>setTimeout(renderAux,0));document.addEventListener('indyheat-race-setup-capture',e=>{if(e.detail?.type==='model')resetPackageSession();setTimeout(()=>{refreshUi();setupRaceIntegration();},0);});ensureLapContract();refreshUi();let raceTries=0;const raceTimer=setInterval(()=>{raceTries++;if(setupRaceIntegration()||raceTries>200)clearInterval(raceTimer);},50);
   const title=document.querySelector('header h1');if(title)title.textContent=title.textContent.replace(/v0\.(?:11|12|13|14|15|16|17|18|19(?:\.[12])?)/i,'v0.19.2');document.title=document.title.replace(/v0\.(?:11|12|13|14|15|16|17|18|19(?:\.[12])?)/i,'v0.19.2');return true;

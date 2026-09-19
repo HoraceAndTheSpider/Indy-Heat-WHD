@@ -333,6 +333,16 @@ function setMiniStatus(text){
   const e=$('circuitAuxStatusMini');
   if(e)e.textContent=text;
 }
+function safeMiniMapPixels(pixels,transparent,P){
+  const out=Uint8Array.from(pixels);if(transparent==null)return out;
+  const palette=P?.PRESENTATION_PALETTE_RGB||[],src=palette[transparent]||[0,0,0];let replacement=transparent===10?13:10,bestD=Infinity;
+  for(let i=0;i<palette.length;i++){
+    if(i===transparent)continue;const c=palette[i],d=(src[0]-c[0])**2+(src[1]-c[1])**2+(src[2]-c[2])**2;
+    if(d<bestD){bestD=d;replacement=i;}
+  }
+  for(let i=0;i<out.length;i++)if(out[i]===transparent)out[i]=replacement;
+  return out;
+}
 function applyExplicitPaletteMap(){
   const P=packageTools(),T=tools(),model=resourceModel(),r=recordFor(model);
   if(!P||!T||!model||!r)return false;
@@ -348,11 +358,14 @@ function applyExplicitPaletteMap(){
       const mr=recordFor(m);
       if(!mr)continue;
       const q=P.resolvePreviewResource(m,mr);
-      const encoded=P.encodePreviewPixels(pixels,q.resource.data);
+      if(P.migratePreviewTransparency&&P.decodePreviewBob(q.resource.data).transparent!==P.MINIMAP_TEMPLATE_TRANSPARENT)
+        q.resource.data.set(P.migratePreviewTransparency(q.resource.data,P.MINIMAP_TEMPLATE_TRANSPARENT));
+      const transparent=P.decodePreviewBob(q.resource.data).transparent,safe=safeMiniMapPixels(pixels,transparent,P);
+      const encoded=P.encodePreviewPixels(safe,q.resource.data,transparent);
       q.resource.data.set(encoded);
     }
 
-    setMiniStatus('Miniature rebuilt using the explicit Race → Garage palette lookup from palette compare.xlsx (Race 28 taken from the Hex Index 028 row: 28 → 4).');
+    setMiniStatus('Miniature rebuilt using the explicit Race → Garage palette lookup. MiniMap colour 8 is transparency; mapped colour 8 is redirected to its nearest visible Garage colour while colour 0 remains black.');
     // Re-entering MiniMap calls its native renderer against the now-updated BOB.
     setTimeout(()=>$('layerEditMini')?.click(),0);
     return true;
