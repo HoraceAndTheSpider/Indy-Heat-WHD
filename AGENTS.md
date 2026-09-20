@@ -2,6 +2,7 @@
 
 - Read this `AGENTS.md` before doing any project work.
 - Treat the current checked-in `master`, current pushed wiki, checked-in tests and the latest project handover/runtime-proof documents as authority.
+- Repository access is **read-only/reference work unless the user explicitly asks otherwise**. Inspect current source, wiki and tests when needed, but do not commit, push, create branches or otherwise write to the user's repository as part of the normal workflow. The user tests locally and owns commits/pushes.
 - Do not repeat settled reverse-engineering merely because work has moved to a new conversation. Re-open an established finding only when current source/data or a new runtime test contradicts it.
 - When the user reports behaviour observed in the live editor or Amiga runtime, treat that observation as the acceptance result. The presence of source code or a passing static test is not proof that a UI/runtime feature works.
 
@@ -13,16 +14,17 @@
 - When a change supersedes or extends an existing corrective layer, fold the new code into the appropriate existing production file(s), update the version string there, and adjust any loader/reference code so the obsolete successor layer is not required.
 - Add a new production file only when the feature genuinely requires a distinct module/resource with an independent responsibility, not merely because the editor version has increased.
 - Where an older version-suffixed corrective file is already the current canonical implementation, future work should update that file in place unless consolidation into a more appropriate existing module is part of the task. Do not create another numbered successor solely for the new version.
-- Replacement app ZIPs must contain the current canonical app file set suitable for extraction over the repository. Do not include both an obsolete corrective layer and a new successor layer when the latter replaces the former.
 - Visible/internal editor version numbering and physical filenames are separate concerns: increase the version number every time, while keeping the production file structure stable.
 
 ## User deliverables
 
-- For HTML5 editor/app changes, deliver a ZIP containing the **complete replacement app files** at their repository-relative paths. The ZIP must be suitable for extraction over the repository. Do not present `.patch`, `.diff`, installer/apply scripts, or partial code fragments as the user deliverable.
+- For HTML5 editor/app changes, deliver **only the complete files that changed**, at their repository-relative paths, suitable for overwriting the existing local files. Do not include unchanged app files merely to recreate the whole app folder.
+- Prefer changing/replacing existing canonical app files. Add a new app file only when the feature genuinely requires a new independent production module/resource.
+- A ZIP containing the changed replacement files is appropriate for convenience, but it must not contain patches, diffs, installer/apply scripts or partial code fragments.
 - Do **not** present Node test/helper files as a user deliverable and do not ask the user to run Node tests unless the user explicitly requests them. Checked-in tests may still be inspected or maintained internally when useful.
 - For WHDLoad slave changes, deliver the **complete changed `.asm` source file** for the user to compile/test. Do not substitute a patch, diff or apply script for the full source.
 - If `AGENTS.md` itself is changed, provide the complete replacement `AGENTS.md` for upload.
-- Runtime fixture/data files may be included when genuinely required by the feature, but they do not replace the complete app files or complete `.asm` source required above.
+- Runtime fixture/data files may be included when genuinely required by the feature, but they do not replace the complete changed app files or complete `.asm` source required above.
 
 ## WHDLoad slave development rules
 

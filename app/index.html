@@ -3,15 +3,94 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.32</title>
+<title>Indy Heat Amiga – Circuit Editor v0.35</title>
 <link rel="stylesheet" href="style.css">
+
+<style>
+#appIdentity{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+#appIdentity h1{margin:0}
+#editorModeSwitch{display:flex;gap:5px}
+#editorModeSwitch button{padding:7px 11px;white-space:nowrap}
+#editorModeSwitch button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
+body.playlistMode #dropZone,body.playlistMode main,body.playlistMode #circuitFileActions{display:none!important}
+body:not(.playlistMode) #playlistWorkspace{display:none!important}
+#playlistWorkspace{max-width:980px;margin:18px auto;padding:0 18px 28px;box-sizing:border-box}
+#playlistWorkspace .playlistCard{background:#181b21;border:1px solid #30343d;border-radius:8px;padding:16px}
+#playlistWorkspace h2{margin:0 0 8px}
+#playlistWorkspace .playlistIntro{line-height:1.45;margin-bottom:12px}
+#playlistWorkspace .playlistFuture{opacity:.62}
+#playlistWorkspace input[type=number],#playlistWorkspace select{background:#222730;color:#fff;border:1px solid #495162;border-radius:4px;padding:6px;box-sizing:border-box}
+#playlistRaceCount{width:70px}
+#playlistRows{display:grid;gap:5px;margin:8px 0 12px}
+.playlistHead,.playlistRow{display:grid;grid-template-columns:48px 110px minmax(180px,1fr) 150px;gap:7px;align-items:center}
+.playlistHead{font-size:11px;color:#8f97a3;padding:0 7px}
+.playlistRow{padding:7px;border:1px solid #30343d;border-radius:5px;background:#14171c}
+.playlistRace{text-align:center;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#b9c0cc}
+.playlistCircuit{width:100%}
+.playlistCircuitName{font-size:12px;color:#c2c8d2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.playlistLapSelect{width:100%}
+.playlistActions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.playlistActions button,#playlistExport{padding:7px 10px}
+#playlistStatus{min-height:34px;white-space:pre-line;margin-top:7px}
+.playlistRuntimeNote{margin:8px 0 12px;padding:9px 10px;border-left:3px solid #5a6474;background:#12151a;line-height:1.4}
+@media(max-width:760px){
+  #appIdentity{gap:8px}
+  .playlistHead{display:none}
+  .playlistRow{grid-template-columns:56px minmax(0,1fr);gap:6px}
+  .playlistRace{grid-row:1/3}
+  .playlistCircuit,.playlistCircuitName,.playlistLapSelect{grid-column:2}
+}
+</style>
+
 </head>
 <body>
+<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.35";</script>
 <header>
-  <div><h1>Indy Heat Amiga — Circuit Editor v0.32</h1></div>
+  <div id="appIdentity">
+    <h1>Indy Heat Amiga — Circuit Editor v0.35</h1>
+    <nav id="editorModeSwitch" aria-label="Editor mode">
+      <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
+      <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
+    </nav>
+  </div>
   <label class="filebtn">Open Disk.1 / ADF<input id="fileInput" type="file" accept=".adf,.ADF,.1,application/octet-stream"></label>
 </header>
 <div id="dropZone">Repository <b>whdload/data/Disk.1</b> loads automatically. Drop a different Disk.1 here or use <b>Open Disk.1 / ADF</b> to override it.</div>
+<section id="playlistWorkspace" aria-label="Championship playlist editor">
+  <div class="playlistCard">
+    <h2>Championship Playlist</h2>
+    <div class="playlistIntro muted">
+      Build the <code>indyheat_playlist.bin</code> used by WHDLoad custom-track mode.
+      Circuit IDs <b>0–9</b> are the retail circuits; <b>10–99</b> are custom circuit packages.
+      The <b>1–20</b> range below applies only to the per-race <b>lap override</b>.
+    </div>
+
+    <label class="inlineControl playlistFuture">Championship races
+      <input id="playlistRaceCount" type="number" min="1" max="99" step="1" value="11" disabled
+             title="Current WHDLoad runtime requires exactly 11 championship events">
+    </label>
+    <div class="playlistRuntimeNote mini muted">
+      The IHPL header already contains an event-count word, but WHDLoad 1.3 test 30 currently requires exactly <b>11</b> races.
+      The control is deliberately visible but disabled so variable championship length can be enabled later without redesigning this editor.
+    </div>
+
+    <div class="playlistActions">
+      <button id="playlistImport" type="button">Import playlist .bin</button>
+      <button id="playlistReset" type="button">Reset retail championship</button>
+      <button id="playlistExport" type="button">Export indyheat_playlist.bin</button>
+    </div>
+    <input id="playlistInput" type="file" accept=".bin,application/octet-stream" hidden>
+
+    <div class="playlistHead">
+      <span>Race</span>
+      <span>Circuit ID (0–99)</span>
+      <span>Circuit</span>
+      <span>Laps (inherit / 1–20)</span>
+    </div>
+    <div id="playlistRows"></div>
+    <div id="playlistStatus" class="mini muted">IHPL v2 · 11 races · circuit 0–99 · laps inherit or 1–20.</div>
+  </div>
+</section>
 <main>
   <aside>
     <section>
@@ -108,6 +187,7 @@
         </div>
       </details>
     </section>
+
   </aside>
 
   <div class="content">
@@ -131,7 +211,7 @@
         <p><b>Magnified Area</b> uses a 64×64-pixel source window. Click the magnifying-glass button, position the frame over the circuit, and the magnified window updates. The same drawing tools work directly inside it. Toggling the magnifying glass off clears the magnified window to black.</p>
         <p><b>Drawing tools</b> are icon radio-buttons for freehand, line, outlined or filled rectangle/square, outlined or filled ellipse/circle, and fill. Area to Paint is selected with radio-buttons. Brush size uses a 1–9 slider and brush shape is a Square/Circle toggle. Foreground also has a <b>Hatched 1/1</b> pattern: one pixel on, one pixel off at a fixed frequency; increasing brush size enlarges the hatch area without enlarging the hatch pixels. Right-click uses the current tool and brush as the secondary paint action: in Foreground mode it always paints the opposite of the selected value (Foreground ↔ Clear); in Surface mode it always paints Normal.</p>
         <p><b>Surface painting</b> always works on the real 160×112 logical grid, so one brush unit remains exactly 2×2 game pixels. Foreground painting works at the original 320×256 single-pixel resolution.</p>
-        <p><b>Overlay colour wheels</b> change editor display colours only. Foreground and each Surface class have independent colours; Recovery has separate arrow and grid colours. These preferences do not modify game resource data.</p>
+        <p><b>Overlay colour wheels</b> change editor display colours only. Foreground and each Surface class have independent colours; Recovery has separate arrow/grid display colours. These preferences do not modify game resource data.</p>
         <p><b>Labels</b> can show the physical route-local waypoint ID or the logical sequence value. Duplicate sequence labels are deliberate: multiple physical points can represent the same lap progress.</p>
         <p><b>Sequence groups</b> draw yellow joining lines between geographically adjacent visible waypoints on the same route carrying the same sequence value. They never join A, B and C to one another. Yellow means logical equivalence within that route, not a route/link.</p>
         <p><b>AI Turbo markers</b> add a white outer ring to visible waypoints whose <code>+2</code> high bit is set. Static tracing proves this flag can make the AI generate a Turbo input when its Turbo-use timer permits it. <b>Link deltas ≠ +6</b> draws cyan directional arrows only for route-local links whose signed byte displacement is not the ordinary +6, with the delta value shown beside the arrow.</p>
@@ -200,11 +280,196 @@
 <script src="indyheat_race_graphics.js"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js"></script>
-<script src="waypoint-actions.js"></script>
+<script src="waypoint-actions.js?v=035"></script>
 <script src="recovery-editor.js"></script>
 <script src="race-setup.js?v=032"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
 <script src="editor-ui.js?v=032"></script>
+
+<script>
+(function(root){
+'use strict';
+
+const MAGIC='IHPL';
+const VERSION_V1=1;
+const VERSION_V2=2;
+const RUNTIME_COUNT=11;
+const INHERIT_LAPS=0xFFFF;
+const LAP_MIN=1;
+const LAP_MAX=20;
+const CIRCUIT_MIN=0;
+const CIRCUIT_MAX=99;
+const RETAIL_NAMES=Object.freeze([
+  'Illinois','New Jersey','West Canada','South California','East Canada',
+  'Indianapolis','Michigan','Colorado','North California','Kentucky'
+]);
+const RETAIL_CHAMPIONSHIP=Object.freeze([0,5,1,2,3,4,6,7,8,9,5]);
+
+function be16(b,o){
+  if(!b||o<0||o+2>b.length)throw new Error('Playlist word outside file');
+  return ((b[o]<<8)|b[o+1])>>>0;
+}
+function wr16(b,o,v){v=Number(v)&0xffff;b[o]=(v>>>8)&255;b[o+1]=v&255;}
+function ascii4(b,o){return String.fromCharCode(b[o],b[o+1],b[o+2],b[o+3]);}
+
+function normaliseEntries(entries,{forRuntime=false}={}){
+  if(!Array.isArray(entries)||entries.length<1||entries.length>0xffff)throw new Error('Playlist must contain 1..65535 events');
+  if(forRuntime&&entries.length!==RUNTIME_COUNT)throw new Error(`Current WHDLoad runtime requires exactly ${RUNTIME_COUNT} championship events`);
+  return entries.map((entry,i)=>{
+    const circuit=Number(entry.circuit);
+    const laps=entry.laps==null||entry.laps===INHERIT_LAPS||entry.laps==='inherit'?'inherit':Number(entry.laps);
+    if(!Number.isInteger(circuit)||circuit<CIRCUIT_MIN||circuit>CIRCUIT_MAX)throw new Error(`Race ${i+1}: circuit must be ${CIRCUIT_MIN}..${CIRCUIT_MAX}`);
+    if(laps!=='inherit'&&(!Number.isInteger(laps)||laps<LAP_MIN||laps>LAP_MAX))throw new Error(`Race ${i+1}: laps must be inherit or ${LAP_MIN}..${LAP_MAX}`);
+    return {circuit,laps};
+  });
+}
+
+function encode(entries,{forRuntime=true}={}){
+  const list=normaliseEntries(entries,{forRuntime});
+  const out=new Uint8Array(8+list.length*4);
+  out.set([0x49,0x48,0x50,0x4c],0);
+  wr16(out,4,VERSION_V2);
+  wr16(out,6,list.length);
+  list.forEach((entry,i)=>{
+    const o=8+i*4;
+    wr16(out,o,entry.circuit);
+    wr16(out,o+2,entry.laps==='inherit'?INHERIT_LAPS:entry.laps);
+  });
+  return out;
+}
+
+function parse(bytes){
+  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes||[]);
+  if(bytes.length<8)throw new Error('Playlist is shorter than the 8-byte IHPL header');
+  if(ascii4(bytes,0)!==MAGIC)throw new Error('Playlist signature is not IHPL');
+  const version=be16(bytes,4),count=be16(bytes,6);
+  if(version!==VERSION_V1&&version!==VERSION_V2)throw new Error(`Unsupported playlist version ${version}`);
+  const expected=8+count*4;
+  if(bytes.length!==expected)throw new Error(`Playlist size/count mismatch: header says ${count} events (${expected} bytes), file is ${bytes.length} bytes`);
+  const entries=[];
+  for(let i=0;i<count;i++){
+    const o=8+i*4,rawCircuit=be16(bytes,o),rawLaps=be16(bytes,o+2);
+    let circuit;
+    if(version===VERSION_V1){
+      if(rawCircuit<1||rawCircuit>10)throw new Error(`Race ${i+1}: v1 physical Track ID ${rawCircuit} is outside 1..10`);
+      circuit=rawCircuit-1;
+    }else{
+      if(rawCircuit>CIRCUIT_MAX)throw new Error(`Race ${i+1}: v2 circuit ${rawCircuit} is outside 0..99`);
+      circuit=rawCircuit;
+    }
+    let laps='inherit';
+    if(rawLaps!==INHERIT_LAPS){
+      if(version===VERSION_V1){
+        if(rawLaps===0)throw new Error(`Race ${i+1}: v1 lap override 0 cannot be represented safely by the current v2 editor`);
+        laps=Math.min(rawLaps,LAP_MAX);
+      }else{
+        if(rawLaps<LAP_MIN||rawLaps>LAP_MAX)throw new Error(`Race ${i+1}: v2 laps ${rawLaps} are outside ${LAP_MIN}..${LAP_MAX}`);
+        laps=rawLaps;
+      }
+    }
+    entries.push({circuit,laps});
+  }
+  return {version,count,entries,runtimeCompatible:count===RUNTIME_COUNT};
+}
+
+function defaultEntries(){return RETAIL_CHAMPIONSHIP.map(circuit=>({circuit,laps:'inherit'}));}
+
+root.IndyHeatPlaylistTools=Object.freeze({
+  MAGIC,VERSION_V1,VERSION_V2,RUNTIME_COUNT,INHERIT_LAPS,LAP_MIN,LAP_MAX,
+  RETAIL_CHAMPIONSHIP,defaultEntries,normaliseEntries,encode,parse
+});
+
+if(typeof document==='undefined')return;
+const $=id=>document.getElementById(id);
+const rows=$('playlistRows');
+if(!rows)return;
+
+function setEditorMode(mode){
+  const playlist=mode==='playlist';
+  document.body.classList.toggle('playlistMode',playlist);
+  $('showCircuitEditor')?.classList.toggle('active',!playlist);
+  $('showPlaylistEditor')?.classList.toggle('active',playlist);
+  $('showCircuitEditor')?.setAttribute('aria-pressed',String(!playlist));
+  $('showPlaylistEditor')?.setAttribute('aria-pressed',String(playlist));
+}
+$('showCircuitEditor')?.addEventListener('click',()=>setEditorMode('circuit'));
+$('showPlaylistEditor')?.addEventListener('click',()=>setEditorMode('playlist'));
+
+let entries=defaultEntries();
+
+function circuitName(n){
+  return n<RETAIL_NAMES.length?RETAIL_NAMES[n]:`Custom circuit ${n}`;
+}
+function lapOptions(value){
+  let html=`<option value="inherit"${value==='inherit'?' selected':''}>Inherit circuit laps</option>`;
+  for(let n=LAP_MIN;n<=LAP_MAX;n++)html+=`<option value="${n}"${Number(value)===n?' selected':''}>${n} lap${n===1?'':'s'}</option>`;
+  return html;
+}
+function setStatus(text,bad=false){
+  const e=$('playlistStatus');if(!e)return;
+  e.textContent=text;e.classList.toggle('bad',!!bad);
+}
+function render(){
+  rows.innerHTML='';
+  entries.forEach((entry,i)=>{
+    const row=document.createElement('div');row.className='playlistRow';row.dataset.index=String(i);
+    row.innerHTML=`<span class="playlistRace">${i+1}</span>
+      <input class="playlistCircuit" type="number" min="${CIRCUIT_MIN}" max="${CIRCUIT_MAX}" step="1" value="${entry.circuit}" aria-label="Race ${i+1} circuit ID">
+      <span class="playlistCircuitName">${circuitName(entry.circuit)}</span>
+      <select class="playlistLapSelect" aria-label="Race ${i+1} lap override">${lapOptions(entry.laps)}</select>`;
+    const circuit=row.querySelector('.playlistCircuit'),name=row.querySelector('.playlistCircuitName'),laps=row.querySelector('.playlistLapSelect');
+    circuit.addEventListener('input',()=>{
+      const n=Number(circuit.value);
+      if(Number.isInteger(n)&&n>=CIRCUIT_MIN&&n<=CIRCUIT_MAX){entries[i].circuit=n;name.textContent=circuitName(n);setStatus('Modified · export writes IHPL v2.');}
+      else name.textContent='Invalid circuit';
+    });
+    laps.addEventListener('change',()=>{entries[i].laps=laps.value==='inherit'?'inherit':Number(laps.value);setStatus('Modified · export writes IHPL v2.');});
+    rows.appendChild(row);
+  });
+}
+function download(bytes,name){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
+  a.download=name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+async function importFile(file){
+  try{
+    const parsed=parse(new Uint8Array(await file.arrayBuffer()));
+    if(!parsed.runtimeCompatible){
+      setStatus(`IHPL v${parsed.version} is structurally valid and declares ${parsed.count} races, but the current WHDLoad runtime requires exactly ${RUNTIME_COUNT}. Nothing was changed.`,true);
+      return;
+    }
+    entries=parsed.entries.map(e=>({...e}));render();
+    const note=parsed.version===VERSION_V1?' v1 physical Track IDs were converted to zero-based circuit IDs; export will use v2.':'';
+    setStatus(`Imported IHPL v${parsed.version} · ${parsed.count} races.${note}`);
+  }catch(e){setStatus(`ERROR: ${e.message}`,true);}
+}
+$('playlistImport').addEventListener('click',()=>$('playlistInput').click());
+$('playlistInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importFile(f);e.target.value='';});
+$('playlistReset').addEventListener('click',()=>{entries=defaultEntries();render();setStatus('Reset to the established retail 11-race championship order.');});
+$('playlistExport').addEventListener('click',()=>{
+  try{
+    // Pull values directly from the visible controls so export cannot lag behind UI state.
+    const current=Array.from(rows.querySelectorAll('.playlistRow')).map((row,i)=>{
+      const circuit=Number(row.querySelector('.playlistCircuit').value);
+      const raw=row.querySelector('.playlistLapSelect').value;
+      return {circuit,laps:raw==='inherit'?'inherit':Number(raw)};
+    });
+    const bytes=encode(current,{forRuntime:true});
+    // Re-read our completed output before download, matching the circuit-package export philosophy.
+    const verify=parse(bytes);
+    if(verify.version!==VERSION_V2||verify.count!==RUNTIME_COUNT)throw new Error('Playlist self-check failed');
+    entries=verify.entries.map(e=>({...e}));
+    download(bytes,'indyheat_playlist.bin');
+    setStatus(`Exported IHPL v2 · ${verify.count} races · ${bytes.length} bytes.`);
+  }catch(e){setStatus(`ERROR: ${e.message}`,true);}
+});
+
+render();
+})(typeof globalThis!=='undefined'?globalThis:this);
+</script>
+
 </body>
 </html>
