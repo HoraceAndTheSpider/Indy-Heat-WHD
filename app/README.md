@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.26**.
+Current editor version: **v0.32**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -40,9 +40,13 @@ The custom package workflow continues to use the established package files where
 - `preview.bin`
 - `waypoints.bin`
 - `race_setup.bin`
+- `name.bin` — optional 18-byte Gasoline Alley circuit-name sidecar (17 display bytes + NUL); older packages without it remain valid.
+- `template.bin` — two-byte big-endian retail template index (`0..9`) emitted by v0.32 exports for unambiguous WHDLoad custom-route hosting.
 - `presentation.bin`
 
 MiniMap templates are embedded in the application; no separate template artwork files are required in this directory.
+
+Circuit ZIP export in v0.32 is a single direct serialisation path. At **Export circuit ZIP** it reads the live race/name/map/HUD controls, the current editable MiniMap buffer and the selected circuit resources, then builds and verifies one package. Clean retail clones choose waypoint data matching the selected retail route shape (for example Indianapolis 68/70/54). No separate **Apply fields** click is required. Signed presentation and pit coordinates may be negative; if a control has not been initialised, export preserves the selected circuit's existing value rather than treating the missing control as zero/NaN.
 
 ## Development history
 

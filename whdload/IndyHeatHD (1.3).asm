@@ -13,27 +13,39 @@
 
 
 ;
-; Development 1.3 test 23 adds Gasoline Alley circuit-name package loading:
+; Development 1.3 test 30 retains the runtime-proven test-27 MiniMap fix and
+; deliberately reverts the failed test-28/test-29 late Gasoline Alley name hooks.
+; The established test-23 setup-time name.bin copy remains the sole name path:
 ; - preserve the 1.21 WHDLoad v17 header and original CUSTOM1 trainer options;
 ; - CUSTOM2=1 enters PL_CUSTOMTRACKS, which chains to pl_boot with PL_NEXT;
 ; - CUSTOM2<>1 starts directly at pl_boot;
 ; - preserve playlist v1 exactly: physical Track IDs 1..10 plus lap override;
-; - add playlist v2: zero-based circuit indexes 0..99 plus lap override;
+; - preserve playlist v2: zero-based circuit indexes 0..99 plus lap override;
 ; - v2 circuit_00..09 select the ten proven retail physical templates;
-; - v2 circuit_10..99 load the matching editor package folder and infer its
-;   structural retail template from the three IHWP waypoint route counts;
-; - test 17 deliberately keeps custom waypoint/pit data at the retail template
-;   runtime addresses; test 16 private relocation is disabled after runtime failure;
-; - this proof prioritises retail address compatibility over concurrent custom
-;   circuits sharing the same structural template;
-; - the eight established editor package files remain unchanged: background,
+; - v2 circuit_10..99 use template.bin when present (word 0..9) so custom
+;   routes may have variable waypoint counts; existing packages without it
+;   retain the test-17 unique-retail-count inference for compatibility;
+; - active circuit_10..99 pit data is copied to $75A90 and waypoint routes are
+;   rebuilt at $75AE8..$7FFFF inside the existing 512 KiB Chip RAM allocation;
+; - IHWP stored records are normalised field-by-field using the long-standing
+;   static->runtime hypothesis: NEG.W X, NOT.B progress, NEG.B Y, link +13;
+;   this is deliberately a runtime proof target rather than a claimed fact;
+; - the three race descriptors are repointed to the active arena with authored
+;   start/end/count values; template +$0A words remain inherited unchanged;
+; - arena contents are reloaded on the native $5902/+82 event progression;
+; - regional-map interception remains unchanged from the runtime-proven path;
+; - Gasoline Alley MiniMap no longer depends on deferred Load-hook replacement;
+;   custom mode hooks $4440, after the retail resource has been decrunched and
+;   before the game converts that raw $0A02 preview resource into its object;
+; - preserve the eight established editor package files: background,
 ;   foreground, surface, recovery, preview, waypoints, race_setup, presentation;
-; - optional $12 name.bin copies the authored Gasoline Alley field to
-;   race+$70..+$81; no Gasoline Alley renderer patch is required;
+; - preserve optional $12 name.bin support from test 23;
+; - no presentation-time name hook: name.bin is copied once into race+$70 by
+;   apply_circuit_setup, matching the earlier path that visibly produced Illinois;
 ; - explicit playlist lap override is applied last; for a custom event $FFFF
 ;   retains the package-authored race_setup lap total;
-; - malformed playlist/header/custom waypoint topology fails closed before any
-;   race-record write; individual optional package components fail closed;
+; - malformed playlist/header/custom waypoint topology fails closed before
+;   descriptor relocation; individual optional package components fail closed;
 ; - retain the runtime-proven 0-99 lap compositor and regional-map replacement;
 ; - in CUSTOM2=1 only, move the retail reserved live-lap states 13/14 to
 ;   100/101 so extended gameplay lap values do not collide with finish state;
@@ -44,6 +56,8 @@
 ; - extend only 13..19 with the proved retail double-digit construction;
 ; - map numeric 20 and the relocated finish state to the original retail F;
 ; - map the relocated secondary terminal state to the original solid square;
+; - reserve $7FF00..$7FFFF for a small debugger proof block comparing the
+;   relocated route with the game-normalised retail-template route;
 ; - cap the supported custom race length at 20 laps.
 ;
 ; Playlist v1 ($34 bytes, big endian):
@@ -61,8 +75,10 @@
 RACE_RUNTIME_BASE       EQU     $5902           ; main+$4902 plus runtime $1000
 RACE_RECORD_SIZE        EQU     $82
 RACE_RECORD_COUNT       EQU     11
+RACE_SENTINEL           EQU     $5E98
 RACE_SETUP_SIZE         EQU     $68
 RACE_NAME_SIZE          EQU     $12             ; race+$70..+$81, 17 display bytes + NUL
+CIRCUIT_TEMPLATE_SIZE   EQU     2               ; optional template.bin, big-endian word 0..9
 PIT_LONG_COUNT_MINUS1   EQU     21              ; $58 / 4 = 22 longs -> DBF 21
 TRACK_COUNT             EQU     10
 TRACK_TEMPLATE_SIZE     EQU     TRACK_COUNT*RACE_RECORD_SIZE
@@ -103,8 +119,14 @@ CIRCUIT_PRESENTATION_VERSION EQU 2
 CIRCUIT_WAYPOINT_MAGIC EQU      $49485750        ; "IHWP"
 CIRCUIT_WAYPOINT_VERSION EQU    1
 CIRCUIT_WAYPOINT_ROUTES EQU     3
-CUSTOM_WAYPOINT_SLOT_SIZE EQU   $0600
 CUSTOM_PIT_SLOT_SIZE    EQU     $58
+CUSTOM_ARENA_BASE       EQU     $75A90          ; test-24 active-event arena in 512 KiB Chip RAM
+CUSTOM_PIT_ARENA_BASE   EQU     CUSTOM_ARENA_BASE
+CUSTOM_ROUTE_ARENA_BASE EQU     CUSTOM_PIT_ARENA_BASE+CUSTOM_PIT_SLOT_SIZE
+CUSTOM_DIAG_BASE        EQU     $7FF00          ; test-25 debugger proof block (256 bytes)
+CUSTOM_DIAG_FLAGS       EQU     CUSTOM_DIAG_BASE+$F0
+CUSTOM_ARENA_END        EQU     CUSTOM_DIAG_BASE
+CUSTOM_ROUTE_ARENA_SIZE EQU     CUSTOM_ARENA_END-CUSTOM_ROUTE_ARENA_BASE
 
 	INCDIR	Includes:
 	INCLUDE	whdload.i
@@ -171,7 +193,7 @@ _config:	dc.b    "C1:X:Infinite coins:0;"	; ws_config;
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 23"
+	dc.b	"1.3 test 30"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -281,6 +303,7 @@ patch_boot
 	bsr.w	load_region_selector
 	bsr.w	apply_playlist
 	bsr.w	apply_circuit_packages
+	bsr.w	clear_custom_diag
 	lea	PL_CUSTOMTRACKS(pc),a0
 	bra.b	.apply_patches
 
@@ -319,6 +342,12 @@ patch_boot
 PL_CUSTOMTRACKS
 	PL_START
 
+	; Track the native championship event independently of A6+$3DD6 load timing.
+	; $631C is MOVE.L #$5902,$3DD6(A6), eight bytes total.
+	PL_PSS	$631C,custom_event_init,2
+	; $6508 is the native +$82 / $5E98 event-advance routine.
+	PL_P	$6508,custom_event_advance
+
 	; Replace the lap-value load plus unsafe retail 8-12 lookup (8 bytes).
 	; PL_PSS emits the JSR at $66C2 and skips the final two bytes so RTS resumes
 	; at the untouched $66CA LEA $4270,A0.
@@ -348,8 +377,147 @@ PL_CUSTOMTRACKS
 	; remains byte-for-byte untouched.
 	PL_PSS	$69C8,custom_current_lap_dispatch,2
 
+	; $4432 is the retail descriptor/object loader.  By $4440 its $BA50
+	; resource load/decrunch has completed and entry+14 is valid, but the raw
+	; resource has not yet been converted into the descriptor's object.
+	; Replace only the active custom event's race+$46 preview at that point.
+	PL_P	$4440,custom_preview_postdecrunch
+
 	PL_NEXT	pl_boot
 
+
+;---------------------------------------------------------------------------
+; CUSTOM GASOLINE ALLEY MINIMAP — TEST 27
+;
+; Retail object loader at $4432 (A0 = 12-byte descriptor):
+;   $4432  MOVEA.L A0,A1
+;   $4434  MOVE.L  A1,-(SP)
+;   $4436  MOVEA.L 6(A1),A0       ; resource-table +2 pointer
+;   $443A  BSR     $BA50          ; load/decrunch resource
+;   $443E  MOVEA.L (SP)+,A1
+;   $4440  MOVE.L  A1,-(SP)       ; hook here
+;   ...
+;   $4456  MOVEA.L 6(A1),A0
+;   $445A  MOVEA.L 12(A0),A0      ; entry+14 raw resource pointer
+;
+; Hooking $4440 guarantees the raw preview resource exists, while still replacing
+; it before the retail object-conversion routine consumes it.  The six bytes
+; displaced by PL_P are replayed exactly before resuming at $4446.
+;---------------------------------------------------------------------------
+
+custom_preview_postdecrunch
+	movem.l	d0-d7/a0-a6,-(a7)
+
+	; Resolve the slave-tracked active playlist event.
+	moveq	#0,d0
+	move.w	active_event_index(pc),d0
+	cmp.w	#RACE_RECORD_COUNT-1,d0
+	bhi.w	.done
+
+	move.w	d0,d1
+	add.w	d1,d1
+	lea	custom_circuit_by_event(pc),a0
+	move.w	0(a0,d1.w),d5
+	cmp.w	#TRACK_COUNT,d5
+	blo.w	.done
+	cmp.w	#PLAYLIST_MAX_CIRCUIT,d5
+	bhi.w	.done
+
+	; A1 is the descriptor currently being built.  Only replace the descriptor
+	; that is exactly race+$46 for the active custom event.
+	move.l	d0,d1
+	mulu	#RACE_RECORD_SIZE,d1
+	lea	RACE_RUNTIME_BASE.w,a0
+	adda.l	d1,a0
+	movea.l	$46(a0),a0
+	cmpa.l	a0,a1
+	bne.w	.done
+
+	; Descriptor+6 points at +2 inside the resource-table entry.  At this exact
+	; post-decrunch point, +12 from that pointer is the valid entry+14 raw-data
+	; pointer which the retail code itself consumes at $445A.
+	movea.l	6(a1),a0
+	move.l	4(a0),d3		; resource outLen (entry+6)
+	movea.l	12(a0),a4		; raw decompressed resource (entry+14)
+	move.l	a4,d0
+	beq.w	.done
+
+	lea	circuit_leaf_preview(pc),a1
+	move.w	d5,d0
+	bsr.w	build_circuit_path
+	move.l	a0,a3
+
+	move.l	_resload(pc),a2
+	jsr	resload_GetFileSize(a2)
+	cmp.l	d3,d0
+	bne.w	.done
+
+	move.l	a3,a0
+	move.l	a4,a1
+	move.l	_resload(pc),a2
+	jsr	resload_LoadFile(a2)
+
+	lea	CUSTOM_DIAG_FLAGS,a0
+	ori.w	#$000A,(a0)		; bit1 recognised + bit3 post-decrunch copy
+
+.done
+	movem.l	(a7)+,d0-d7/a0-a6
+
+	; Replay the six bytes replaced at $4440, then resume retail loader.
+	move.l	a1,-(a7)
+	move.w	4(a1),d0
+	jmp	$4446
+
+
+;---------------------------------------------------------------------------
+; CUSTOM EVENT TRACKER / ACTIVE ARENA — TEST 24
+;
+; $631C initialises the native A6+$3DD6 event pointer to $5902.  $6508 advances
+; it by $82 until the $5E98 sentinel.  Keeping a slave-local event index beside
+; that proven progression makes early Gasoline Alley resource loads deterministic
+; and gives one place to reload the active custom route/pit arena.
+;---------------------------------------------------------------------------
+
+custom_event_init
+	; Preserve the incoming X bit across the helper work.  Restore SR, then repeat
+	; the original MOVE last so N/Z/V/C match the retail instruction exactly.
+	; Slave-local state must be addressed PC-relatively through an address register:
+	; PC-relative addressing itself is not an alterable destination on 68000.
+	move.w	sr,-(a7)
+	move.l	#RACE_RUNTIME_BASE,$3DD6(a6)
+	move.l	a0,-(a7)
+	lea	active_event_index(pc),a0
+	clr.w	(a0)
+	move.l	(a7)+,a0
+	bsr.w	activate_custom_event
+	move.w	(a7)+,sr
+	move.l	#RACE_RUNTIME_BASE,$3DD6(a6)
+	rts
+
+custom_event_advance
+	; Exact retail decision: a negative first word means force the sentinel.
+	movea.l	$3DD6(a6),a0
+	tst.w	(a0)
+	bmi.b	.sentinel
+
+	; Prepare the newly selected event before the original pointer ADDI is issued.
+	; activate_custom_event uses active_event_index directly, so it does not depend
+	; on the pointer having been updated yet.  The final ADDI restores retail CCR.
+	move.l	a0,-(a7)
+	lea	active_event_index(pc),a0
+	addq.w	#1,(a0)
+	move.l	(a7)+,a0
+	bsr.w	activate_custom_event
+	addi.l	#RACE_RECORD_SIZE,$3DD6(a6)
+	rts
+
+.sentinel
+	move.l	a0,-(a7)
+	lea	active_event_index(pc),a0
+	move.w	#RACE_RECORD_COUNT,(a0)
+	move.l	(a7)+,a0
+	move.l	#RACE_SENTINEL,$3DD6(a6)
+	rts
 
 
 ;---------------------------------------------------------------------------
@@ -494,6 +662,10 @@ custom_lap_total
 	; Entry replaces $66C2-$66C9.  A0 is still the active $82-byte race record;
 	; D0/D1 already contain the normal retail draw position.
 	movem.l	d3-d7/a1-a4,-(a7)
+
+	; TEST 25: capture one live comparison after the game's own waypoint setup
+	; has run.  This does not alter race data and is inspectable at $7FF00.
+	bsr.w	capture_custom_route_diag
 
 	moveq	#0,d3
 	move.w	$28(a0),d3		; requested event total laps
@@ -776,6 +948,7 @@ race_setup_buffer
 ;             /race_setup.bin
 ;             /presentation.bin
 ;             /name.bin          optional $12 Gasoline Alley circuit name
+;             /template.bin      optional word 0..9 for variable-count circuit_10+
 ;
 ; circuit_00..09 remain direct substitutes for the ten proven physical retail
 ; templates.  Playlist v2 additionally selects circuit_10..99.  Those custom
@@ -787,6 +960,7 @@ race_setup_buffer
 ;   presentation.bin  IHPR v2 / $14
 ;   waypoints.bin     IHWP v1, three route payloads
 ;   name.bin          optional exact $12 copy of race+$70..+$81
+;   template.bin      optional exact $02 structural retail template index
 ;
 ; Decompressed resources are replaced through the same proven deferred Load
 ; mechanism already used by the background and regional-map tests. External
@@ -981,11 +1155,16 @@ apply_circuit_setup
 	move.l	(a0)+,$66(a3)		; start Y 16.16
 	move.w	(a0)+,$6A(a3)		; orientation/mirror
 
+	; circuit_10+ pits are reloaded into the active high-Chip arena when their
+	; event becomes active.  Do not mutate the structural retail template block.
+	cmp.w	#TRACK_COUNT,d4
+	bhs.b	.skip_pits
 	move.l	$32(a3),a1
 	moveq	#PIT_LONG_COUNT_MINUS1,d6
 .copy_pits
 	move.l	(a0)+,(a1)+
 	dbf	d6,.copy_pits
+.skip_pits
 
 	; Gasoline Alley already renders the final 18 bytes of the race record.
 	; Keep race_setup.bin at its proven $68 layout and load the name separately.
@@ -1072,6 +1251,10 @@ apply_circuit_presentation
 ; IN: D0.w circuit index, A3 race record
 apply_circuit_waypoints
 	movem.l	d0-d7/a0-a6,-(a7)
+
+	; circuit_10+ routes are decoded/repointed only when that event is active.
+	cmp.w	#TRACK_COUNT,d0
+	bhs.w	.done
 
 	lea	circuit_leaf_waypoints(pc),a1
 	bsr.w	build_circuit_path
@@ -1185,6 +1368,7 @@ circuit_leaf_waypoints		dc.b	"waypoints.bin",0
 circuit_leaf_race_setup	dc.b	"race_setup.bin",0
 circuit_leaf_presentation	dc.b	"presentation.bin",0
 circuit_leaf_name		dc.b	"name.bin",0
+circuit_leaf_template	dc.b	"template.bin",0
 	even
 
 circuit_resource_leaf_offsets
@@ -1216,8 +1400,8 @@ circuit_waypoint_buffer
 ;   - empty CUSTOM selects playlist_default_name (indyheat_playlist.bin);
 ;   - invalid/missing/malformed playlist fails closed before game-memory writes.
 ;
-; The native game event pointer at A6+$3DD6, $5902 start, +$82 progression and
-; $5E98 sentinel are not patched by this feature.
+; The native event semantics remain $5902 start, +$82 progression and $5E98
+; sentinel; CUSTOM2 hooks mirror that progression only to track the active arena.
 ;---------------------------------------------------------------------------
 
 apply_playlist
@@ -1260,8 +1444,9 @@ apply_playlist
 .version_ok
 
 	; First pass validates every event and resolves v2 custom circuits to one of
-	; the ten structural retail templates by IHWP route counts.  Only slave-local
-	; bookkeeping is written in this pass; game race records remain untouched.
+	; the ten structural retail templates.  template.bin allows variable route
+	; counts; existing packages without it retain unique IHWP count inference.
+	; Only slave-local bookkeeping is written in this pass.
 	lea	8(a0),a1
 	lea	playlist_template_by_event(pc),a5
 	lea	custom_circuit_by_event(pc),a6
@@ -1295,9 +1480,9 @@ apply_playlist
 	bra.b	.validate_laps
 
 .validate_custom
-	; circuit_10..99 is identified solely by its binary package.  waypoints.bin
-	; is mandatory here because its three route counts prove which retail record
-	; layout can safely host the custom circuit.
+	; circuit_10..99 is identified by its binary package.  waypoints.bin remains
+	; mandatory; template.bin explicitly supplies the structural host when route
+	; counts differ from retail, while legacy packages can still infer it.
 	move.w	d2,d0
 	bsr.w	infer_custom_template
 	tst.w	d0
@@ -1355,13 +1540,9 @@ apply_playlist
 	cmp.w	#$FFFF,d2
 	beq.b	.apply_lap_override
 
-	; TEST 17: keep the copied retail record's original waypoint and pit pointers.
-	; Test 16 relocated those structures into slave-local storage; runtime testing
-	; produced wrong AI headings immediately and prevented lap progression even
-	; though the exported IHWP graph was structurally sound.  Patching the proven
-	; retail addresses in place is therefore the controlled compatibility proof.
-	; Limitation for this test: two custom events using the same retail structural
-	; template would share these mutable structures and should not be combined.
+	; Common package fields/presentation are applied now.  circuit_10+ route and
+	; pit payloads are intentionally deferred to the active-event arena; the boot
+	; waypoint call below returns immediately for custom-library circuits.
 
 	move.w	d2,d0
 	bsr.w	apply_circuit_setup
@@ -1402,6 +1583,8 @@ apply_playlist
 	rts
 
 reset_playlist_event_maps
+	lea	active_event_index(pc),a0
+	clr.w	(a0)
 	lea	custom_circuit_by_event(pc),a0
 	lea	playlist_template_by_event(pc),a1
 	moveq	#RACE_RECORD_COUNT-1,d0
@@ -1413,64 +1596,42 @@ reset_playlist_event_maps
 
 
 ; IN: D0.w = custom circuit index 10..99
-; OUT: D0.w = uniquely matching retail structural template 0..9, or -1
+; OUT: D0.w = structural retail template 0..9, or -1
+;
+; Variable-count packages carry template.bin (one BE word 0..9).  Existing
+; packages without it remain compatible through the test-17 unique count match.
+; waypoints.bin itself is validated in either case before a template is accepted.
 infer_custom_template
 	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d7
 
-	lea	circuit_leaf_waypoints(pc),a1
+	move.w	d7,d0
+	bsr.w	validate_custom_waypoint_file
+	tst.l	d0
+	beq.w	.failed
+
+	move.w	d7,d0
+	lea	circuit_leaf_template(pc),a1
 	bsr.w	build_circuit_path
 	move.l	a0,a5
 	move.l	_resload(pc),a2
 	jsr	resload_GetFileSize(a2)
-	cmp.l	#20,d0
-	blo.w	.failed
-	cmp.l	#CIRCUIT_WAYPOINT_BUFFER_SIZE,d0
-	bhi.w	.failed
-	move.l	d0,d6
+	tst.l	d0
+	beq.b	.legacy_counts
+	cmp.l	#CIRCUIT_TEMPLATE_SIZE,d0
+	bne.w	.failed
 
 	move.l	a5,a0
-	lea	circuit_waypoint_buffer(pc),a1
+	lea	template_id_buffer(pc),a1
 	move.l	_resload(pc),a2
 	jsr	resload_LoadFile(a2)
-
-	lea	circuit_waypoint_buffer(pc),a0
-	cmp.l	#CIRCUIT_WAYPOINT_MAGIC,(a0)
-	bne.w	.failed
-	cmp.w	#CIRCUIT_WAYPOINT_VERSION,4(a0)
-	bne.w	.failed
-	cmp.w	#CIRCUIT_WAYPOINT_ROUTES,6(a0)
-	bne.w	.failed
-
-	subq.l	#8,d6
-	lea	8(a0),a1
-	lea	inferred_route_counts(pc),a4
-	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d5
-.parse_route
-	cmp.l	#4,d6
-	blo.w	.failed
 	moveq	#0,d0
-	move.w	(a1),d0
-	move.w	d0,(a4)+
-	moveq	#0,d1
-	move.w	2(a1),d1
-	cmp.w	#1,d1
-	bhi.w	.failed
-	lea	4(a1),a1
-	subq.l	#4,d6
-	mulu	#6,d0
-	tst.w	d1
-	beq.b	.route_bytes
-	addq.l	#6,d0
-.route_bytes
-	cmp.l	d0,d6
-	blo.w	.failed
-	sub.l	d0,d6
-	adda.l	d0,a1
-	dbf	d5,.parse_route
-	tst.l	d6
-	bne.w	.failed
+	move.w	template_id_buffer(pc),d0
+	cmp.w	#TRACK_COUNT-1,d0
+	bls.w	.return
+	bra.w	.failed
 
+.legacy_counts
 	lea	retail_route_counts(pc),a0
 	moveq	#0,d2
 	moveq	#TRACK_COUNT-1,d5
@@ -1491,8 +1652,99 @@ infer_custom_template
 	lea	6(a0),a0
 	addq.w	#1,d2
 	dbf	d5,.compare_template
+
 .failed
 	moveq	#-1,d0
+.return
+	movem.l	(a7)+,d1-d7/a0-a6
+	rts
+
+
+; IN: D0.w = custom circuit index 10..99
+; OUT: D0.l = 1 valid / loaded at CUSTOM_ROUTE_ARENA_BASE, 0 invalid
+; SIDE: inferred_route_counts receives A/B/C ordinary point counts.
+;
+; Validation also proves the retail boundary-sharing shape encoded by IHWP:
+; route A boundary == route B point 0, and B boundary == C point 0.  That lets
+; the active loader reconstruct the original contiguous runtime layout while
+; still accepting arbitrary positive counts.
+validate_custom_waypoint_file
+	movem.l	d1-d7/a0-a6,-(a7)
+	move.w	d0,d7
+
+	lea	circuit_leaf_waypoints(pc),a1
+	bsr.w	build_circuit_path
+	move.l	a0,a5
+	move.l	_resload(pc),a2
+	jsr	resload_GetFileSize(a2)
+	cmp.l	#56,d0			; 8-byte header + 3*(4 + one point + boundary)
+	blo.w	.failed
+	cmp.l	#CUSTOM_ROUTE_ARENA_SIZE,d0
+	bhi.w	.failed
+	move.l	d0,d6
+
+	move.l	a5,a0
+	lea	CUSTOM_ROUTE_ARENA_BASE,a1
+	move.l	_resload(pc),a2
+	jsr	resload_LoadFile(a2)
+
+	lea	CUSTOM_ROUTE_ARENA_BASE,a0
+	cmp.l	#CIRCUIT_WAYPOINT_MAGIC,(a0)
+	bne.w	.failed
+	cmp.w	#CIRCUIT_WAYPOINT_VERSION,4(a0)
+	bne.w	.failed
+	cmp.w	#CIRCUIT_WAYPOINT_ROUTES,6(a0)
+	bne.w	.failed
+
+	subq.l	#8,d6
+	lea	8(a0),a1
+	lea	inferred_route_counts(pc),a4
+	suba.l	a5,a5			; previous route boundary in stored file
+	moveq	#0,d4			; route index
+	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d5
+.validate_route
+	cmp.l	#4,d6
+	blo.w	.failed
+
+	moveq	#0,d0
+	move.w	(a1),d0			; ordinary point count
+	beq.w	.failed
+	move.w	d0,(a4)+
+	cmp.w	#1,2(a1)			; all proven retail routes carry a boundary
+	bne.w	.failed
+	lea	4(a1),a2			; first stored point
+	subq.l	#4,d6
+
+	; Starting with route B, point 0 must alias the preceding route boundary.
+	tst.w	d4
+	beq.b	.alias_ok
+	move.l	(a5),d1
+	cmp.l	(a2),d1
+	bne.w	.failed
+	move.w	4(a5),d1
+	cmp.w	4(a2),d1
+	bne.w	.failed
+.alias_ok
+
+	mulu	#6,d0
+	addq.l	#6,d0			; ordinary points + explicit boundary
+	cmp.l	d0,d6
+	blo.w	.failed
+	movea.l	a2,a5
+	adda.l	d0,a5
+	subq.l	#6,a5			; boundary record pointer
+	adda.l	d0,a2
+	sub.l	d0,d6
+	movea.l	a2,a1
+	addq.w	#1,d4
+	dbf	d5,.validate_route
+
+	tst.l	d6
+	bne.w	.failed
+	moveq	#1,d0
+	bra.b	.return
+.failed
+	moveq	#0,d0
 .return
 	movem.l	(a7)+,d1-d7/a0-a6
 	rts
@@ -1612,83 +1864,331 @@ playlist_template_by_event
 	ds.w	RACE_RECORD_COUNT
 custom_circuit_by_event
 	ds.w	RACE_RECORD_COUNT
+active_event_index
+	dc.w	0
+template_id_buffer
+	dc.w	0
+active_route_starts
+	ds.l	CIRCUIT_WAYPOINT_ROUTES
+active_route_ends
+	ds.l	CIRCUIT_WAYPOINT_ROUTES
+active_route_counts
+	ds.w	CIRCUIT_WAYPOINT_ROUTES
+	even
 track_template_buffer
 	ds.b	TRACK_TEMPLATE_SIZE
 	even
 
 ;---------------------------------------------------------------------------
-; Test-16 private mutable storage experiment (DISABLED IN TEST 17).
+; ACTIVE CUSTOM EVENT ARENA — TEST 24
 ;
-; Kept in source for comparison only; apply_playlist no longer calls this routine.
-; Runtime testing of test 16 showed immediate AI direction/lap-progress failure
-; despite a structurally valid IHWP export, so test 17 preserves retail addresses.
+; Test 16 copied IHWP's stored/complemented bytes into slave-local memory, so
+; the game never saw the normal bytewise-NOT conversion and AI/lap progression
+; failed.  Test 24 instead uses the high end of the existing 512 KiB Chip RAM:
+;
+;   $75A90..$75AE7  active four-pit block ($58 bytes)
+;   $75AE8..$7FFFF  raw IHWP scratch, compacted in place to candidate runtime records
+;
+; Only the active championship event owns this arena.  The native $5902/+82
+; progression hook reloads it when the event changes, so two custom circuits
+; may safely share the same structural retail template.
 ;---------------------------------------------------------------------------
 
-; IN: D0.w event index 0..10, A3 = copied event race record
-; OUT: D0.l = 1 success, 0 failure
-prepare_custom_event_storage
-	movem.l	d1-d7/a0-a6,-(a7)
+activate_custom_event
+	movem.l	d0-d7/a0-a6,-(a7)
 	moveq	#0,d7
-	move.w	d0,d7
+	move.w	active_event_index(pc),d7
 	cmp.w	#RACE_RECORD_COUNT-1,d7
-	bhi.w	.failed
+	bhi.w	.done
 
-	; Allocate fixed private waypoint slot for this event.
-	move.l	d7,d1
-	mulu	#CUSTOM_WAYPOINT_SLOT_SIZE,d1
-	lea	custom_waypoint_storage(pc),a5
-	adda.l	d1,a5
+	move.w	d7,d0
+	add.w	d0,d0
+	lea	custom_circuit_by_event(pc),a0
+	move.w	0(a0,d0.w),d6
+	cmp.w	#TRACK_COUNT,d6
+	blo.w	.done
+	cmp.w	#PLAYLIST_MAX_CIRCUIT,d6
+	bhi.w	.done
 
-	; Copy from route-A start through route-C boundary record (end+6).
-	move.l	(a3),d2
-	beq.w	.failed
-	move.l	28(a3),d3
-	addq.l	#6,d3
-	sub.l	d2,d3
-	beq.w	.failed
-	cmp.l	#CUSTOM_WAYPOINT_SLOT_SIZE,d3
-	bhi.w	.failed
+	move.l	d7,d0
+	mulu	#RACE_RECORD_SIZE,d0
+	lea	RACE_RUNTIME_BASE.w,a3
+	adda.l	d0,a3
 
-	movea.l	d2,a0
-	movea.l	a5,a1
-	move.w	d3,d6
-	subq.w	#1,d6
-.copy_waypoint_span
-	move.b	(a0)+,(a1)+
-	dbf	d6,.copy_waypoint_span
+	move.w	d6,d0
+	bsr.w	load_active_custom_routes
+	tst.l	d0
+	beq.w	.done
+	move.w	d6,d0
+	bsr.w	load_active_custom_pits
+.done
+	movem.l	(a7)+,d0-d7/a0-a6
+	rts
 
-	; Relocate all three descriptor start/end pointers by the same delta.
-	move.l	a5,d4
-	sub.l	d2,d4
-	movea.l	a3,a4
-	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d6
-.relocate_descriptor
-	add.l	d4,(a4)
-	add.l	d4,4(a4)
-	lea	12(a4),a4
-	dbf	d6,.relocate_descriptor
 
-	; Copy the 4 x $16 pit records to a private $58 block and repoint race+$32.
-	move.l	d7,d1
-	mulu	#CUSTOM_PIT_SLOT_SIZE,d1
-	lea	custom_pit_storage(pc),a5
-	adda.l	d1,a5
-	movea.l	$32(a3),a0
-	move.l	a0,d0
-	beq.b	.failed
-	movea.l	a5,a1
+; IN: D0.w custom circuit index 10..99, A3 active race record
+; OUT: D0.l = 1 success / 0 failure
+load_active_custom_pits
+	movem.l	d1-d7/a0-a6,-(a7)
+	move.w	d0,d7
+	lea	circuit_leaf_race_setup(pc),a1
+	bsr.w	build_circuit_path
+	move.l	a0,a5
+	move.l	_resload(pc),a2
+	jsr	resload_GetFileSize(a2)
+	cmp.l	#RACE_SETUP_SIZE,d0
+	bne.b	.failed
+	move.l	a5,a0
+	lea	race_setup_buffer(pc),a1
+	move.l	_resload(pc),a2
+	jsr	resload_LoadFile(a2)
+
+	lea	race_setup_buffer+$10(pc),a0	; four $16 pit records begin at +$10
+	lea	CUSTOM_PIT_ARENA_BASE,a1
 	moveq	#PIT_LONG_COUNT_MINUS1,d6
-.copy_pit_block
+.copy
 	move.l	(a0)+,(a1)+
-	dbf	d6,.copy_pit_block
-	move.l	a5,$32(a3)
-
+	dbf	d6,.copy
+	move.l	#CUSTOM_PIT_ARENA_BASE,$32(a3)
 	moveq	#1,d0
 	bra.b	.return
 .failed
 	moveq	#0,d0
 .return
 	movem.l	(a7)+,d1-d7/a0-a6
+	rts
+
+
+; IN: D0.w custom circuit index 10..99, A3 active race record
+; OUT: D0.l = 1 success / 0 failure
+;
+; validate_custom_waypoint_file first leaves the raw IHWP file at $75AE8.
+; This routine compacts the three route payloads downward in the same arena,
+; normalises each stored record field-by-field, validates every relative link against the
+; compacted runtime record set, then atomically commits start/end/count fields.
+; The +$0A descriptor word remains inherited from the chosen retail template.
+load_active_custom_routes
+	movem.l	d1-d7/a0-a6,-(a7)
+	move.w	d0,d7
+	bsr.w	validate_custom_waypoint_file
+	tst.l	d0
+	beq.w	.failed
+
+	lea	CUSTOM_ROUTE_ARENA_BASE+8,a2	; first IHWP route header
+	lea	CUSTOM_ROUTE_ARENA_BASE,a1	; compact runtime destination
+	lea	active_route_starts(pc),a4
+	lea	active_route_ends(pc),a5
+	lea	active_route_counts(pc),a6
+	moveq	#0,d7			; route index
+	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d6
+.decode_route
+	moveq	#0,d0
+	move.w	(a2),d0
+	move.w	d0,(a6)+
+	lea	4(a2),a2			; source ordinary points
+
+	tst.w	d7
+	bne.b	.shared_start
+	move.l	a1,(a4)+			; route A start
+	bra.b	.copy_points
+.shared_start
+	lea	-6(a1),a0			; previous boundary == this route point 0
+	move.l	a0,(a4)+
+	lea	6(a2),a2			; skip duplicate stored point 0
+	subq.w	#1,d0
+
+.copy_points
+	bsr.w	copy_normalize_waypoint_records
+	move.l	a1,(a5)+			; descriptor end / boundary address
+	moveq	#1,d0
+	bsr.w	copy_normalize_waypoint_records	; explicit boundary
+
+	addq.w	#1,d7
+	dbf	d6,.decode_route
+
+	move.l	a1,d7			; one-past-final compact record
+
+	; Validate every decoded +4.w relative link.  Because the runtime layout is
+	; compact and six-byte aligned, valid targets must land on one of its records.
+	lea	CUSTOM_ROUTE_ARENA_BASE,a0
+.validate_link
+	cmpa.l	d7,a0
+	bhs.b	.links_ok
+	moveq	#0,d0
+	move.w	4(a0),d0
+	ext.l	d0
+	move.l	a0,d1
+	add.l	d1,d0
+	cmp.l	#CUSTOM_ROUTE_ARENA_BASE,d0
+	blo.w	.failed
+	cmp.l	d7,d0
+	blo.b	.target_in_arena
+	bne.w	.failed
+	; The final retail boundary may point +6 to the one-past-end sentinel.
+	move.l	d7,d1
+	subq.l	#6,d1
+	cmp.l	d1,a0
+	bne.w	.failed
+.target_in_arena
+	sub.l	#CUSTOM_ROUTE_ARENA_BASE,d0
+	divu	#6,d0
+	swap	d0
+	tst.w	d0
+	bne.w	.failed
+	lea	6(a0),a0
+	bra.b	.validate_link
+
+.links_ok
+	; Commit only after the complete package has decoded and validated.
+	lea	active_route_starts(pc),a0
+	lea	active_route_ends(pc),a1
+	lea	active_route_counts(pc),a2
+	movea.l	a3,a4
+	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d6
+.commit
+	move.l	(a0)+,(a4)
+	move.l	(a1)+,4(a4)
+	move.w	(a2)+,8(a4)
+	lea	12(a4),a4
+	dbf	d6,.commit
+	moveq	#1,d0
+	bra.b	.return
+.failed
+	moveq	#0,d0
+.return
+	movem.l	(a7)+,d1-d7/a0-a6
+	rts
+
+
+; IN: D0.w = number of six-byte stored waypoint records, A2 source, A1 dest
+; OUT: A2/A1 advanced; D0 exhausted.
+;
+; TEST 25 controlled hypothesis from the established static-data analysis:
+;   +0.w X        -> NEG.W
+;   +2.b progress -> NOT.B
+;   +3.b Y        -> NEG.B
+;   +4.w link     -> ADDI.W #13
+;
+; This replaces test 24's whole-record bytewise NOT.  The debugger proof block
+; compares this relocated form against the game's own normalised retail-template
+; bytes so the transform can be accepted or rejected from live evidence.
+copy_normalize_waypoint_records
+	tst.w	d0
+	beq.b	.done
+	subq.w	#1,d0
+.record
+	move.w	(a2)+,d2
+	neg.w	d2
+	move.w	d2,(a1)+
+
+	move.b	(a2)+,d2
+	not.b	d2
+	move.b	d2,(a1)+
+
+	move.b	(a2)+,d2
+	neg.b	d2
+	move.b	d2,(a1)+
+
+	move.w	(a2)+,d2
+	addi.w	#13,d2
+	move.w	d2,(a1)+
+	dbf	d0,.record
+.done
+	rts
+
+;---------------------------------------------------------------------------
+; TEST 25 DEBUGGER PROOF BLOCK — $7FF00..$7FFFF
+;
+; +00.l "IHDG" once captured during the first on-track lap-total draw
+; +04.w proof version (=1)
+; +06.w active event index
+; +08.w custom circuit index or $FFFF
+; +0A.w structural template index or $FFFF
+; +0C..+2F active race route descriptors ($24 bytes)
+; +30..+47 first 24 bytes of relocated/custom Route A
+; +48..+5F first 24 bytes at the retail template's Route-A address after the
+;            game's own startup processing
+; +60..+8B active race bytes $24..$4F (HUD/preview/marker presentation fields)
+; +F0.w flags: bit0 custom resource, bit1 MiniMap recognised, bit2 map, bit3 MiniMap copied
+;
+; The block is diagnostic only and is outside the test-25 route arena.
+;---------------------------------------------------------------------------
+clear_custom_diag
+	movem.l	d0/a0,-(a7)
+	lea	CUSTOM_DIAG_BASE,a0
+	moveq	#63,d0
+.clear
+	clr.l	(a0)+
+	dbf	d0,.clear
+	movem.l	(a7)+,d0/a0
+	rts
+
+capture_custom_route_diag
+	movem.l	d0-d7/a0-a6,-(a7)
+	movea.l	a0,a5			; active race record supplied by custom_lap_total
+	lea	CUSTOM_DIAG_BASE,a6
+	cmp.l	#$49484447,(a6)		; "IHDG"
+	beq.w	.done
+	move.l	#$49484447,(a6)
+	move.w	#1,4(a6)
+	moveq	#0,d7
+	move.w	active_event_index(pc),d7
+	move.w	d7,6(a6)
+	move.w	#$FFFF,8(a6)
+	move.w	#$FFFF,$0A(a6)
+	cmp.w	#RACE_RECORD_COUNT-1,d7
+	bhi.b	.copy_desc
+	move.w	d7,d0
+	add.w	d0,d0
+	lea	custom_circuit_by_event(pc),a0
+	move.w	0(a0,d0.w),8(a6)
+	lea	playlist_template_by_event(pc),a0
+	move.w	0(a0,d0.w),$0A(a6)
+
+.copy_desc
+	movea.l	a5,a0
+	lea	$0C(a6),a1
+	moveq	#8,d0
+.copy_desc_loop
+	move.l	(a0)+,(a1)+
+	dbf	d0,.copy_desc_loop
+
+	; First 24 bytes from the active/custom Route A.
+	movea.l	(a5),a0
+	move.l	a0,d0
+	beq.b	.template_sample
+	lea	$30(a6),a1
+	moveq	#5,d0
+.copy_custom
+	move.l	(a0)+,(a1)+
+	dbf	d0,.copy_custom
+
+.template_sample
+	moveq	#0,d0
+	move.w	$0A(a6),d0
+	cmp.w	#TRACK_COUNT-1,d0
+	bhi.b	.presentation_sample
+	mulu	#RACE_RECORD_SIZE,d0
+	lea	track_template_buffer(pc),a0
+	adda.l	d0,a0
+	movea.l	(a0),a0
+	move.l	a0,d0
+	beq.b	.presentation_sample
+	lea	$48(a6),a1
+	moveq	#5,d0
+.copy_template
+	move.l	(a0)+,(a1)+
+	dbf	d0,.copy_template
+
+.presentation_sample
+	lea	$24(a5),a0
+	lea	$60(a6),a1
+	moveq	#10,d0			; 11 longs = $2C bytes ($24..$4F)
+.copy_presentation
+	move.l	(a0)+,(a1)+
+	dbf	d0,.copy_presentation
+.done
+	movem.l	(a7)+,d0-d7/a0-a6
 	rts
 
 
@@ -1790,27 +2290,25 @@ apply_pending_region_map
 arm_region_map_override
 	movem.l	d0-d5/a0-a4,-(a7)
 	move.w	d1,d5
+
+	; TEST 25: resource $16 is known.  Match its own directory entry directly.
+	; The earlier sector scan could stop on another entry sharing the same first
+	; sector and therefore miss the map even though $16 was the real request.
 	lea	RESOURCE_TABLE_RUNTIME.w,a1
-	moveq	#RESOURCE_ENTRY_COUNT-1,d4
-.find_resource
-	cmp.w	2(a1),d5
-	bne.b	.next_resource
+	adda.w	#REGION_MAP_RESOURCE_ID*RESOURCE_ENTRY_SIZE,a1
 	cmp.w	#REGION_MAP_RESOURCE_ID,(a1)
+	bne.b	.done
+	cmp.w	2(a1),d5
 	bne.b	.done
 	cmp.l	#REGION_MAP_RESOURCE_SIZE,6(a1)
 	bne.b	.done
 
-	; Resolve current event slot from the runtime-proven A6+$3DD6 pointer.
-	; If called outside a valid event window, fall back to slot 0 / USA.
+	; Follow the tracked event selector.  Invalid state fails back to event 0.
 	moveq	#0,d3
-	move.l	$3DD6(a6),d0
-	cmp.l	#RACE_RUNTIME_BASE,d0
-	blo.b	.have_event
-	cmp.l	#RACE_RUNTIME_BASE+(RACE_RECORD_COUNT*RACE_RECORD_SIZE),d0
-	bhs.b	.have_event
-	sub.l	#RACE_RUNTIME_BASE,d0
-	divu	#RACE_RECORD_SIZE,d0
-	move.w	d0,d3
+	move.w	active_event_index(pc),d3
+	cmp.w	#RACE_RECORD_COUNT-1,d3
+	bls.b	.have_event
+	moveq	#0,d3
 .have_event
 
 	lea	region_selector(pc),a2
@@ -1820,7 +2318,7 @@ arm_region_map_override
 	bls.b	.map_ok
 	moveq	#0,d0
 .map_ok
-	add.w	d0,d0			; word-offset table
+	add.w	d0,d0
 	lea	region_map_name_offsets(pc),a2
 	move.w	0(a2,d0.w),d1
 	lea	region_map_name_offsets(pc),a3
@@ -1831,10 +2329,9 @@ arm_region_map_override
 	lea	pending_region_map_dest(pc),a2
 	lea	REGION_MAP_FRAME_OFFSET(a0),a3
 	move.l	a3,(a2)
-	bra.b	.done
-.next_resource
-	lea	RESOURCE_ENTRY_SIZE(a1),a1
-	dbf	d4,.find_resource
+
+	lea	CUSTOM_DIAG_FLAGS,a4
+	ori.w	#$0004,(a4)		; region-map arm observed
 .done
 	movem.l	(a7)+,d0-d5/a0-a4
 	rts
@@ -2025,39 +2522,29 @@ arm_circuit_resource_override
 	move.l	a0,a4			; eventual decompressed destination
 	move.w	d1,d7			; requested disk sector
 
-	lea	RESOURCE_TABLE_RUNTIME.w,a1
-	moveq	#RESOURCE_ENTRY_COUNT-1,d6
-
-.find_resource
-	cmp.w	2(a1),d7
-	bne.w	.next_resource
-
-	moveq	#0,d2
-	move.w	(a1),d2		; requested resource id
-	move.l	6(a1),d3		; expected decompressed size
-
-	; If the current championship event is a playlist-v2 custom circuit, map
-	; this request relative to THAT event's structural race record and use the
-	; circuit_10..99 folder rather than the retail template folder.
-	move.l	$3DD6(a6),d0
-	cmp.l	#RACE_RUNTIME_BASE,d0
-	blo.w	.stock_mapping
-	cmp.l	#RACE_RUNTIME_BASE+(RACE_RECORD_COUNT*RACE_RECORD_SIZE),d0
-	bhs.w	.stock_mapping
-	movea.l	d0,a3
-	sub.l	#RACE_RUNTIME_BASE,d0
-	divu	#RACE_RECORD_SIZE,d0
-	moveq	#0,d1
+	; First resolve the tracked playlist-v2 custom event.  For a custom event we
+	; know the four structural resource IDs and the preview resource ID exactly,
+	; so compare THEIR directory sectors directly rather than scanning for the
+	; first arbitrary entry with the same sector.
+	moveq	#0,d0
+	move.w	active_event_index(pc),d0
+	cmp.w	#RACE_RECORD_COUNT-1,d0
+	bhi.w	.stock_scan
 	move.w	d0,d1
 	add.w	d1,d1
 	lea	custom_circuit_by_event(pc),a2
 	move.w	0(a2,d1.w),d5
 	cmp.w	#TRACK_COUNT,d5
-	blo.w	.stock_mapping
+	blo.w	.stock_scan
 	cmp.w	#PLAYLIST_MAX_CIRCUIT,d5
-	bhi.w	.stock_mapping
+	bhi.w	.stock_scan
 
-	; Derive this event's structural base resource ID from race+$36.
+	move.l	d0,d1
+	mulu	#RACE_RECORD_SIZE,d1
+	lea	RACE_RUNTIME_BASE.w,a3
+	adda.l	d1,a3
+
+	; Structural base resource ID from race+$36.
 	move.l	$36(a3),d0
 	sub.l	#RESOURCE_TABLE_RUNTIME+2,d0
 	bmi.w	.done
@@ -2067,16 +2554,38 @@ arm_circuit_resource_override
 	swap	d0
 	tst.w	d0
 	bne.w	.done
-	moveq	#0,d0
-	move.w	d1,d0			; structural base resource ID
-	moveq	#0,d1
-	move.w	d2,d1
-	sub.w	d0,d1
-	cmp.w	#3,d1
-	bls.b	.custom_base_resource
+	moveq	#0,d4
+	move.w	d1,d4			; structural base ID
 
-	; The miniature preview is a separate resource reached through race+$46's
-	; 12-byte descriptor. Match its resource-table +2 pointer explicitly.
+	; Test base+0..+3 by their exact resource-table entries.
+	moveq	#0,d6
+.custom_base_loop
+	move.l	d4,d0
+	add.w	d6,d0
+	mulu	#RESOURCE_ENTRY_SIZE,d0
+	lea	RESOURCE_TABLE_RUNTIME.w,a1
+	adda.l	d0,a1
+	cmp.w	2(a1),d7
+	bne.b	.custom_base_next
+	move.l	6(a1),d3
+	move.w	d6,d0
+	add.w	d0,d0
+	lea	circuit_resource_leaf_offsets(pc),a2
+	move.w	0(a2,d0.w),d1
+	lea	circuit_resource_leaf_offsets(pc),a1
+	adda.w	d1,a1
+	move.w	d5,d0
+	bsr.w	build_circuit_path
+	moveq	#0,d6			; ordinary custom circuit resource
+	bra.w	.validate_and_arm_custom
+.custom_base_next
+	addq.w	#1,d6
+	cmp.w	#4,d6
+	blo.b	.custom_base_loop
+
+	; Preview: race+$46 points to a 12-byte descriptor whose +6 long points at
+	; +2 inside the exact resource-table entry.  Resolve that ID then compare its
+	; own sector with this request.
 	movea.l	$46(a3),a0
 	move.l	a0,d0
 	beq.w	.done
@@ -2089,29 +2598,60 @@ arm_circuit_resource_override
 	swap	d0
 	tst.w	d0
 	bne.w	.done
-	cmp.w	d2,d1
+	moveq	#0,d0
+	move.w	d1,d0
+	mulu	#RESOURCE_ENTRY_SIZE,d0
+	lea	RESOURCE_TABLE_RUNTIME.w,a1
+	adda.l	d0,a1
+	cmp.w	2(a1),d7
 	bne.w	.done
+	move.l	6(a1),d3
+	; MiniMap resources are decrunched from the Load hook staging buffer into
+	; the resource table runtime pointer.  Apply preview.bin to that final
+	; destination on the following Load call, after retail decrunch completes.
+	movea.l	14(a1),a4
+	move.l	a4,d0
+	beq.w	.done
 	lea	circuit_leaf_preview(pc),a1
-	bra.b	.custom_build_name
-
-.custom_base_resource
-	add.w	d1,d1
-	lea	circuit_resource_leaf_offsets(pc),a2
-	move.w	0(a2,d1.w),d0
-	lea	circuit_resource_leaf_offsets(pc),a1
-	adda.w	d0,a1
-
-.custom_build_name
 	move.w	d5,d0
 	bsr.w	build_circuit_path
-	bra.w	.validate_and_arm
+	moveq	#1,d6			; MiniMap preview
+	bra.b	.validate_and_arm_custom
 
-.stock_mapping
-	; Existing test-16 direct package bridge for circuit_00..09.
+.validate_and_arm_custom
+	move.l	a0,a3
+	move.l	_resload(pc),a2
+	jsr	resload_GetFileSize(a2)
+	cmp.l	d3,d0
+	bne.w	.done
+	lea	pending_circuit_name(pc),a0
+	move.l	a3,(a0)
+	lea	pending_circuit_dest(pc),a0
+	move.l	a4,(a0)
+	lea	pending_circuit_size(pc),a0
+	move.l	d3,(a0)
+	lea	CUSTOM_DIAG_FLAGS,a0
+	ori.w	#$0001,(a0)		; custom resource arm observed
+	tst.w	d6
+	beq.b	.custom_arm_done
+	ori.w	#$0002,(a0)		; MiniMap preview arm observed
+.custom_arm_done
+	bra.w	.done
+
+.stock_scan
+	; Existing circuit_00..09 bridge: retain its proven generic scan unchanged.
+	lea	RESOURCE_TABLE_RUNTIME.w,a1
+	moveq	#RESOURCE_ENTRY_COUNT-1,d6
+.find_resource
+	cmp.w	2(a1),d7
+	bne.w	.next_resource
+	moveq	#0,d2
+	move.w	(a1),d2
+	move.l	6(a1),d3
+
 	lea	circuit_base_resource_ids(pc),a2
 	moveq	#0,d4
 	moveq	#TRACK_COUNT-1,d5
-
 .find_base
 	moveq	#0,d0
 	move.w	d2,d0
@@ -2124,7 +2664,6 @@ arm_circuit_resource_override
 	lea	preview_resource_ids(pc),a2
 	moveq	#0,d4
 	moveq	#TRACK_COUNT-1,d5
-
 .find_preview
 	cmp.w	(a2)+,d2
 	beq.b	.have_preview
@@ -2139,21 +2678,16 @@ arm_circuit_resource_override
 	lea	circuit_resource_leaf_offsets(pc),a1
 	adda.w	d1,a1
 	bra.b	.build_stock_name
-
 .have_preview
 	lea	circuit_leaf_preview(pc),a1
-
 .build_stock_name
 	move.w	d4,d0
 	bsr.w	build_circuit_path
-
-.validate_and_arm
 	move.l	a0,a3
 	move.l	_resload(pc),a2
 	jsr	resload_GetFileSize(a2)
 	cmp.l	d3,d0
 	bne.b	.done
-
 	lea	pending_circuit_name(pc),a0
 	move.l	a3,(a0)
 	lea	pending_circuit_dest(pc),a0
@@ -2161,11 +2695,9 @@ arm_circuit_resource_override
 	lea	pending_circuit_size(pc),a0
 	move.l	d3,(a0)
 	bra.b	.done
-
 .next_resource
 	lea	RESOURCE_ENTRY_SIZE(a1),a1
 	dbf	d6,.find_resource
-
 .done
 	movem.l	(a7)+,d0-d7/a0-a6
 	rts
@@ -2322,16 +2854,6 @@ _flushcache:
 	jsr	resload_FlushCache(a2)
 	move.l	(a7)+,a2
 	rts
-
-;---------------------------------------------------------------------------
-; Writable per-event backing storage for playlist-v2 custom-library circuits.
-;---------------------------------------------------------------------------
-custom_pit_storage
-	ds.b	RACE_RECORD_COUNT*CUSTOM_PIT_SLOT_SIZE
-	even
-custom_waypoint_storage
-	ds.b	RACE_RECORD_COUNT*CUSTOM_WAYPOINT_SLOT_SIZE
-	even
 
 ;======================================================================
 

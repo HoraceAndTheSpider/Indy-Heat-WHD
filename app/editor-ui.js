@@ -1,5 +1,5 @@
 /*
- * Indy Heat Amiga Circuit Editor — consolidated UI module v0.26
+ * Indy Heat Amiga Circuit Editor — consolidated UI module v0.32
  *
  * This replaces the historical corrective-layer file layering. The two internal scopes are deliberately retained to preserve the
  * already accepted behaviour while presenting one stable runtime module.
@@ -9,7 +9,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.26 — consolidated UI coordination.
+ * Indy Heat Circuit Editor v0.32 — consolidated UI coordination.
  *
  * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
  * opacity policy and Race presentation controls already accepted by the project.
@@ -120,8 +120,8 @@ function presentation(){
 
 function setVersionLabel(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.26';
-  document.title='Indy Heat Amiga – Circuit Editor v0.26';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.32';
+  document.title='Indy Heat Amiga – Circuit Editor v0.32';
 }
 
 function installStyle(){
@@ -882,7 +882,7 @@ else
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.26 — consolidated accepted refinements.
+ * Indy Heat Circuit Editor v0.32 — consolidated accepted refinements.
  *
  * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
  * Race-to-Garage MiniMap palette map and final editor-mode ordering.
@@ -998,8 +998,8 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.26';
-  document.title='Indy Heat Amiga – Circuit Editor v0.26';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.32';
+  document.title='Indy Heat Amiga – Circuit Editor v0.32';
 }
 
 

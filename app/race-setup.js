@@ -367,3 +367,449 @@ function init(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,0));else setTimeout(init,0);
 })(typeof globalThis!=='undefined'?globalThis:this);
+
+/* Gasoline Alley circuit-name package support. */
+(function(root){
+'use strict';
+
+/*
+ * Gasoline Alley circuit-name authoring (canonical race-setup extension).
+ *
+ * Runtime fact inherited from the current source/wiki state:
+ *   race+$70..+$81 is the 18-byte Gasoline Alley display-name field.
+ *   Bytes 0..16 are display data and byte 17 is NUL. Retail data uses '<'
+ *   and '@' as invisible alignment/fill glyphs around the readable name.
+ *
+ * Package compatibility:
+ *   race_setup.bin deliberately remains the proven $68 format.
+ *   The editor adds an optional ninth package sidecar, name.bin, containing the
+ *   exact 18 raw bytes. Older editor builds ignore the extra ZIP member.
+ *   Name authoring is kept as package metadata instead of mutating the shared
+ *   retail template record, so switching imported packages cannot leak a name
+ *   into the host circuit used by another package.
+ */
+
+const NAME_OFFSET=0x70;
+const NAME_SIZE=0x12;
+const NAME_DISPLAY_SIZE=0x11;
+const NAME_LEFT_FILL=0x3c; // '<'
+const NAME_RIGHT_FILL=0x40; // '@'
+
+function decodeNameBytes(bytes){
+  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes||[]);
+  let s='';
+  for(let i=0;i<Math.min(NAME_DISPLAY_SIZE,bytes.length);i++){
+    const c=bytes[i];
+    if(c===0)break;
+    if(c===NAME_LEFT_FILL||c===NAME_RIGHT_FILL)s+=' ';
+    else if(c>=32&&c<=126)s+=String.fromCharCode(c);
+  }
+  return s.replace(/\s+/g,' ').trim();
+}
+
+function encodeNameBytes(value){
+  const name=String(value??'').replace(/\s+/g,' ').trim();
+  if(!name)throw new Error('Circuit name must not be blank');
+  if(name.length>NAME_DISPLAY_SIZE)throw new Error(`Circuit name is limited to ${NAME_DISPLAY_SIZE} characters`);
+  for(let i=0;i<name.length;i++){
+    const c=name.charCodeAt(i);
+    if(c<32||c>126||c===NAME_LEFT_FILL||c===NAME_RIGHT_FILL)
+      throw new Error("Circuit name must use printable ASCII and cannot contain '<' or '@'");
+  }
+  const out=new Uint8Array(NAME_SIZE);
+  const free=NAME_DISPLAY_SIZE-name.length;
+  const left=Math.floor(free/2),right=free-left;
+  let p=0;
+  for(let i=0;i<left;i++)out[p++]=NAME_LEFT_FILL;
+  for(let i=0;i<name.length;i++)out[p++]=name.charCodeAt(i);
+  for(let i=0;i<right;i++)out[p++]=NAME_RIGHT_FILL;
+  out[NAME_DISPLAY_SIZE]=0;
+  return out;
+}
+
+function addNameFileToZipBytes(P,zipBytes,circuitIndex,nameBytes){
+  if(!P||typeof P.readZipStore!=='function'||typeof P.zipStore!=='function'||typeof P.circuitFolder!=='function')
+    throw new Error('Circuit package tools are unavailable');
+  if(!(nameBytes instanceof Uint8Array))nameBytes=new Uint8Array(nameBytes||[]);
+  if(nameBytes.length!==NAME_SIZE)throw new Error(`name.bin must be exactly $${NAME_SIZE.toString(16).toUpperCase()} bytes`);
+  const entries=P.readZipStore(zipBytes);
+  entries.set(`${P.circuitFolder(circuitIndex)}/name.bin`,nameBytes.slice());
+  return P.zipStore([...entries.entries()].map(([name,data])=>({name,data})));
+}
+
+const api={NAME_OFFSET,NAME_SIZE,NAME_DISPLAY_SIZE,decodeNameBytes,encodeNameBytes,addNameFileToZipBytes};
+root.IndyHeatCircuitNameTools=api;
+if(typeof document==='undefined')return;
+
+const $=id=>document.getElementById(id);
+let bootTimer=null;
+let zipHookBusy=false;
+const authoredNames=new Map();
+let pendingImportedName=null;
+const RETAIL_ROUTE_COUNTS=Object.freeze([
+  Object.freeze([46,46,45]), // Illinois
+  Object.freeze([55,61,49]), // New Jersey
+  Object.freeze([56,67,47]), // West Canada
+  Object.freeze([63,67,66]), // South California
+  Object.freeze([76,77,53]), // East Canada
+  Object.freeze([68,70,54]), // Indianapolis
+  Object.freeze([71,77,71]), // Michigan
+  Object.freeze([77,73,71]), // Colorado
+  Object.freeze([49,46,42]), // North California
+  Object.freeze([82,80,77])  // Kentucky
+]);
+
+function tools(){return root.IndyHeatTools||null;}
+function packageTools(){return root.IndyHeatCircuitPackage||null;}
+function capture(){return root.IndyHeatRaceSetupCapture||null;}
+function trackIndex(){return Number($('trackSelect')?.value||0);}
+function primaryModel(){const C=capture();return C?.model||C?.layerModel||C?.coreModel||C?.models?.[0]||null;}
+function recordsFor(model){
+  const C=capture(),T=tools();if(!model||!T)return [];
+  let records=C?.recordsByMain?.get(model.main)||null;
+  if(!records){records=T.parseRaceRecords(model.main);C?.recordsByMain?.set(model.main,records);}
+  for(const r of records){
+    if(r.baseResourceId==null&&typeof T.raceBaseResourceId==='function')
+      r.baseResourceId=T.raceBaseResourceId(r,model.resourceTableOffset+0x1000);
+  }
+  return records;
+}
+function recordFor(model,index=trackIndex()){
+  const T=tools();if(!model||!T)return null;
+  const base=T.TRACK_BASE_IDS?.[index];
+  return recordsFor(model).find(r=>r.baseResourceId===base)||null;
+}
+function currentCircuitIndex(){
+  const n=Number($('circuitNumber')?.value);
+  return Number.isInteger(n)&&n>=0&&n<=99?n:trackIndex();
+}
+function selectedOption(){return $('trackSelect')?.selectedOptions?.[0]||null;}
+function sourceIdentity(){
+  const o=selectedOption();
+  if(!o)return `retail:${trackIndex()}`;
+  const packageKey=o.dataset?.indyheatPackageKey;
+  if(packageKey)return `package:${packageKey}`;
+  if(o.dataset?.indyheatCustom==='1')return `custom:${trackIndex()}`;
+  const logical=o.dataset?.indyheatRetailIndex;
+  return `retail:${Number(logical==null?o.value:logical)}`;
+}
+function currentNameKey(){return `${sourceIdentity()}|circuit:${currentCircuitIndex()}`;}
+function normalRetailSource(){
+  const o=selectedOption();
+  return !!o&&o.dataset?.indyheatCustom!=='1'&&!o.dataset?.indyheatPackageKey;
+}
+function selectedSourceLabel(){
+  const o=selectedOption();
+  return String(o?.dataset?.indyheatOriginalText||o?.textContent||'').replace(/\s+/g,' ').trim();
+}
+function loadedModels(){
+  const C=capture(),out=[];
+  for(const m of [C?.coreModel,C?.model,C?.layerModel,...(C?.models||[])])
+    if(m&&!out.includes(m))out.push(m);
+  return out;
+}
+function retailWaypointExport(P,templateIndex){
+  const T=tools(),expected=RETAIL_ROUTE_COUNTS[templateIndex];
+  if(!T||!P||!expected)return null;
+  let fallback=null;
+  for(const model of loadedModels()){
+    const record=recordFor(model,templateIndex);
+    if(!record)continue;
+    try{
+      record.waypointDescriptors=T.parseWaypointDescriptors(model.main,record);
+      const counts=(record.waypointDescriptors||[]).map(r=>r.points.length);
+      const candidate={bytes:P.encodeWaypointsBin(record,model.main),counts};
+      if(!fallback)fallback=candidate;
+      if(expected.every((v,i)=>v===counts[i]))return {...candidate,repaired:true};
+    }catch(_e){}
+  }
+  return fallback;
+}
+function nameBytesFor(model,record){
+  if(!model||!record)return null;
+  return model.main.slice(record.offset+NAME_OFFSET,record.offset+NAME_OFFSET+NAME_SIZE);
+}
+function currentNameBytes(){
+  const authored=authoredNames.get(currentNameKey());
+  if(authored)return authored.slice();
+  const m=primaryModel(),r=recordFor(m),b=nameBytesFor(m,r);
+  if(!b||b.length!==NAME_SIZE)throw new Error('Current circuit name field is unavailable');
+  return b;
+}
+function currentNameIsAuthored(){return authoredNames.has(currentNameKey());}
+function currentName(){return decodeNameBytes(currentNameBytes());}
+function commitPendingImportedName(){
+  const pending=pendingImportedName;if(!pending||pending.circuitIndex==null)return false;
+  if(currentCircuitIndex()!==pending.circuitIndex)return false;
+  const o=selectedOption();
+  if(!o||(o.dataset?.indyheatCustom!=='1'&&!o.dataset?.indyheatPackageKey))return false;
+  const key=currentNameKey();
+  if(pending.bytes)authoredNames.set(key,pending.bytes.slice());else authoredNames.delete(key);
+  pendingImportedName=null;
+  return true;
+}
+function setRaceStatus(text){const e=$('raceSetupStatus');if(e)e.textContent=text;}
+function setTopStatus(text,bad=false){
+  const e=$('circuitPackageTopStatus');if(!e)return;
+  e.textContent=text;e.classList.toggle('bad',!!bad);
+}
+function updateCounter(){
+  const input=$('raceCircuitName'),out=$('raceCircuitNameCount');if(!input||!out)return;
+  out.textContent=`${input.value.length}/${NAME_DISPLAY_SIZE}`;
+}
+function syncNameUi(force=false){
+  commitPendingImportedName();
+  const input=$('raceCircuitName');if(!input)return false;
+  if(!force&&document.activeElement===input&&input.dataset.editing==='1')return true;
+  try{input.value=currentName();}catch(_e){return false;}
+  input.dataset.editing='';updateCounter();
+  const revert=$('raceRevert');if(revert&&currentNameIsAuthored())revert.disabled=false;
+  return true;
+}
+function installNameUi(){
+  const grid=$('raceLaps')?.closest('.raceSetupGrid');
+  if(!grid)return false;
+  if(!$('raceCircuitName')){
+    const label=document.createElement('label');label.className='raceSetupWide';
+    label.innerHTML=`Circuit name <span style="display:flex;gap:7px;align-items:center"><input id="raceCircuitName" type="text" maxlength="${NAME_DISPLAY_SIZE}" autocomplete="off" spellcheck="false" title="Gasoline Alley circuit name; 1–${NAME_DISPLAY_SIZE} printable ASCII characters"><output id="raceCircuitNameCount" style="min-width:4.5ch;text-align:right"></output></span><span class="muted" style="font-size:10px;line-height:1.25">Displayed on Gasoline Alley. Exported as the optional 18-byte name.bin package sidecar.</span>`;
+    grid.insertBefore(label,grid.firstChild);
+    const input=$('raceCircuitName');
+    input.addEventListener('input',()=>{input.dataset.editing='1';updateCounter();});
+  }
+  const apply=$('raceApply');
+  if(apply&&!apply.dataset.circuitNameHook){
+    apply.dataset.circuitNameHook='1';
+    apply.addEventListener('click',e=>{
+      try{
+        const bytes=encodeNameBytes($('raceCircuitName').value);
+        authoredNames.set(currentNameKey(),bytes);
+        $('raceCircuitName').dataset.editing='';
+      }catch(err){
+        e.preventDefault();e.stopImmediatePropagation();setRaceStatus(`ERROR: ${err.message}`);
+      }
+    },true);
+    apply.addEventListener('click',()=>setTimeout(()=>syncNameUi(true),0));
+  }
+  const revert=$('raceRevert');
+  if(revert&&!revert.dataset.circuitNameHook){
+    revert.dataset.circuitNameHook='1';
+    revert.addEventListener('click',()=>{
+      authoredNames.delete(currentNameKey());
+      setTimeout(()=>syncNameUi(true),0);
+    },true);
+  }
+  if(!$('trackSelect')?.dataset.circuitNameHook){
+    const sel=$('trackSelect');if(sel){sel.dataset.circuitNameHook='1';sel.addEventListener('change',()=>setTimeout(()=>syncNameUi(true),0));}
+  }
+  if(!$('circuitNumber')?.dataset.circuitNameHook){
+    const n=$('circuitNumber');if(n){n.dataset.circuitNameHook='1';n.addEventListener('change',()=>setTimeout(()=>syncNameUi(true),0));}
+  }
+  syncNameUi();
+  return true;
+}
+
+function installNameImport(){
+  const input=$('circuitPackageInput'),P=packageTools();if(!input||!P)return false;
+  if(input.dataset.circuitNameHook)return true;
+  input.dataset.circuitNameHook='1';
+  input.addEventListener('change',e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    (async()=>{
+      try{
+        const entries=P.readZipStore(new Uint8Array(await file.arrayBuffer()));
+        let circuitIndex=null,hit=null;
+        for(const [name,data] of entries){
+          const root=/^circuit_(\d{2})\//.exec(name);if(root&&circuitIndex==null)circuitIndex=Number(root[1]);
+          const m=/^circuit_(\d{2})\/name\.bin$/.exec(name);
+          if(m){hit={circuitIndex:Number(m[1]),bytes:data};break;}
+        }
+        if(hit){
+          if(hit.bytes.length!==NAME_SIZE)throw new Error(`name.bin must be exactly $${NAME_SIZE.toString(16).toUpperCase()} bytes`);
+          if(hit.bytes[NAME_DISPLAY_SIZE]!==0)throw new Error('name.bin byte 17 must be the terminating NUL');
+          for(let i=0;i<NAME_DISPLAY_SIZE;i++)if(hit.bytes[i]<32||hit.bytes[i]>126)throw new Error('name.bin display bytes must be printable ASCII');
+          pendingImportedName={circuitIndex:hit.circuitIndex,bytes:hit.bytes.slice()};
+        }else pendingImportedName={circuitIndex,bytes:null};
+        setTimeout(()=>{commitPendingImportedName();syncNameUi(true);},50);
+        setTimeout(()=>{commitPendingImportedName();syncNameUi(true);},250);
+      }catch(err){setTopStatus(`ERROR: ${err.message}`,true);}
+    })();
+  },true);
+  return true;
+}
+
+function liveTextValue(id){
+  const el=$(id);
+  if(!el)return null;
+  const text=String(el.value??'').trim();
+  return text===''?null:text;
+}
+function liveIntegerOr(id,fallback,label,min=-32768,max=32767){
+  const text=liveTextValue(id);
+  if(text==null)return Number(fallback);
+  const n=Number(text);
+  if(!Number.isInteger(n)||n<min||n>max)throw new Error(`${label} must be ${min}..${max}`);
+  return n;
+}
+function liveFixed16Or(id,fallbackRaw,label){
+  const text=liveTextValue(id);
+  if(text==null)return Number(fallbackRaw);
+  const n=Number(text);
+  if(!Number.isFinite(n))throw new Error(`${label} must be numeric`);
+  const raw=Math.round(n*65536);
+  if(raw<-0x80000000||raw>0x7fffffff)throw new Error(`${label} is outside signed 16.16 range`);
+  return raw;
+}
+function snapshotLiveRaceSetup(templateIndex){
+  const R=root.IndyHeatRaceSetupTools,model=primaryModel(),record=recordFor(model,templateIndex);
+  if(!R||!model||!record)throw new Error('Live race-setup state is unavailable');
+  const setup=R.parseRaceSetup(model.main,record);
+  R.writeCommon(model.main,record.offset,{
+    laps:liveIntegerOr('raceLaps',setup.laps,'Lap total',1,99),
+    flagX:liveIntegerOr('raceFlagX',setup.flagX,'Flag X'),
+    flagY:liveIntegerOr('raceFlagY',setup.flagY,'Flag Y'),
+    startX:liveFixed16Or('raceStartX',setup.startX,'Start X'),
+    startY:liveFixed16Or('raceStartY',setup.startY,'Start Y'),
+    startOrient:liveIntegerOr('raceStartOrient',setup.startOrient,'Start orientation')
+  });
+  const pitIndex=liveIntegerOr('racePitSlot',0,'Pit slot',0,3);
+  const pit=setup.pits[pitIndex];
+  R.writePit(model.main,setup.pitFileOffset,pitIndex,{
+    serviceX:liveFixed16Or('raceServiceX',pit.serviceX,'Pit service X'),
+    serviceY:liveFixed16Or('raceServiceY',pit.serviceY,'Pit service Y'),
+    boardX:liveFixed16Or('raceBoardX',pit.boardX,'Pit board X'),
+    boardY:liveFixed16Or('raceBoardY',pit.boardY,'Pit board Y'),
+    screenX:liveIntegerOr('raceScreenX',pit.screenX,'Pit screen X'),
+    screenY:liveIntegerOr('raceScreenY',pit.screenY,'Pit screen Y'),
+    slotWord:liveIntegerOr('raceSlotWord',pit.slotWord,'Pit slot/side word')
+  });
+  return R.makeCompactBin(model.main,record);
+}
+function resourceModel(){
+  const C=capture();return C?.layerModel||C?.model||C?.coreModel||C?.models?.[0]||null;
+}
+function directWaypointExport(P,templateIndex){
+  const T=tools();if(!P||!T)throw new Error('Waypoint export tools are unavailable');
+  if(normalRetailSource()){
+    const exact=retailWaypointExport(P,templateIndex);
+    if(exact)return exact;
+  }
+  const models=loadedModels();
+  for(const model of models){
+    const record=recordFor(model,templateIndex);if(!record)continue;
+    try{
+      record.waypointDescriptors=T.parseWaypointDescriptors(model.main,record);
+      const counts=(record.waypointDescriptors||[]).map(r=>r.points.length);
+      return {bytes:P.encodeWaypointsBin(record,model.main),counts,repaired:false};
+    }catch(_e){}
+  }
+  throw new Error('Waypoint data for the selected circuit is unavailable');
+}
+function livePresentationBin(P,templateIndex){
+  const model=primaryModel(),record=recordFor(model,templateIndex);
+  if(!model||!record)throw new Error('Presentation state is unavailable');
+  const base=P.readPresentation(model.main,record.offset);
+  const mapText=liveTextValue('circuitMapId');
+  const mapId=mapText==null?0:Number(mapText);
+  return P.encodePresentationBin({
+    mapId,
+    presentation:{
+      markerX:liveIntegerOr('circuitMarkerX',base.markerX,'Regional marker X'),
+      markerY:liveIntegerOr('circuitMarkerY',base.markerY,'Regional marker Y'),
+      markerFrame:liveIntegerOr('circuitMarkerFrame',base.markerFrame,'Regional marker frame',0,3),
+      lapDisplayX:liveIntegerOr('circuitHudX',base.lapDisplayX,'Lap-total display X'),
+      lapDisplayY:liveIntegerOr('circuitHudY',base.lapDisplayY,'Lap-total display Y')
+    }
+  });
+}
+function directPackageFiles(P,circuitIndex,templateIndex,nameBytes,raceSetupBytes){
+  const pm=primaryModel(),rm=resourceModel();
+  if(!pm||!rm)throw new Error('Circuit resource state is unavailable');
+  const pr=recordFor(pm,templateIndex),rr=recordFor(rm,templateIndex);
+  if(!pr||!rr)throw new Error('Selected circuit record is unavailable');
+  const base=rr.baseResourceId;
+  if(base==null)throw new Error('Selected circuit resource base is unavailable');
+  const preview=P.resolvePreviewResource(pm,pr);
+  if(!preview?.resource?.data)throw new Error('Mini-map resource is unavailable');
+  const wp=directWaypointExport(P,templateIndex);
+  const presentationBin=livePresentationBin(P,templateIndex);
+  const files=P.makePackageFiles({
+    circuitIndex,
+    resources:{
+      background:rm.getResource(base).data.slice(),
+      foreground:rm.getResource(base+1).data.slice(),
+      surface:rm.getResource(base+2).data.slice(),
+      recovery:rm.getResource(base+3).data.slice()
+    },
+    previewBin:preview.resource.data.slice(),
+    waypointsBin:wp.bytes,
+    raceSetupBin:raceSetupBytes,
+    presentationBin
+  });
+  const folder=P.circuitFolder(circuitIndex);
+  files.push({name:`${folder}/name.bin`,data:nameBytes.slice()});
+  files.push({name:`${folder}/template.bin`,data:Uint8Array.of(0,templateIndex)});
+  return {files,waypointCounts:wp.counts,presentationBin,previewBytes:preview.resource.data.slice()};
+}
+function verifyDirectPackage(P,zipBytes,circuitIndex,expectedName,expectedLaps,expectedMapId){
+  const folder=P.circuitFolder(circuitIndex),entries=P.readZipStore(zipBytes);
+  const get=name=>{const b=entries.get(`${folder}/${name}`);if(!b)throw new Error(`Internal export verification failed: missing ${name}`);return b;};
+  const nameBytes=get('name.bin');
+  if(decodeNameBytes(nameBytes)!==expectedName)throw new Error(`Internal export verification failed: name is ${decodeNameBytes(nameBytes)}, expected ${expectedName}`);
+  const setup=get('race_setup.bin'),laps=(setup[0]<<8)|setup[1];
+  if(laps!==expectedLaps)throw new Error(`Internal export verification failed: laps are ${laps}, expected ${expectedLaps}`);
+  const pres=P.decodePresentationBin(get('presentation.bin'));
+  if(pres.mapId!==expectedMapId)throw new Error(`Internal export verification failed: map is ${pres.mapId}, expected ${expectedMapId}`);
+  const template=get('template.bin'),templateIndex=(template[0]<<8)|template[1];
+  const routes=P.decodeWaypointsBin(get('waypoints.bin'));
+  return {templateIndex,routeCounts:routes.map(r=>r.points.length),fileCount:entries.size};
+}
+function downloadZipBytes(bytes,name){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
+  a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function installNameExport(){
+  const button=$('circuitPackageZip'),P=packageTools();if(!button||!P)return false;
+  if(button.dataset.circuitNameHook)return true;
+  button.dataset.circuitNameHook='1';
+  // v0.32 owns circuit ZIP serialisation here.  Stop circuit-package.js's older
+  // click handler completely so stale parallel editor models cannot win later.
+  button.addEventListener('click',e=>{
+    e.preventDefault();e.stopImmediatePropagation();
+    if(zipHookBusy)return;
+    zipHookBusy=true;
+    try{
+      const circuitIndex=currentCircuitIndex(),templateIndex=trackIndex();
+      if(!Number.isInteger(templateIndex)||templateIndex<0||templateIndex>=RETAIL_ROUTE_COUNTS.length)
+        throw new Error(`Selected retail template index ${templateIndex} is invalid`);
+      const expectedName=String($('raceCircuitName')?.value??currentName()).replace(/\s+/g,' ').trim();
+      const nameBytes=encodeNameBytes(expectedName);
+      authoredNames.set(currentNameKey(),nameBytes.slice());
+      const expectedLaps=Number($('raceLaps')?.value);
+      if(!Number.isInteger(expectedLaps)||expectedLaps<1||expectedLaps>99)throw new Error('Lap total must be 1–99');
+      const expectedMapId=Number($('circuitMapId')?.value);
+      const raceSetupBytes=snapshotLiveRaceSetup(templateIndex);
+      const built=directPackageFiles(P,circuitIndex,templateIndex,nameBytes,raceSetupBytes);
+      const zip=P.zipStore(built.files),checked=verifyDirectPackage(P,zip,circuitIndex,expectedName,expectedLaps,expectedMapId);
+      downloadZipBytes(zip,`${P.circuitFolder(circuitIndex)}.zip`);
+      setTopStatus(`${P.circuitFolder(circuitIndex)} exported · ${checked.fileCount} files · template ${checked.templateIndex} · routes ${checked.routeCounts.join('/')} · laps ${expectedLaps} · map ${expectedMapId} · name ${expectedName}.`);
+    }catch(err){setTopStatus(`ERROR: ${err.message}`,true);}
+    finally{zipHookBusy=false;}
+  },true);
+  return true;
+}
+
+function tick(){return installNameUi()&&installNameImport()&&installNameExport();
+}
+function boot(){
+  let tries=0;tick();
+  bootTimer=setInterval(()=>{if(tick()||++tries>400){clearInterval(bootTimer);bootTimer=null;}},50);
+  document.addEventListener('indyheat-race-setup-capture',e=>{
+    if(e.detail?.type==='model'){authoredNames.clear();pendingImportedName=null;}
+    setTimeout(()=>syncNameUi(true),0);
+  });
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});
+else setTimeout(boot,0);
+
+})(typeof globalThis!=='undefined'?globalThis:this);
