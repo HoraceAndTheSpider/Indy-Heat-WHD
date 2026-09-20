@@ -84,6 +84,7 @@ function injectStyles(){
     #layerBrushHatch:disabled{opacity:.42;cursor:default}
     .layerActionBtns{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .layerActionBtns button{font-size:11px;padding:6px}
+    #layerInvert{grid-column:1/-1}
     #layerEditorStatus{margin:8px 0 0;min-height:34px;font-size:11px;line-height:1.35}
     #magnifierPanel{margin-top:12px;padding-top:10px;border-top:1px solid #303640}
     .magnifierHeader{display:grid;grid-template-columns:1fr auto;gap:7px;align-items:center;margin-bottom:6px}
@@ -181,6 +182,7 @@ function setupControls(){
         <div class="layerActionBtns">
           <button id="layerUndo" type="button">Undo</button>
           <button id="layerRevert" type="button">Revert layer</button>
+          <button id="layerInvert" type="button" hidden>Invert layer</button>
         </div>
         <div id="layerEditorStatus" class="muted"></div>
       </div>
@@ -220,7 +222,7 @@ function setupControls(){
     tools:$('layerEditorTools'),
     paintChoices:$('layerPaintChoices'),
     brushSize:$('layerBrushSize'),brushSizeText:$('layerBrushSizeText'),brushShape:$('layerBrushShape'),brushHatch:$('layerBrushHatch'),
-    undo:$('layerUndo'),revert:$('layerRevert'),status:$('layerEditorStatus'),
+    undo:$('layerUndo'),revert:$('layerRevert'),invert:$('layerInvert'),status:$('layerEditorStatus'),
     magnifierToggle:$('magnifierToggle'),magnifierCanvas:$('magnifierCanvas'),magnifierHint:$('magnifierHint')
   };
 }
@@ -401,12 +403,14 @@ function updateToolbar(){
   const res=activeResource(),dirty=resourceDirty(res);
   ui.undo.disabled=!history.some(h=>h.resourceId===res?.id);
   ui.revert.disabled=!dirty;
+  ui.invert.hidden=editMode!=='mask';
+  ui.invert.disabled=editMode!=='mask'||!res;
   setPaintChoices(editMode);
   updateBrushLabel();updateBrushShapeButton();updateBrushHatchButton();
   if(editMode==='surface'){
     setLayerStatus(`Surface: each brush unit is one native 2×2px cell. Right-click always paints Normal with the current tool and brush. 1px hatch is Foreground-only.${dirty?' · Modified':''}`);
   }else{
-    setLayerStatus(`Foreground: native 1px bitmap. Hatched keeps a fixed 1px on / 1px off pattern while brush size changes only its area. Right-click always paints the opposite of the selected value: Foreground ↔ Clear.${dirty?' · Modified':''}`);
+    setLayerStatus(`Foreground: native 1px bitmap. Hatched keeps a fixed 1px on / 1px off pattern while brush size changes only its area. Right-click always paints the opposite of the selected value: Foreground ↔ Clear. Invert layer flips the complete 320×256 mask.${dirty?' · Modified':''}`);
   }
 }
 
@@ -736,6 +740,20 @@ function revertLayer(){
   res.data.set(orig);history=history.filter(h=>h.resourceId!==res.id);decodeCurrent();updateDirty(res);updateToolbar();queueRedraw(true);
   setLayerStatus(`${editMode==='surface'?'Surface':'Foreground'} restored to the loaded disk.`);
 }
+function invertForegroundLayer(){
+  if(editMode!=='mask'||!currentResources)return;
+  const res=currentResources[1];
+  if(!res||res.data.length<0x2800){
+    setLayerStatus('Foreground resource is shorter than the expected $2800-byte bitmap.',true);
+    return;
+  }
+  const snapshot=beginHistory();
+  for(let i=0;i<0x2800;i++)res.data[i]^=0xFF;
+  decodeCurrent();
+  commitHistory(snapshot);
+  queueRedraw(true);
+  setLayerStatus(`Foreground layer inverted across all 320×256 pixels.${resourceDirty(res)?' · Modified':''}`);
+}
 
 function waypointEditsPresent(){
   const t=$('editCount')?.textContent||'';
@@ -864,7 +882,7 @@ ui.showSurface.addEventListener('change',()=>queueRedraw());
 ui.modeWaypoints.addEventListener('click',e=>{e.preventDefault();enterWaypointMode();});
 ui.editMask.addEventListener('click',e=>{e.preventDefault();enterEdit('mask');});
 ui.editSurface.addEventListener('click',e=>{e.preventDefault();enterEdit('surface');});
-ui.undo.addEventListener('click',undo);ui.revert.addEventListener('click',revertLayer);
+ui.undo.addEventListener('click',undo);ui.revert.addEventListener('click',revertLayer);ui.invert.addEventListener('click',invertForegroundLayer);
 document.querySelectorAll('input[name="layerTool"]').forEach(r=>r.addEventListener('change',()=>{gesture=null;queueRedraw();}));
 ui.brushSize.addEventListener('input',()=>{gesture=null;updateBrushLabel();queueRedraw();});
 ui.brushShape.addEventListener('click',()=>{ui.brushShape.dataset.shape=ui.brushShape.dataset.shape==='circle'?'square':'circle';gesture=null;updateBrushShapeButton();queueRedraw();});

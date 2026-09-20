@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.35**.
+Current editor version: **v0.36**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -13,7 +13,7 @@ This directory is the complete deployable browser editor. It is intentionally ke
 - `layer-tools.js` — bitmap/surface drawing primitives.
 - `indyheat_race_graphics.js` — authentic race-object/BOB graphics decoder.
 - `app.js` — core circuit viewer and waypoint editor.
-- `layer-editor.js` — Foreground and Surface editors, drawing tools and magnifier.
+- `layer-editor.js` — Foreground and Surface editors, drawing tools, magnifier and whole-layer Foreground inversion.
 - `waypoint-actions.js` — waypoint-mode convenience actions, including AI Turbo-marker toggle and whole-route left/right mirroring.
 - `recovery-editor.js` — +3 recovery-direction editor, group selection, held rotation and cell grid.
 - `race-setup.js` — race/pit/start/flag setup editing.
@@ -24,6 +24,8 @@ This directory is the complete deployable browser editor. It is intentionally ke
 ## Current authoring contract
 
 Waypoint mode includes **Flip all waypoints L/R**, which mirrors every point on Routes A/B/C in game-screen space using `screen X = 320 - screen X`. The stored/runtime X values are solved through the code-derived A082 projection; Y, sequence, flags and link topology are left unchanged.
+
+Foreground edit mode includes **Invert layer**. It flips the complete 320×256 1bpp foreground/occlusion mask in one operation. On `$2804` resource variants only the `$2800` bitmap bytes are inverted; the four trailing bytes are preserved. The action participates in the normal Undo/Revert/dirty-state path, so raw foreground export and circuit ZIP export use the inverted data directly.
 
 Custom race length is **1–20 laps**. The editor uses the established runtime-supported range and does not widen the WHDLoad gameplay contract.
 
@@ -78,3 +80,4 @@ Circuit ZIP export in v0.32+ is a single direct serialisation path. At **Export 
 ## Development history
 
 Earlier per-version changelogs, integration patches, research probes and `test_*.js` files are deliberately not part of this deployable `app/` folder. Their history remains available in Git. Development-only material should live outside `app/` rather than being reintroduced into the runtime directory.
+

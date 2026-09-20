@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.36 — foreground layer invert
+
+- Added **Invert layer** to Foreground edit mode.
+- The action flips every bit in the complete 320×256 1bpp foreground/occlusion bitmap in one operation.
+- Only the `$2800` bitmap bytes are inverted; the four trailing bytes present in `$2804` resource variants are preserved unchanged.
+- The inversion uses the existing layer history/dirty-state path, so **Undo**, **Revert layer**, **Revert all edits**, raw foreground export and circuit ZIP export all use the inverted data normally.
+- The control is visible only in Foreground mode; Surface editing is unchanged.
+- Updated the editor's visible/internal version to v0.36.
+
 ## v0.35 — flip all waypoint routes left/right
 
 - Added **Flip all waypoints L/R** to the Waypoint editor.
