@@ -89,7 +89,7 @@ function injectStyles(){
     #circuitViewportToggle.active{border-color:#d6b54a;background:#5a4a1c}
     #circuitViewport{position:relative;width:max-content;max-width:100%;overflow:visible}
     #circuitViewport.fixed{width:640px;height:512px;max-width:100%;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:auto}
-    .canvasStack{position:relative;width:max-content;height:max-content}
+    .canvasStack{position:relative;z-index:0;isolation:isolate;width:max-content;height:max-content}
     .canvasStack canvas#view{position:relative;z-index:0}
     #layerEditCanvas{position:absolute;inset:0;z-index:1;display:block;image-rendering:pixelated;touch-action:none;user-select:none;pointer-events:none}
     #layerEditCanvas.editing{pointer-events:auto;cursor:crosshair}
@@ -153,6 +153,8 @@ function setupControls(){
             ${toolChoice('rectangle-filled','■','Filled rectangle / square')}
             ${toolChoice('ellipse','○','Ellipse / circle')}
             ${toolChoice('ellipse-filled','●','Filled ellipse / circle')}
+            ${toolChoice('curve','∿','Three-click curve')}
+            ${toolChoice('freeform','⬠','Free-form multi-edge shape')}
             ${toolChoice('fill','▨','Fill')}
           </div>
         </div>
@@ -325,6 +327,7 @@ function updateSurfaceStats(){
 
 function selectedTrack(index){
   if(!model)return;
+  gesture=null;
   currentIndex=Math.max(0,Math.min(T.TRACK_BASE_IDS.length-1,Number(index)||0));
   const base=T.TRACK_BASE_IDS[currentIndex];
   currentResources=[0,1,2,3].map(n=>model.getResource(base+n));
@@ -403,7 +406,11 @@ function setPaintChoices(mode){
     ].join('');
   }
   ui.paintChoices.dataset.mode=mode;
-  ui.paintChoices.querySelectorAll('input[name="layerPaint"]').forEach(r=>r.addEventListener('change',()=>{gesture=null;queueRedraw();}));
+  ui.paintChoices.querySelectorAll('input[name="layerPaint"]').forEach(r=>r.addEventListener('change',()=>{
+    if(gesture?.multiClick)cancelClickShape('Shape cancelled.');
+    else gesture=null;
+    queueRedraw();
+  }));
 }
 function updateBrushShapeButton(){
   const circle=ui.brushShape?.dataset.shape==='circle';
@@ -497,22 +504,56 @@ function brushShape(){return ui.brushShape?.dataset.shape||'square';}
 function brushed(points,size=brushSize(),shape=brushShape(),hatched=brushHatched(),hatchPhase=0){
   return L.applyBrush(points,{brushSize:size,brushShape:shape,hatched,hatchPhase});
 }
+function gestureBrushOptions(g=gesture){
+  return {
+    brushSize:g?.brushSize??brushSize(),
+    brushShape:g?.brushShape??brushShape(),
+    hatched:!!g?.hatched,
+    hatchPhase:g?.hatchPhase??0
+  };
+}
 function currentPreviewPoints(){
-  if(!gesture||!gesture.start||!gesture.current||!editMode||!L.isPrimitiveTool(gesture.tool))return [];
-  return L.paintPoints(
-    gesture.tool,
-    gesture.start,
-    gesture.current,
-    {brushSize:gesture.brushSize,brushShape:gesture.brushShape,hatched:gesture.hatched,hatchPhase:gesture.hatchPhase}
-  );
+  if(!gesture||!editMode)return [];
+  let base=[];
+  if(gesture.tool==='curve'){
+    if(gesture.stage===1&&gesture.start&&gesture.current)
+      base=L.toolPoints('line',gesture.start,gesture.current);
+    else if(gesture.stage===2&&gesture.start&&gesture.end&&gesture.bend)
+      base=L.curvePoints(gesture.start,gesture.end,gesture.bend);
+  }else if(gesture.tool==='freeform'){
+    const vertices=gesture.vertices||[];
+    if(vertices.length){
+      if(gesture.joinReady&&vertices.length>=3)base=L.polylinePoints(vertices,{closed:true});
+      else{
+        const preview=vertices.slice();
+        if(gesture.hover)preview.push(gesture.hover);
+        base=L.polylinePoints(preview);
+      }
+    }
+  }else if(gesture.start&&gesture.current&&L.isPrimitiveTool(gesture.tool)){
+    base=primitivePoints(gesture.tool,gesture.start,gesture.current);
+  }
+  return base.length?L.applyBrush(base,gestureBrushOptions(gesture)):[];
 }
 function drawPreview(){
-  const pts=currentPreviewPoints();if(!pts.length)return;
-  const S=scale(),unit=editMode==='surface'?2:1;
-  octx.save();octx.globalAlpha=.88;
-  octx.fillStyle=gesture?.erase?'rgba(255,255,255,.55)':'rgba(255,255,255,.9)';
-  for(const [x,y] of pts)octx.fillRect(x*unit*S,y*unit*S,unit*S,unit*S);
-  octx.restore();
+  const pts=currentPreviewPoints(),S=scale(),unit=editMode==='surface'?2:1;
+  if(pts.length){
+    octx.save();octx.globalAlpha=.88;
+    octx.fillStyle=gesture?.erase?'rgba(255,255,255,.55)':'rgba(255,255,255,.9)';
+    for(const [x,y] of pts)octx.fillRect(x*unit*S,y*unit*S,unit*S,unit*S);
+    octx.restore();
+  }
+  if(gesture?.tool==='freeform'&&gesture.joinReady&&gesture.start){
+    const cx=(gesture.start.x*unit+unit/2)*S,cy=(gesture.start.y*unit+unit/2)*S;
+    octx.save();
+    octx.globalAlpha=1;
+    octx.strokeStyle='#ffd84a';
+    octx.lineWidth=Math.max(1.5,.7*S);
+    octx.beginPath();
+    octx.arc(cx,cy,Math.max(4,2.5*S),0,Math.PI*2);
+    octx.stroke();
+    octx.restore();
+  }
 }
 
 function researchWaypointProjection(p){
@@ -525,10 +566,19 @@ function researchWaypointProjection(p){
   const sy=Number($('wpScaleY')?.value??-1.5),oy=Number($('wpOffsetY')?.value??142.5);
   return {x:p.x*sx+ox,y:p.y*sy+oy};
 }
+function waypointOverlaySets(){
+  // app.js owns the live waypoint model and refreshes it after every edit.
+  // Prefer that authoritative model so Turbo/link overlays cannot retain stale
+  // flags from layer-editor.js's separate Disk.1 decoding snapshot.
+  try{
+    if(typeof state!=='undefined'&&Array.isArray(state?.waypoints))return state.waypoints;
+  }catch(_e){}
+  return Array.isArray(researchWaypoints)?researchWaypoints:[];
+}
 function visibleResearchWaypointSets(){
-  if(!$('showWaypoints')?.checked||!researchWaypoints)return [];
+  if(!$('showWaypoints')?.checked)return [];
   const enabled=new Set(Array.from(document.querySelectorAll('.waypointSet:checked')).map(c=>Number(c.dataset.set)));
-  return researchWaypoints.filter(set=>enabled.has(set.index));
+  return waypointOverlaySets().filter(set=>enabled.has(Number(set.index)));
 }
 function routeLocalWaypointMap(set){
   const by=new Map();
@@ -611,11 +661,13 @@ function drawWaypointResearchOverlays(){
   const showLinks=$('showNonDefaultLinkDeltas')?.checked;
   if(!showFlags&&!showLinks)return;
   const sets=visibleResearchWaypointSets(),S=scale();
+  const enabled=new Set(sets.map(set=>Number(set.index)));
 
   if(showLinks){
     for(const set of sets){
       const byAddress=routeLocalWaypointMap(set);
       for(const p of set.points||[]){
+        if(!enabled.has(Number(p.setIndex)))continue;
         if(Number(p.linkDelta)===6)continue;
         const target=byAddress.get(p.linkTarget);
         if(!target||target.zeroSentinel)continue;
@@ -631,6 +683,7 @@ function drawWaypointResearchOverlays(){
     octx.save();
     octx.strokeStyle='#fff';octx.lineWidth=Math.max(1.4,.55*S);octx.globalAlpha=.98;
     for(const set of sets)for(const p of set.points||[]){
+      if(!enabled.has(Number(p.setIndex)))continue;
       if(!p.progressFlag)continue;
       const q=researchWaypointProjection(p);
       if(!q||q.x<0||q.x>=320||q.y<0||q.y>=224)continue;
@@ -768,14 +821,110 @@ function updateEditCursorAt(pos){
   const unit=editMode==='surface'?` · cell ${x>>1},${y>>1}`:'';
   $('cursorInfo').textContent=`x ${x} · y ${y} · colour ${colour}\nsurface ${surf} · recovery ${head} · foreground ${occ}${unit}`;
 }
+
+function isClickShapeTool(tool){
+  return tool==='curve'||tool==='freeform';
+}
+function editGridUnitPixels(){
+  return editMode==='surface'?2:1;
+}
+function freeformCloseReady(g,p){
+  if(!g||g.tool!=='freeform'||(g.vertices?.length||0)<3||!p)return false;
+  return L.pointDistance(g.start,p)*editGridUnitPixels()<=3;
+}
+function newClickShapeGesture(tool,source,p,ev){
+  const erase=ev.button===2,value=erase?secondaryPaintValue():paintValue();
+  const bSize=brushSize(),bShape=brushShape(),hatched=brushHatched(),hatchPhase=(p.x+p.y)&1;
+  const base={
+    multiClick:true,tool,source,start:{x:p.x,y:p.y},current:{x:p.x,y:p.y},
+    snapshot:beginHistory(),value,erase,
+    brushSize:bSize,brushShape:bShape,hatched,hatchPhase
+  };
+  if(tool==='curve')return {...base,stage:1,end:null,bend:null};
+  return {...base,vertices:[{x:p.x,y:p.y}],hover:{x:p.x,y:p.y},joinReady:false};
+}
+function cancelClickShape(message='Shape cancelled.'){
+  if(!gesture?.multiClick)return false;
+  gesture=null;queueRedraw(true);setLayerStatus(message);return true;
+}
+function commitCurve(g,bend){
+  g.bend={x:bend.x,y:bend.y};
+  const points=L.curvePoints(g.start,g.end,g.bend);
+  writeBrushedPoints(points,g.value,g.brushSize,g.brushShape,g.hatched,g.hatchPhase);
+  gesture=null;
+  commitHistory(g.snapshot);
+  queueRedraw(true);
+  setLayerStatus(`Curve committed.${resourceDirty(activeResource())?' · Modified':''}`);
+}
+function commitFreeform(g){
+  const points=L.polylinePoints(g.vertices,{closed:true});
+  writeBrushedPoints(points,g.value,g.brushSize,g.brushShape,g.hatched,g.hatchPhase);
+  const count=g.vertices.length;
+  gesture=null;
+  commitHistory(g.snapshot);
+  queueRedraw(true);
+  setLayerStatus(`Free-form shape committed · ${count} vertices.${resourceDirty(activeResource())?' · Modified':''}`);
+}
+function handleClickShapeDown(ev,source,p,tool){
+  if(!gesture||!gesture.multiClick||gesture.tool!==tool||gesture.source!==source){
+    gesture=newClickShapeGesture(tool,source,p,ev);
+    if(tool==='curve')setLayerStatus('Curve: start set · click the end point.');
+    else setLayerStatus('Free-form: start set · click additional vertices; close within 3px of the start.');
+    queueRedraw();return;
+  }
+
+  if(tool==='curve'){
+    if(gesture.stage===1){
+      if(L.pointDistance(gesture.start,p)<.001){
+        setLayerStatus('Curve: choose an end point away from the start.');
+        return;
+      }
+      gesture.end={x:p.x,y:p.y};
+      gesture.current=gesture.end;
+      gesture.bend={
+        x:(gesture.start.x+gesture.end.x)/2,
+        y:(gesture.start.y+gesture.end.y)/2
+      };
+      gesture.stage=2;
+      setLayerStatus('Curve: move away from the straight line to set the bend, then click to finalise.');
+      queueRedraw();return;
+    }
+    if(gesture.stage===2){
+      commitCurve(gesture,p);
+      return;
+    }
+  }
+
+  if(tool==='freeform'){
+    if(freeformCloseReady(gesture,p)){
+      commitFreeform(gesture);
+      return;
+    }
+    const last=gesture.vertices[gesture.vertices.length-1];
+    if(L.pointDistance(last,p)<.001)return;
+    gesture.vertices.push({x:p.x,y:p.y});
+    gesture.hover={x:p.x,y:p.y};
+    gesture.joinReady=freeformCloseReady(gesture,p);
+    setLayerStatus(`Free-form: ${gesture.vertices.length} vertices · click more points or close within 3px of the start.`);
+    queueRedraw();
+  }
+}
+
 function beginGestureFrom(ev,source='main'){
   if(ev.button!==0&&ev.button!==2)return;
-  const pos=worldPoint(ev,source);
-
   if(!editMode||!model||!currentResources)return;
 
+  const tool=currentTool();
+  const pos=worldPoint(ev,source);
   const p=gridPoint(pos);if(!p)return;
-  const tool=currentTool(),erase=ev.button===2,value=erase?secondaryPaintValue():paintValue(),snapshot=beginHistory();
+
+  if(isClickShapeTool(tool)){
+    handleClickShapeDown(ev,source,p,tool);
+    ev.preventDefault();
+    return;
+  }
+
+  const erase=ev.button===2,value=erase?secondaryPaintValue():paintValue(),snapshot=beginHistory();
   const bSize=brushSize(),bShape=brushShape(),hatched=brushHatched(),hatchPhase=(p.x+p.y)&1,capture=overlay;
   if(tool==='fill'){
     const size=gridSize(),vals=gridValues();
@@ -792,6 +941,19 @@ function moveGestureFrom(ev,source='main'){
   const cursorPos=worldPoint(ev,source,true);
   updateEditCursorAt(cursorPos);
 
+  if(gesture?.multiClick&&gesture.source===source){
+    const p=gridPoint(cursorPos);if(!p)return;
+    if(gesture.tool==='curve'){
+      if(gesture.stage===1)gesture.current={x:p.x,y:p.y};
+      else if(gesture.stage===2)gesture.bend={x:p.x,y:p.y};
+    }else if(gesture.tool==='freeform'){
+      gesture.hover={x:p.x,y:p.y};
+      gesture.joinReady=freeformCloseReady(gesture,p);
+    }
+    queueRedraw();
+    return;
+  }
+
   if(!gesture||gesture.pointerId!==ev.pointerId||gesture.source!==source)return;
   const allowOutside=primitiveAllowsOutside(gesture.tool);
   const pos=worldPoint(ev,source,!allowOutside);
@@ -805,6 +967,7 @@ function moveGestureFrom(ev,source='main'){
   ev.preventDefault();
 }
 function endGestureFrom(ev,source='main',cancel=false){
+  if(gesture?.multiClick&&gesture.source===source)return;
   if(!gesture||gesture.pointerId!==ev.pointerId||gesture.source!==source)return;
   const g=gesture;gesture=null;
   try{g.capture?.releasePointerCapture?.(ev.pointerId);}catch(_){}
@@ -872,17 +1035,32 @@ ui.modeWaypoints.addEventListener('click',e=>{e.preventDefault();enterWaypointMo
 ui.editMask.addEventListener('click',e=>{e.preventDefault();enterEdit('mask');});
 ui.editSurface.addEventListener('click',e=>{e.preventDefault();enterEdit('surface');});
 ui.undo.addEventListener('click',undo);ui.revert.addEventListener('click',revertLayer);ui.invert.addEventListener('click',invertForegroundLayer);
-document.querySelectorAll('input[name="layerTool"]').forEach(r=>r.addEventListener('change',()=>{gesture=null;queueRedraw();}));
-ui.brushSize.addEventListener('input',()=>{gesture=null;updateBrushLabel();queueRedraw();});
-ui.brushShape.addEventListener('click',()=>{ui.brushShape.dataset.shape=ui.brushShape.dataset.shape==='circle'?'square':'circle';gesture=null;updateBrushShapeButton();queueRedraw();});
+document.querySelectorAll('input[name="layerTool"]').forEach(r=>r.addEventListener('change',()=>{
+  if(gesture?.multiClick)cancelClickShape('Shape cancelled.');
+  else gesture=null;
+  queueRedraw();
+}));
+ui.brushSize.addEventListener('input',()=>{
+  if(gesture?.multiClick)cancelClickShape('Shape cancelled.');
+  else gesture=null;
+  updateBrushLabel();queueRedraw();
+});
+ui.brushShape.addEventListener('click',()=>{
+  ui.brushShape.dataset.shape=ui.brushShape.dataset.shape==='circle'?'square':'circle';
+  if(gesture?.multiClick)cancelClickShape('Shape cancelled.');
+  else gesture=null;
+  updateBrushShapeButton();queueRedraw();
+});
 ui.brushHatch.addEventListener('click',()=>{
   if(ui.brushHatch.disabled)return;
   ui.brushHatch.dataset.hatched=ui.brushHatch.dataset.hatched==='true'?'false':'true';
-  gesture=null;updateBrushHatchButton();queueRedraw();
+  if(gesture?.multiClick)cancelClickShape('Shape cancelled.');
+  else gesture=null;
+  updateBrushHatchButton();queueRedraw();
 });
 
 document.querySelectorAll('.surfaceClass').forEach(c=>c.addEventListener('change',()=>queueRedraw()));
-document.querySelectorAll('.waypointSet').forEach(c=>c.addEventListener('change',()=>queueRedraw()));
+document.querySelectorAll('.waypointSet').forEach(c=>c.addEventListener('change',()=>queueRedraw(true)));
 $('showBit7Flags')?.addEventListener('change',()=>queueRedraw());
 $('showNonDefaultLinkDeltas')?.addEventListener('change',()=>queueRedraw());
 for(const id of ['wpProjectionMode','wpScaleX','wpOffsetX','wpScaleY','wpOffsetY']){
@@ -911,6 +1089,12 @@ overlay.addEventListener('pointerdown',beginGesture);
 overlay.addEventListener('pointermove',moveGesture);
 overlay.addEventListener('pointerup',e=>endGesture(e,false));
 overlay.addEventListener('pointercancel',e=>endGesture(e,true));
+window.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&gesture?.multiClick){
+    e.preventDefault();
+    cancelClickShape('Shape cancelled.');
+  }
+});
 
 view.addEventListener('pointermove',patchNormalCursor);
 // app.js updates the waypoint editor fields before this listener runs. Mirror those

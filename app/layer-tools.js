@@ -22,6 +22,9 @@ const TOOL_ALIASES=Object.freeze({
   circle:'ellipse',
   'ellipse-filled':'ellipse-filled',
   'circle-filled':'ellipse-filled',
+  curve:'curve',
+  freeform:'freeform',
+  polygon:'freeform',
   fill:'fill',
   pick:'pick',
   template:'template'
@@ -146,6 +149,74 @@ function toolPoints(tool,a,b=a){
   return [];
 }
 
+
+function pointDistance(a,b){
+  if(!a||!b)return Infinity;
+  const dx=Number(a.x)-Number(b.x),dy=Number(a.y)-Number(b.y);
+  return Number.isFinite(dx)&&Number.isFinite(dy)?Math.hypot(dx,dy):Infinity;
+}
+function nearPoint(a,b,tolerance=0){
+  return pointDistance(a,b)<=Math.max(0,Number(tolerance)||0);
+}
+
+/*
+ * Three-point curve used by the click-based editor:
+ *   start -> end establish the chord;
+ *   bend is the point the curve passes through at t=.5.
+ *
+ * Converting that midpoint target to the quadratic Bézier control point gives:
+ *   control = 2*bend - (start+end)/2
+ * This makes "move away from the straight line to add bend" intuitive while
+ * retaining a normal quadratic curve internally.
+ */
+function curvePoints(start,end,bend){
+  if(!start||!end||!bend)return [];
+  const p0={x:Number(start.x),y:Number(start.y)};
+  const p1={x:Number(end.x),y:Number(end.y)};
+  const pm={x:Number(bend.x),y:Number(bend.y)};
+  if(![p0.x,p0.y,p1.x,p1.y,pm.x,pm.y].every(Number.isFinite))return [];
+
+  const chordX=p1.x-p0.x,chordY=p1.y-p0.y;
+  const bendX=pm.x-p0.x,bendY=pm.y-p0.y;
+  const cross=chordX*bendY-chordY*bendX;
+  if(Math.abs(cross)<1e-9)return linePoints(p0.x,p0.y,p1.x,p1.y);
+
+  const c={
+    x:2*pm.x-(p0.x+p1.x)/2,
+    y:2*pm.y-(p0.y+p1.y)/2
+  };
+  const approxLength=Math.hypot(c.x-p0.x,c.y-p0.y)+Math.hypot(p1.x-c.x,p1.y-c.y);
+  let steps=Math.max(24,Math.ceil(approxLength*2));
+  if(steps&1)steps++; // ensure t=.5 is sampled, so the committed curve contains bend.
+  const out=[];
+  let prev=[Math.round(p0.x),Math.round(p0.y)];
+  for(let i=1;i<=steps;i++){
+    const t=i/steps,u=1-t;
+    const q=[
+      Math.round(u*u*p0.x+2*u*t*c.x+t*t*p1.x),
+      Math.round(u*u*p0.y+2*u*t*c.y+t*t*p1.y)
+    ];
+    out.push(...linePoints(prev[0],prev[1],q[0],q[1]));
+    prev=q;
+  }
+  out.unshift([Math.round(p0.x),Math.round(p0.y)]);
+  return uniquePoints(out);
+}
+
+function polylinePoints(vertices,{closed=false}={}){
+  const pts=(vertices||[])
+    .filter(p=>p&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)))
+    .map(p=>({x:Number(p.x),y:Number(p.y)}));
+  if(!pts.length)return [];
+  if(pts.length===1)return [[Math.round(pts[0].x),Math.round(pts[0].y)]];
+  const out=[];
+  for(let i=1;i<pts.length;i++)
+    out.push(...linePoints(pts[i-1].x,pts[i-1].y,pts[i].x,pts[i].y));
+  if(closed&&pts.length>2)
+    out.push(...linePoints(pts[pts.length-1].x,pts[pts.length-1].y,pts[0].x,pts[0].y));
+  return uniquePoints(out);
+}
+
 function brushOffsets(size=1,shape='square'){
   size=Math.max(1,Math.min(31,Math.round(Number(size)||1)));
   shape=String(shape||'square').toLowerCase()==='circle'?'circle':'square';
@@ -223,7 +294,7 @@ function floodFillPoints(values,width,height,startX,startY,newValue,{hatched=fal
 const api={
   TOOL_ALIASES,inBounds,normaliseTool,isPrimitiveTool,toolPoints,applyBrush,paintPoints,clipPoints,writePoints,paintRaster,
   getMaskPixel,setMaskPixel,getSurfaceCell,setSurfaceCell,
-  linePoints,rectanglePoints,ellipsePoints,filledRectanglePoints,filledEllipsePoints,
+  linePoints,rectanglePoints,ellipsePoints,filledRectanglePoints,filledEllipsePoints,curvePoints,polylinePoints,pointDistance,nearPoint,
   brushOffsets,expandPointsWithBrush,hatchPoints,floodFillIndices,floodFillPoints
 };
 if(typeof module!=='undefined'&&module.exports)module.exports=api;

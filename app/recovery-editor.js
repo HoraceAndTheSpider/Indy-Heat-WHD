@@ -94,6 +94,7 @@ const canvas=document.createElement('canvas');canvas.id='recoveryEditCanvas';sta
 const ctx=canvas.getContext('2d',{alpha:true});
 let active=false,grabGroup=false,pointerGesture=null;
 const selectedGroup=new Set();
+const states=new Map();
 const RECOVERY_COLOUR_STORAGE='indyheat-recovery-overlay-colours';
 const RECOVERY_COLOUR_STORAGE_LEGACY='indyheat-recovery-overlay-colours-v025';
 function recoveryColour(id,fallback){

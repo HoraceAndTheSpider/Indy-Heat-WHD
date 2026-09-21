@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.52 — AI Turbo marker route-visibility fix
+
+- Fixed AI Turbo marker circles from a previously edited route remaining visible after that route was hidden and another Route A/B/C display was selected.
+- The Turbo/link research overlay now prefers `app.js`'s live waypoint model, which is refreshed after every waypoint edit, instead of relying on `layer-editor.js`'s separate cached waypoint snapshot.
+- Route visibility is enforced both at the visible route-set level and again against each point's `setIndex`, so a hidden route cannot contribute Turbo or non-default-link overlays.
+- Route A/B/C checkbox changes now clear and redraw the secondary waypoint overlay synchronously.
+- Normal waypoint rendering, AI Turbo data, right-click editing and route geometry are unchanged.
+- Updated the editor version and `layer-editor.js` cache-busting value to v0.52.
+
+## v0.51 — circuit overlay/header stacking fix
+
+- Fixed circuit icon/HUD overlays, including the lap tower, drawing over the sticky editor header when the page is scrolled down.
+- The shared `.canvasStack` now creates an isolated `z-index: 0` stacking context. Overlay canvases retain their existing relative ordering inside the circuit, but can no longer escape above the sticky header.
+- No overlay rendering, position data or editor interaction behaviour was changed.
+- Updated the editor version and `layer-editor.js` cache-busting value to v0.51.
+
+## v0.50 — Curve and Free-form Surface/Foreground shapes
+
+- Added shared **Curve** and **Free-form** geometry to `layer-tools.js` so the same shape logic can be reused by MiniMap and Backdrop later.
+- **Curve** is a three-click tool: click the start, click the end, then move and click a third point to set/finalise the bend.
+- The third point is treated as the curve midpoint itself, so moving away from the initial straight chord increases the visible bend directly.
+- **Free-form** accepts an indefinite number of clicked vertices and previews the next edge while hovering.
+- Once a Free-form shape has at least three vertices, hovering within a 3px track-space tolerance of the start displays a join circle; clicking there closes and commits the shape.
+- Surface mode applies the 3px close tolerance in track pixels (native Surface cells are 2×2px); Foreground uses native 1px pixels.
+- Both new tools use the existing brush size/shape, Foreground hatch option, primary/secondary paint value, Undo/Revert and dirty-state paths.
+- Escape, tool changes, paint changes and brush changes cancel an unfinished multi-click shape without modifying the resource.
+- Existing drag-based Pencil, Line, Rectangle, Ellipse and Fill interactions are unchanged.
+- Updated `layer-tools.js` and `layer-editor.js` cache-busting values and the editor version to v0.50.
+
+## v0.49 — Recovery state initialisation fix
+
+- Fixed the common runtime fault behind non-working Recovery rotate buttons, held mouse rotation and Auto recovery.
+- `trackState()` has always used a per-track `states` map for Undo/original-state tracking, but `recovery-editor.js` did not actually declare that map.
+- Added the missing `const states = new Map()` alongside the Recovery selection state.
+- No Recovery interaction semantics were otherwise changed: grabbed groups remain the target for Rotate left/right and held mouse rotation, while Auto recovery remains a whole-map operation with no selection required.
+- Verified the production Recovery functions against mocked live heading/surface captures: rotate-button operation changed the selected value, held rotation applied and committed history, and Auto recovery updated a 5-cell propagated field.
+- Updated the editor version and `recovery-editor.js` cache-busting value to v0.49.
+
 ## v0.48 — Recovery group controls and Auto Recovery feedback
 
 - Fixed grouped Recovery rotation controls so **Rotate left** and **Rotate right** explicitly operate on the current grabbed selection.

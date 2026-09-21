@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.48**.
+Current editor version: **v0.52**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -23,15 +23,21 @@ This directory is the complete deployable browser editor. It is intentionally ke
 
 ## Current authoring contract
 
+AI Turbo and non-default-link waypoint overlays now follow the same live Route A/B/C visibility state as the normal waypoint renderer. Hiding a route immediately removes its secondary waypoint overlays, including markers added during the current editing session.
+
 Waypoint mode includes **Flip all waypoints L/R**, which mirrors every point on Routes A/B/C in game-screen space using `screen X = 320 - screen X`. The stored/runtime X values are solved through the code-derived A082 projection; Y, sequence, flags and link topology are left unchanged.
 
 Master Circuit Zoom now supports 100%–1000% in 50% increments.
+
+Surface and Foreground modes include two shared multi-click shapes. **Curve** uses start → end → bend/finalise: after the second click the initial line remains visible and moving the pointer away from it increases the curve before the third click commits. **Free-form** accepts any number of vertices; once it has at least three, moving within 3 track pixels of the start shows a join circle and clicking closes the shape. Both use the normal brush/paint/Undo path, and Escape cancels an unfinished shape.
 
 Surface/Foreground and MiniMap now share one raster-tool core in `layer-tools.js`. Tool-name aliases (`freehand`/`pencil`, `rectangle`/`rect`), geometry, outlined/filled shapes, brush expansion, hatching, bounded painting and flood-fill are defined there rather than reimplemented per editor. Surface/Foreground use the generic API directly; MiniMap's existing calls remain compatible wrappers over the same implementation. The shared API is deliberately resource-neutral so Backdrop can adopt it later without another set of drawing primitives.
 
 Race mode now drags **START GRID**, **P× STOP** and **P× PIT** using their actual fixed-point coordinate precision rather than waypoint integer quantisation. These markers can therefore settle at single-pixel screen positions where the game projection permits it. PIT CREW and FLAG remain direct integer screen coordinates.
 
 Recovery group editing now uses the selected group consistently: the Rotate left/right buttons act on the grabbed selection, and holding left/right mouse on a selected arrow continuously rotates the whole group even if Grab group is still enabled. **Auto recovery** is independent of selection and always recalculates the whole map using the chosen propagation depth; existing group selection is preserved.
+
+Recovery state/history is now explicitly initialised per editor session. This fixes the shared runtime failure that prevented grouped Rotate left/right, held mouse rotation and whole-map Auto recovery from completing.
 
 Recovery mode includes an explicit **Auto recovery** calculation. It derives boundary directions from the current Surface class 1/collision layout, carries the result one cell into the active wall field, and propagates through nearby non-active cells for a selectable 1–10 cell depth (default 5). Multiple influences are vector-averaged and the complete pass is one Undo operation.
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.48</title>
+<title>Indy Heat Amiga – Circuit Editor v0.52</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
@@ -44,10 +44,10 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 
 </head>
 <body>
-<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.48";</script>
+<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.52";</script>
 <header>
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor v0.48</h1>
+    <h1>Indy Heat Amiga — Circuit Editor v0.52</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
@@ -192,7 +192,7 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
       <summary>Help / controls</summary>
       <div class="prose">
         <p><b>Waypoints:</b> click or drag a visible point; right-click toggles its AI Turbo marker.</p>
-        <p><b>Foreground / Surface:</b> choose a drawing tool, paint value and brush. Right-click uses the secondary paint action.</p>
+        <p><b>Foreground / Surface:</b> choose a drawing tool, paint value and brush. Curve uses three clicks; Free-form closes near its start point. Right-click uses the secondary paint action.</p>
         <p><b>Recovery:</b> rotate arrows with left/right mouse; Grab group supports multi-cell selection.</p>
         <p><b>Fixed viewport:</b> use the 640×512 viewport button with higher zoom, then move around with the trackpad or scrollbars.</p>
         <p><b>Race:</b> drag visible race/pit anchors or edit their fields. MiniMap and Map have their own edit modes.</p>
@@ -275,12 +275,12 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 </main>
 <script src="indyheat.js"></script>
 <script src="recovery-hook.js"></script>
-<script src="layer-tools.js?v=047"></script>
+<script src="layer-tools.js?v=050"></script>
 <script src="indyheat_race_graphics.js"></script>
 <script src="app.js"></script>
-<script src="layer-editor.js?v=047"></script>
+<script src="layer-editor.js?v=052"></script>
 <script src="waypoint-actions.js?v=035"></script>
-<script src="recovery-editor.js?v=048"></script>
+<script src="recovery-editor.js?v=049"></script>
 <script src="race-setup.js?v=046"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
