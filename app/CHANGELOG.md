@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.42 — extend master zoom to 1000%
+
+- Increased the Master Circuit Zoom control maximum from 600% to 1000%.
+- Existing 50% zoom increments and all zoom/render behaviour are unchanged.
+
+## v0.41 — single authoritative editor mode
+
+- Added one authoritative `currentModeId` in the consolidated UI coordinator.
+- All eight editor mode buttons now derive their selected state from that single value, so more than one mode button cannot remain highlighted at the same time.
+- Existing mode modules may continue to perform their own setup/teardown, but any independent `.active` class changes are immediately reconciled back to the authoritative mode.
+- Trusted user mode changes and legitimate programmatic mode changes are both supported; internal Waypoints hand-off clicks during another mode's activation cannot steal the selected mode.
+- Added matching `aria-pressed` state and a `data-current-mode` value on the mode-button host.
+- Updated the editor's visible/internal version and `editor-ui.js` cache-busting value to v0.41.
+
+## v0.40 — allow drawing primitives beyond the canvas edge
+
+- Changed line, rectangle/square and ellipse/circle drag geometry so the endpoint is no longer clamped to the visible track boundary.
+- Shapes may now extend beyond the Foreground 320×256 bitmap or the Surface 160×112 logical grid (320×224 gameplay area).
+- The complete primitive is generated first; existing resource bounds checks simply discard pixels/cells that fall outside the real resource.
+- This allows genuinely clipped partial shapes at the edge, including circles/ellipses where only part of the curve, a single column or a single pixel remains on-screen.
+- Freehand and Fill retain their established bounded behaviour.
+- Updated the editor's visible/internal version and `layer-editor.js` cache-busting value to v0.40.
+
+## v0.39 — drawing tools reach the final edge
+
+- Fixed drag-based Surface and Foreground drawing tools committing the last `pointermove` position instead of the actual pointer-release position.
+- Line, rectangle, filled rectangle, ellipse/circle and filled ellipse/circle now use the true release pixel/cell, so shapes can reach the final row/column instead of stopping one step short.
+- Freehand drawing also closes the final segment to the pointer-release position when no final move event was emitted.
+- Active Surface drags clamp to the real final 160×112 cell at the bottom edge instead of discarding a release exactly at or beyond gameplay Y=224.
+- Updated the editor's visible/internal version and `layer-editor.js` cache-busting value to v0.39.
+
 ## v0.38 — Recovery view group and cross-mode Race/Pits overlays
 
 - Added a foldable **Recovery** group to the left-side View controls.

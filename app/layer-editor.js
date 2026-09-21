@@ -665,28 +665,37 @@ function queueRedraw(immediate=false){
   if(redrawPending)return;redrawPending=true;requestAnimationFrame(drawNow);
 }
 
-function canvasPoint(ev,canvas=overlay){
+function canvasPoint(ev,canvas=overlay,clamp=true){
   const r=canvas.getBoundingClientRect();
-  return {
-    x:Math.max(0,Math.min(319,(ev.clientX-r.left)*320/r.width)),
-    y:Math.max(0,Math.min(255,(ev.clientY-r.top)*256/r.height))
-  };
+  const x=(ev.clientX-r.left)*320/r.width;
+  const y=(ev.clientY-r.top)*256/r.height;
+  return clamp
+    ? {x:Math.max(0,Math.min(319,x)),y:Math.max(0,Math.min(255,y))}
+    : {x,y};
 }
-function magnifierPoint(ev){
+function magnifierPoint(ev,clamp=true){
   const r=magnifierCanvas.getBoundingClientRect();
-  const lx=Math.max(0,Math.min(63.999,(ev.clientX-r.left)*64/r.width));
-  const ly=Math.max(0,Math.min(63.999,(ev.clientY-r.top)*64/r.height));
+  let lx=(ev.clientX-r.left)*64/r.width;
+  let ly=(ev.clientY-r.top)*64/r.height;
+  if(clamp){
+    lx=Math.max(0,Math.min(63.999,lx));
+    ly=Math.max(0,Math.min(63.999,ly));
+  }
   return {x:magnifier.x+lx,y:magnifier.y+ly};
 }
-function worldPoint(ev,source='main'){
-  return source==='magnifier'?magnifierPoint(ev):canvasPoint(ev);
+function worldPoint(ev,source='main',clamp=true){
+  return source==='magnifier'?magnifierPoint(ev,clamp):canvasPoint(ev,overlay,clamp);
 }
-function gridPoint(pos){
+function gridPoint(pos,allowOutside=false){
   if(editMode==='surface'){
-    if(pos.y>=224)return null;
-    return {x:Math.max(0,Math.min(159,Math.floor(pos.x/2))),y:Math.max(0,Math.min(111,Math.floor(pos.y/2)))};
+    if(!allowOutside&&(pos.x<0||pos.x>=320||pos.y<0||pos.y>=224))return null;
+    return {x:Math.floor(pos.x/2),y:Math.floor(pos.y/2)};
   }
-  return {x:Math.max(0,Math.min(319,Math.floor(pos.x))),y:Math.max(0,Math.min(255,Math.floor(pos.y)))};
+  if(!allowOutside&&(pos.x<0||pos.x>=320||pos.y<0||pos.y>=256))return null;
+  return {x:Math.floor(pos.x),y:Math.floor(pos.y)};
+}
+function primitiveAllowsOutside(tool){
+  return tool==='line'||tool==='rectangle'||tool==='rectangle-filled'||tool==='ellipse'||tool==='ellipse-filled';
 }
 function paintValue(){return currentPaint();}
 function secondaryPaintValue(){
@@ -810,15 +819,17 @@ function beginGestureFrom(ev,source='main'){
   ev.preventDefault();
 }
 function moveGestureFrom(ev,source='main'){
-  const pos=worldPoint(ev,source);
-  updateEditCursorAt(pos);
+  const cursorPos=worldPoint(ev,source,true);
+  updateEditCursorAt(cursorPos);
 
   if(source==='main'&&magnifier.active&&magnifier.placing&&!gesture){
-    setMagnifierFromWorld(pos);queueRedraw();return;
+    setMagnifierFromWorld(cursorPos);queueRedraw();return;
   }
 
   if(!gesture||gesture.pointerId!==ev.pointerId||gesture.source!==source)return;
-  const p=gridPoint(pos);if(!p)return;
+  const allowOutside=primitiveAllowsOutside(gesture.tool);
+  const pos=worldPoint(ev,source,!allowOutside);
+  const p=gridPoint(pos,allowOutside);if(!p)return;
   gesture.current=p;
   if(gesture.tool==='freehand'){
     writeBrushedPoints(L.linePoints(gesture.last.x,gesture.last.y,p.x,p.y),gesture.value,gesture.brushSize,gesture.brushShape,gesture.hatched,gesture.hatchPhase);
@@ -834,6 +845,21 @@ function endGestureFrom(ev,source='main',cancel=false){
   if(cancel){
     const res=activeResource();if(res&&g.snapshot)res.data.set(g.snapshot.before);decodeCurrent();queueRedraw(true);return;
   }
+
+  // Pointer-up can arrive without a matching final pointer-move event.
+  // Primitive tools deliberately keep an out-of-bounds endpoint so their full
+  // geometry may extend beyond the track. writePoint() clips the resulting
+  // pixels/cells to the real resource, allowing partial shapes at every edge.
+  const allowOutside=primitiveAllowsOutside(g.tool);
+  const release=gridPoint(worldPoint(ev,source,!allowOutside),allowOutside);
+  if(release){
+    g.current=release;
+    if(g.tool==='freehand'&&(release.x!==g.last.x||release.y!==g.last.y)){
+      writeBrushedPoints(L.linePoints(g.last.x,g.last.y,release.x,release.y),g.value,g.brushSize,g.brushShape,g.hatched,g.hatchPhase);
+      g.last=release;
+    }
+  }
+
   if(g.tool!=='freehand'&&g.tool!=='fill'){
     writeBrushedPoints(primitivePoints(g.tool,g.start,g.current),g.value,g.brushSize,g.brushShape,g.hatched,g.hatchPhase);
   }

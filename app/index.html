@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.38</title>
+<title>Indy Heat Amiga – Circuit Editor v0.42</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
@@ -44,10 +44,10 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 
 </head>
 <body>
-<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.38";</script>
+<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.42";</script>
 <header>
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor v0.38</h1>
+    <h1>Indy Heat Amiga — Circuit Editor v0.42</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
@@ -143,7 +143,7 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
       </div>
       <label id="masterZoomControl">Master Circuit Zoom
         <div class="masterZoomSlider">
-          <input id="editorScale" type="range" min="1" max="6" step="0.5" value="2">
+          <input id="editorScale" type="range" min="1" max="10" step="0.5" value="2">
           <span id="editorScaleText">200%</span>
         </div>
       </label>
@@ -279,13 +279,13 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 <script src="layer-tools.js"></script>
 <script src="indyheat_race_graphics.js"></script>
 <script src="app.js"></script>
-<script src="layer-editor.js?v=036"></script>
+<script src="layer-editor.js?v=040"></script>
 <script src="waypoint-actions.js?v=035"></script>
 <script src="recovery-editor.js?v=038"></script>
 <script src="race-setup.js?v=038"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
-<script src="editor-ui.js?v=038"></script>
+<script src="editor-ui.js?v=041"></script>
 
 <script>
 (function(root){

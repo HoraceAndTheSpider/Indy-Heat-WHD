@@ -9,7 +9,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.38 — consolidated UI coordination.
+ * Indy Heat Circuit Editor v0.41 — consolidated UI coordination.
  *
  * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
  * opacity policy and Race presentation controls already accepted by the project.
@@ -41,6 +41,11 @@ let uiEventsInstalled=false;
 let resizeObserver=null;
 let opacityObserver=null;
 let modeCoordinatorInstalled=false;
+let modeClassObserver=null;
+let currentModeId=null;
+let modeTransitionTarget=null;
+let modeTransitionSerial=0;
+let modeSyncGuard=false;
 let foldSyncInstalled=false;
 let raceCanvasPatched=false;
 let lapObserver=null;
@@ -120,8 +125,8 @@ function presentation(){
 
 function setVersionLabel(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.38';
-  document.title='Indy Heat Amiga – Circuit Editor v0.38';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.41';
+  document.title='Indy Heat Amiga – Circuit Editor v0.41';
 }
 
 function installStyle(){
@@ -204,6 +209,76 @@ function reorderModeButtons(){
   }
   return found>=7;
 }
+function inferCurrentMode(){
+  // Startup fallback only. Once a mode is chosen, currentModeId is authoritative.
+  if(!$('raceSetupPane')?.hidden&&$('layerEditRaceSetup'))return 'layerEditRaceSetup';
+  if((!$('recoveryEditorPane')?.hidden||$('recoveryEditCanvas')?.classList.contains('editing'))&&$('layerEditRecovery'))return 'layerEditRecovery';
+
+  const active=MODE_ORDER.filter(id=>$(id)?.classList.contains('active'));
+  if(active.length===1)return active[0];
+
+  const drawing=$('layerDrawingPane');
+  if(drawing&&!drawing.hidden){
+    if($('layerEditMask')?.classList.contains('active'))return 'layerEditMask';
+    if($('layerEditSurface')?.classList.contains('active'))return 'layerEditSurface';
+  }
+  return $('layerModeWaypoints')?'layerModeWaypoints':active[0]||null;
+}
+function syncCurrentModeButtons(){
+  const host=$('layerModeButtons');
+  if(!host)return false;
+  if(!currentModeId||!$(currentModeId))currentModeId=inferCurrentMode();
+  if(!currentModeId)return false;
+
+  modeSyncGuard=true;
+  try{
+    for(const id of MODE_ORDER){
+      const b=$(id);
+      if(!b)continue;
+      const on=id===currentModeId;
+      b.classList.toggle('active',on);
+      b.setAttribute('aria-pressed',on?'true':'false');
+    }
+    host.dataset.currentMode=currentModeId;
+    root.IndyHeatEditorCurrentMode=currentModeId;
+  }finally{
+    modeSyncGuard=false;
+  }
+  return true;
+}
+function setCurrentMode(id){
+  if(!MODE_ORDER.includes(id)||!$(id))return false;
+  currentModeId=id;
+  return syncCurrentModeButtons();
+}
+function beginModeTransition(id){
+  const serial=++modeTransitionSerial;
+  modeTransitionTarget=id;
+  setCurrentMode(id);
+  // Keep the target authoritative through the mode modules' own synchronous and
+  // deferred hand-off clicks, then reassert once those have settled.
+  setTimeout(()=>{
+    if(serial!==modeTransitionSerial)return;
+    modeTransitionTarget=null;
+    syncCurrentModeButtons();
+  },50);
+}
+function installModeClassAuthority(){
+  const host=$('layerModeButtons');
+  if(!host)return false;
+  syncCurrentModeButtons();
+  if(modeClassObserver)return true;
+
+  modeClassObserver=new MutationObserver(()=>{
+    if(modeSyncGuard)return;
+    // Individual mode modules still alter .active during their setup/teardown.
+    // The single coordinator state always wins.
+    queueMicrotask(syncCurrentModeButtons);
+  });
+  modeClassObserver.observe(host,{subtree:true,attributes:true,attributeFilter:['class']});
+  return true;
+}
+
 function recoveryActuallyActive(){
   const pane=$('recoveryEditorPane'),canvas=$('recoveryEditCanvas'),button=$('layerEditRecovery');
   return !!((pane&&!pane.hidden)||canvas?.classList.contains('editing')||button?.classList.contains('active'));
@@ -281,16 +356,29 @@ function installModeCoordinator(){
     const b=e.target?.closest?.('#layerModeButtons button');
     if(!b||modeGuard)return;
     const id=b.id;
-    // Existing mode implementations intentionally use .click() on Waypoints as
-    // an internal hand-off/deactivation mechanism.  Only a trusted user click
-    // should establish the new overlay policy; synthetic clicks must not win
-    // a later setTimeout race and re-enable Waypoints behind the chosen mode.
-    if(e.isTrusted===false)return;
+
+    if(e.isTrusted===false){
+      // Programmatic mode changes are legitimate in a few workflows, but the
+      // Waypoints click used internally while another user-selected mode is
+      // activating must not steal the authoritative mode.
+      if(modeTransitionTarget)return;
+      beginModeTransition(id);
+      setTimeout(()=>{
+        reorderModeButtons();
+        applyModeOverlayPolicy(id);
+        syncOverlayOpacity();
+        syncCurrentModeButtons();
+      },0);
+      return;
+    }
+
+    beginModeTransition(id);
     if(id!=='layerEditRecovery'&&recoveryActuallyActive())deactivateRecoveryThroughOwnApi();
     setTimeout(()=>{
       reorderModeButtons();
       applyModeOverlayPolicy(id);
       syncOverlayOpacity();
+      syncCurrentModeButtons();
     },0);
   },true);
 
@@ -1017,6 +1105,7 @@ function tick(){
   reorderModeButtons();
   installUiEvents();
   installModeCoordinator();
+  installModeClassAuthority();
   installOpacityWatch();
   installLapGuards();
   ensureLeftFolds();
@@ -1057,7 +1146,7 @@ else
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.38 — consolidated accepted refinements.
+ * Indy Heat Circuit Editor v0.41 — consolidated accepted refinements.
  *
  * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
  * Race-to-Garage MiniMap palette map and final editor-mode ordering.
@@ -1173,8 +1262,8 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.38';
-  document.title='Indy Heat Amiga – Circuit Editor v0.38';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.41';
+  document.title='Indy Heat Amiga – Circuit Editor v0.41';
 }
 
 

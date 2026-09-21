@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.38**.
+Current editor version: **v0.42**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -24,6 +24,12 @@ This directory is the complete deployable browser editor. It is intentionally ke
 ## Current authoring contract
 
 Waypoint mode includes **Flip all waypoints L/R**, which mirrors every point on Routes A/B/C in game-screen space using `screen X = 320 - screen X`. The stored/runtime X values are solved through the code-derived A082 projection; Y, sequence, flags and link topology are left unchanged.
+
+Master Circuit Zoom now supports 100%–1000% in 50% increments.
+
+Editor mode selection is centrally coordinated: Backdrop, Foreground, Surface, Waypoints, Recovery, Race, MiniMap and Map share one authoritative current mode, so only one mode button can be selected at a time.
+
+Drawing primitives are clipped by the resource boundary rather than by the drag geometry. Lines, rectangles/squares and ellipses/circles may extend beyond the visible track; only the resulting in-bounds Foreground pixels or Surface cells are written. This permits partial shapes at any edge without flattening the primitive against the canvas boundary.
 
 Foreground edit mode includes **Invert layer**. It flips the complete 320×256 1bpp foreground/occlusion mask in one operation. On `$2804` resource variants only the `$2800` bitmap bytes are inverted; the four trailing bytes are preserved. The action participates in the normal Undo/Revert/dirty-state path, so raw foreground export and circuit ZIP export use the inverted data directly.
 
