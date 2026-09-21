@@ -1,5 +1,5 @@
 /*
- * Indy Heat Amiga Circuit Editor — consolidated UI module v0.37
+ * Indy Heat Amiga Circuit Editor — consolidated UI module v0.38
  *
  * This replaces the historical corrective-layer file layering. The two internal scopes are deliberately retained to preserve the
  * already accepted behaviour while presenting one stable runtime module.
@@ -9,7 +9,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.37 — consolidated UI coordination.
+ * Indy Heat Circuit Editor v0.38 — consolidated UI coordination.
  *
  * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
  * opacity policy and Race presentation controls already accepted by the project.
@@ -120,8 +120,8 @@ function presentation(){
 
 function setVersionLabel(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.37';
-  document.title='Indy Heat Amiga – Circuit Editor v0.37';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.38';
+  document.title='Indy Heat Amiga – Circuit Editor v0.38';
 }
 
 function installStyle(){
@@ -169,6 +169,8 @@ function installStyle(){
     details.indyheatViewFold .classToggles{padding-left:12px}
     .indyheatViewToggleBody,.circuitViewToggleBody{padding:3px 0 4px 12px}
     .indyheatViewToggleBody label,.circuitViewToggleBody label{margin:5px 0}
+    .recoveryViewColourLabel{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center}
+    .recoveryViewColourLabel span{min-width:0}
     @media(max-width:1050px){#layerEditorColumn{width:100%!important;min-width:0!important;max-width:none!important;overflow-y:visible!important;scrollbar-gutter:auto!important}}
   `;
   document.head.appendChild(s);
@@ -246,11 +248,16 @@ function applyModeOverlayPolicy(id){
     const mask=id==='layerEditMask';
     const surface=id==='layerEditSurface';
     const waypoints=id==='layerModeWaypoints';
+    const recovery=id==='layerEditRecovery';
     const race=id==='layerEditRaceSetup';
 
+    // Mode selection establishes defaults. The left View controls can then
+    // deliberately override Race/Pits visibility without changing edit mode.
+    root.IndyHeatRaceOverlayOverride=false;
     setCheck('layerShowMask',mask);
     setCheck('layerShowSurface',surface);
     setCheck('showWaypoints',waypoints);
+    setCheck('recoveryShowArrows',recovery);
 
     if(race){
       restoreGroup('pits',PIT_TOGGLES);
@@ -292,6 +299,8 @@ function installModeCoordinator(){
   document.addEventListener('change',e=>{
     if(policyGuard)return;
     const id=e.target?.id;
+    if(!policyGuard&&(PIT_TOGGLES.includes(id)||RACE_TOGGLES.includes(id)))
+      root.IndyHeatRaceOverlayOverride=true;
     if(PIT_TOGGLES.includes(id)){
       groupMemory.pits.autoDisabled=false;
       groupMemory.pits.values=currentValues(PIT_TOGGLES);
@@ -300,6 +309,7 @@ function installModeCoordinator(){
       groupMemory.race.values=currentValues(RACE_TOGGLES);
     }
     syncFoldMasters();
+    if(PIT_TOGGLES.includes(id)||RACE_TOGGLES.includes(id))renderHud();
   });
   return true;
 }
@@ -342,6 +352,8 @@ function installMasterSummary(details,title,masterId,sourceIds,{hideNode=null,si
     label.addEventListener('click',stop);
     master.addEventListener('click',stop);
     master.addEventListener('change',()=>{
+      if(sourceIds.some(id=>PIT_TOGGLES.includes(id)||RACE_TOGGLES.includes(id)))
+        root.IndyHeatRaceOverlayOverride=true;
       if(single)setCheck(sourceIds[0],master.checked);
       else dispatchAggregate(sourceIds,master.checked);
       syncFoldMasters();
@@ -368,23 +380,40 @@ function syncMaster(id,ids){
   m.indeterminate=s.indeterminate;
 }
 function makeFoldMirrorToggle(host,id,label,targetId){
-  let box=$(id);
-  if(box)return box;
-  const l=document.createElement('label');
-  l.innerHTML=`<input id="${id}" type="checkbox"> ${label}`;
-  box=l.querySelector('input');
+  let box=$(id),created=false;
+  if(!box){
+    const l=document.createElement('label');
+    l.innerHTML=`<input id="${id}" type="checkbox"> ${label}`;
+    box=l.querySelector('input');
+    host.appendChild(l);
+    created=true;
+  }
   const target=$(targetId);
   if(target)box.checked=!!target.checked;
-  box.addEventListener('change',()=>{
-    const t=$(targetId);
-    if(t){
-      t.checked=box.checked;
-      t.dispatchEvent(new Event('change',{bubbles:true}));
+  if(!box.dataset.editorUiRaceMirror){
+    box.dataset.editorUiRaceMirror='1';
+    // Capture runs before circuit-package.js's older mirror listener. This makes
+    // the user's left-panel click an override before the target change redraws.
+    box.addEventListener('change',()=>{if(!policyGuard)root.IndyHeatRaceOverlayOverride=true;},true);
+    if(created){
+      box.addEventListener('change',()=>{
+        const t=$(targetId);
+        if(t){
+          t.checked=box.checked;
+          t.dispatchEvent(new Event('change',{bubbles:true}));
+        }
+        syncFoldMasters();
+        renderHud();
+      });
     }
-    syncFoldMasters();
-    renderHud();
-  });
-  host.appendChild(l);
+    if(target){
+      target.addEventListener('change',()=>{
+        box.checked=!!target.checked;
+        syncFoldMasters();
+        renderHud();
+      });
+    }
+  }
   return box;
 }
 
@@ -426,18 +455,46 @@ function restoreLeftFoldContainers(){
   const viewSection=surfaceRow?.closest('section')||waypoint.closest('section');
   if(!viewSection)return false;
 
+  let recovery=$('circuitViewRecovery');
+  const recoveryArrows=$('recoveryShowArrows'),recoveryGrid=$('recoveryShowGrid');
+  const recoveryArrowColour=$('recoveryArrowColour'),recoveryGridColour=$('recoveryGridColour');
+  if(!recovery&&recoveryArrows&&recoveryGrid){
+    const arrowsSourceRow=recoveryArrows.closest('.recoveryRow');
+    const gridSourceRow=recoveryGrid.closest('.recoveryRow');
+    const colourSource=recoveryArrowColour?.closest('.recoveryColourGrid')||recoveryGridColour?.closest('.recoveryColourGrid');
+    recovery=document.createElement('details');
+    recovery.id='circuitViewRecovery';
+    recovery.open=true;
+    recovery.innerHTML='<summary>Recovery</summary><div class="circuitViewToggleBody"></div>';
+    const body=recovery.querySelector('div');
+    const addRow=(check,label,colour)=>{
+      const row=document.createElement('label');
+      row.className='recoveryViewColourLabel';
+      row.appendChild(check);
+      const text=document.createElement('span');text.textContent=label;row.appendChild(text);
+      if(colour)row.appendChild(colour);
+      body.appendChild(row);
+    };
+    addRow(recoveryArrows,'Arrows',recoveryArrowColour);
+    addRow(recoveryGrid,'Grid',recoveryGridColour);
+    if(arrowsSourceRow)arrowsSourceRow.style.display='none';
+    if(gridSourceRow)gridSourceRow.style.display='none';
+    if(colourSource)colourSource.style.display='none';
+    viewSection.insertBefore(recovery,$('circuitViewPits')||$('circuitViewRaceControl')||null);
+  }
+
   let pits=$('circuitViewPits');
   if(!pits){
     pits=document.createElement('details');
     pits.id='circuitViewPits';
     pits.open=true;
     pits.innerHTML='<summary>Pits</summary><div class="circuitViewToggleBody"></div>';
-    const ph=pits.querySelector('div');
-    makeFoldMirrorToggle(ph,'circuitShowPits','Pit/service + crew','raceShowPits');
-    makeFoldMirrorToggle(ph,'circuitShowBoards','PIT boards','raceShowBoards');
-    makeFoldMirrorToggle(ph,'circuitShowPitCars','Cars in pits','raceShowPitCars');
     viewSection.appendChild(pits);
   }
+  const ph=pits.querySelector('.circuitViewToggleBody')||pits.querySelector('div');
+  makeFoldMirrorToggle(ph,'circuitShowPits','Pit/service + crew','raceShowPits');
+  makeFoldMirrorToggle(ph,'circuitShowBoards','PIT boards','raceShowBoards');
+  makeFoldMirrorToggle(ph,'circuitShowPitCars','Cars in pits','raceShowPitCars');
 
   let race=$('circuitViewRaceControl');
   if(!race){
@@ -445,33 +502,33 @@ function restoreLeftFoldContainers(){
     race.id='circuitViewRaceControl';
     race.open=true;
     race.innerHTML='<summary>Race control</summary><div class="circuitViewToggleBody"></div>';
-    const rh=race.querySelector('div');
-    makeFoldMirrorToggle(rh,'circuitShowStart','Start / grid anchor','raceShowStart');
-    makeFoldMirrorToggle(rh,'circuitShowGridCars','Cars on grid','raceShowGridCars');
-    makeFoldMirrorToggle(rh,'circuitShowFlag','Flag man','raceShowFlag');
-    for(const [id,label] of [
-      ['circuitShowCurrentLaps','Current-lap tower'],
-      ['circuitShowTotalLaps','Total laps'],
-      ['circuitShowTimer','Timer']
-    ]){
-      if($(id))continue;
-      const l=document.createElement('label');
-      l.innerHTML=`<input id="${id}" type="checkbox" checked> ${label}`;
-      l.querySelector('input').addEventListener('change',()=>{
-        syncFoldMasters();
-        renderHud();
-      });
-      rh.appendChild(l);
-    }
     viewSection.appendChild(race);
+  }
+  const rh=race.querySelector('.circuitViewToggleBody')||race.querySelector('div');
+  makeFoldMirrorToggle(rh,'circuitShowStart','Start / grid anchor','raceShowStart');
+  makeFoldMirrorToggle(rh,'circuitShowGridCars','Cars on grid','raceShowGridCars');
+  makeFoldMirrorToggle(rh,'circuitShowFlag','Flag man','raceShowFlag');
+  for(const [id,label] of [
+    ['circuitShowCurrentLaps','Current-lap tower'],
+    ['circuitShowTotalLaps','Total laps'],
+    ['circuitShowTimer','Timer']
+  ]){
+    if($(id))continue;
+    const l=document.createElement('label');
+    l.innerHTML=`<input id="${id}" type="checkbox" checked> ${label}`;
+    l.querySelector('input').addEventListener('change',()=>{
+      syncFoldMasters();
+      renderHud();
+    });
+    rh.appendChild(l);
   }
 
   return !!(surface.closest('details[data-circuit-fold]')&&
-    waypoint.closest('details[data-circuit-fold]')&&pits&&race);
+    waypoint.closest('details[data-circuit-fold]')&&recovery&&pits&&race);
 }
 
 function ensureLeftFolds(){
-  // v0.37 regression repair: the original fold-builder can lose its startup
+  // v0.38 regression repair: the original fold-builder can lose its startup
   // race during consolidation. Re-create the accepted containers here, inside
   // the coordination module that already retries until the left UI is ready.
   restoreLeftFoldContainers();
@@ -481,6 +538,7 @@ function ensureLeftFolds(){
   const wpLabel=waypoint?.closest('label')||null;
   const surfaceDetails=surface?.closest('details[data-circuit-fold]')||surfaceRow?.closest('details');
   const waypointDetails=waypoint?.closest('details[data-circuit-fold]')||wpLabel?.closest('details');
+  const recovery=$('circuitViewRecovery');
   const pits=$('circuitViewPits');
   const race=$('circuitViewRaceControl');
 
@@ -492,6 +550,7 @@ function ensureLeftFolds(){
     waypointDetails.id='circuitViewWaypoints';
     installMasterSummary(waypointDetails,'Waypoints','circuitMasterWaypoints',['showWaypoints'],{hideNode:wpLabel,single:true});
   }
+  if(recovery)installMasterSummary(recovery,'Recovery','circuitMasterRecovery',['recoveryShowArrows','recoveryShowGrid']);
   if(pits)installMasterSummary(pits,'Pits','circuitMasterPits',PIT_TOGGLES);
   if(race)installMasterSummary(race,'Race Control','circuitMasterRace',RACE_TOGGLES);
 
@@ -500,11 +559,12 @@ function ensureLeftFolds(){
     document.addEventListener('change',syncFoldMasters);
   }
   syncFoldMasters();
-  return !!(surfaceDetails&&waypointDetails&&pits&&race);
+  return !!(surfaceDetails&&waypointDetails&&recovery&&pits&&race);
 }
 function syncFoldMasters(){
   syncMaster('circuitMasterSurface',['layerShowSurface']);
   syncMaster('circuitMasterWaypoints',['showWaypoints']);
+  syncMaster('circuitMasterRecovery',['recoveryShowArrows','recoveryShowGrid']);
   syncMaster('circuitMasterPits',PIT_TOGGLES);
   syncMaster('circuitMasterRace',RACE_TOGGLES);
 }
@@ -676,6 +736,11 @@ function raceActive(){
   const pane=$('raceSetupPane'),button=$('layerEditRaceSetup');
   return !!(pane&&!pane.hidden&&button?.classList.contains('active'));
 }
+function raceHudVisible(){
+  if(raceActive())return true;
+  return root.IndyHeatRaceOverlayOverride===true&&
+    ['circuitShowCurrentLaps','circuitShowTotalLaps','circuitShowTimer'].some(id=>!!$(id)?.checked);
+}
 function viewerStack(){
   return $('view')?.closest('.canvasStack')||$('view')?.parentElement||null;
 }
@@ -743,7 +808,7 @@ function renderHud(){
   if(!ensureHudCanvas())return;
   const c=hudCanvas(),ctx=c.getContext('2d');
   ctx.clearRect(0,0,c.width,c.height);
-  c.hidden=!raceActive();
+  c.hidden=!raceHudVisible();
   if(c.hidden){syncHudDragHit(null);return;}
 
   const q=presentation();
@@ -765,24 +830,26 @@ function renderHud(){
       drawRetailGlyph(ctx,0,p.lapDisplayX+d.x,p.lapDisplayY+d.y,S,HUD_TIMER_SOURCE);
   }
 
-  const h=hudHandle(p),x=h.x*S,y=h.y*S;
-  ctx.globalAlpha=1;
-  ctx.strokeStyle='#ffd84a';
-  ctx.fillStyle='#ffd84a';
-  ctx.lineWidth=Math.max(1,.7*S);
-  ctx.beginPath();
-  ctx.moveTo(x-5*S,y);ctx.lineTo(x+5*S,y);
-  ctx.moveTo(x,y-5*S);ctx.lineTo(x,y+5*S);
-  ctx.stroke();
+  if(raceActive()){
+    const h=hudHandle(p),x=h.x*S,y=h.y*S;
+    ctx.globalAlpha=1;
+    ctx.strokeStyle='#ffd84a';
+    ctx.fillStyle='#ffd84a';
+    ctx.lineWidth=Math.max(1,.7*S);
+    ctx.beginPath();
+    ctx.moveTo(x-5*S,y);ctx.lineTo(x+5*S,y);
+    ctx.moveTo(x,y-5*S);ctx.lineTo(x,y+5*S);
+    ctx.stroke();
 
-  if(h.clamped){
-    ctx.font=`${Math.max(9,Math.round(3.4*S))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;
-    ctx.textBaseline='top';
-    const t=`HUD ${h.actualX},${h.actualY}`;
-    const w=ctx.measureText(t).width;
-    const tx=Math.max(2,Math.min(c.width-w-2,x+5*S));
-    const ty=Math.max(2,Math.min(c.height-12,y+4*S));
-    ctx.fillText(t,tx,ty);
+    if(h.clamped){
+      ctx.font=`${Math.max(9,Math.round(3.4*S))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;
+      ctx.textBaseline='top';
+      const t=`HUD ${h.actualX},${h.actualY}`;
+      const w=ctx.measureText(t).width;
+      const tx=Math.max(2,Math.min(c.width-w-2,x+5*S));
+      const ty=Math.max(2,Math.min(c.height-12,y+4*S));
+      ctx.fillText(t,tx,ty);
+    }
   }
   ctx.restore();
 
@@ -990,7 +1057,7 @@ else
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.37 — consolidated accepted refinements.
+ * Indy Heat Circuit Editor v0.38 — consolidated accepted refinements.
  *
  * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
  * Race-to-Garage MiniMap palette map and final editor-mode ordering.
@@ -1106,8 +1173,8 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.37';
-  document.title='Indy Heat Amiga – Circuit Editor v0.37';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.38';
+  document.title='Indy Heat Amiga – Circuit Editor v0.38';
 }
 
 

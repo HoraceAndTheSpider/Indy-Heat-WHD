@@ -44,6 +44,7 @@ pane.innerHTML=`
   <div class="toolGroup">
     <div class="toolGroupTitle">Collision recovery directions</div>
     <div class="recoveryRow muted">One byte per 8×8 gameplay cell. Full-strength arrows intersect Surface class 1 (Edge / collision); other stored arrows can be retained as a faint editing reference.</div>
+    <div class="recoveryRow"><label><input id="recoveryShowArrows" type="checkbox"> Show recovery arrows</label></div>
     <div class="recoveryRow"><label><input id="recoveryShowDormant" type="checkbox" checked> Show non-active arrows faintly</label></div>
     <div class="recoveryRow"><label><input id="recoveryShowGrid" type="checkbox"> Show 8×8 recovery-cell grid</label></div>
     <div class="recoveryColourGrid">
@@ -227,22 +228,25 @@ function drawMarquee(scale){
   ctx.restore();
 }
 function draw(){
-  syncSize();ctx.clearRect(0,0,canvas.width,canvas.height);if(!active)return;
-  const h=latest('heading'),s=surfaceCapture();if(!h||!s){setStatus('Recovery data is still loading.');return;}
+  syncSize();ctx.clearRect(0,0,canvas.width,canvas.height);
+  const showArrows=!!$('recoveryShowArrows')?.checked,showGrid=!!$('recoveryShowGrid')?.checked;
+  if(!active&&!showArrows&&!showGrid)return;
+  const h=latest('heading'),s=surfaceCapture();if(!h||!s){if(active)setStatus('Recovery data is still loading.');return;}
   const S=canvas.width/GAME_W,showDormant=$('recoveryShowDormant').checked,v=h.result.values;
   const overlayAlpha=Math.max(.1,Math.min(1,Number($('opacity')?.value||55)/100));
   drawGrid(S,overlayAlpha);
   const selectedSet=new Set(selectionIndices());
-  if(pointerGesture?.kind==='marquee')for(const i of marqueeIndices(pointerGesture,s))selectedSet.add(i);
+  if(active&&pointerGesture?.kind==='marquee')for(const i of marqueeIndices(pointerGesture,s))selectedSet.add(i);
   let activeCount=0,dormantCount=0;
   for(let gy=0;gy<GRID_H;gy++)for(let gx=0;gx<GRID_W;gx++){
     const i=gy*GRID_W+gx,relevant=R.cellIntersectsSurfaceClass(s.result.cells,gx,gy,1,s.result.width,s.result.height);
     if(relevant)activeCount++;else dormantCount++;
-    if(!relevant&&!showDormant)continue;
-    arrow((gx*CELL+CELL/2)*S,(gy*CELL+CELL/2)*S,v[i],relevant?overlayAlpha:overlayAlpha*.22,S,selectedSet.has(i));
+    if(!showArrows||(!relevant&&!showDormant))continue;
+    arrow((gx*CELL+CELL/2)*S,(gy*CELL+CELL/2)*S,v[i],relevant?overlayAlpha:overlayAlpha*.22,S,active&&selectedSet.has(i));
   }
-  drawMarquee(S);
+  if(active)drawMarquee(S);
   ctx.globalAlpha=1;
+  if(!active)return;
   const sel=selectionIndices();
   if(pointerGesture?.kind==='rotate'){
     setStatus(`Recovery +3 · ${pointerGesture.label} · hold to continue · ${pointerGesture.steps} ${pointerGesture.steps===1?'step':'steps'} applied to ${pointerGesture.indices.length} ${pointerGesture.indices.length===1?'cell':'cells'}. Release to finish.${isDirty()?' · Modified':''}`);
@@ -341,7 +345,7 @@ window.addEventListener('blur',()=>finishPointerGesture(null,false));
 canvas.addEventListener('contextmenu',e=>{if(active)e.preventDefault();});
 
 function deactivateRecovery(){
-  if(!active)return;finishPointerGesture(null,true);active=false;canvas.classList.remove('editing');mode.classList.remove('active');pane.hidden=true;ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!active)return;finishPointerGesture(null,true);active=false;canvas.classList.remove('editing');mode.classList.remove('active');pane.hidden=true;draw();
 }
 function activateRecovery(){
   if(active){draw();return;}
@@ -351,10 +355,12 @@ function activateRecovery(){
   buttons.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
   active=true;mode.classList.add('active');pane.hidden=false;canvas.classList.add('editing');selectedGroup.clear();grabGroup=false;pointerGesture=null;
   $('recoveryGrabGroup')?.classList.remove('active');
+  const arrows=$('recoveryShowArrows');if(arrows&&!arrows.checked){arrows.checked=true;arrows.dispatchEvent(new Event('change',{bubbles:true}));}
   draw();
 }
 mode.addEventListener('click',e=>{e.preventDefault();activateRecovery();});
 ['layerModeWaypoints','layerEditSurface','layerEditMask'].forEach(id=>$(id)?.addEventListener('click',()=>{if(active)deactivateRecovery();}));
+$('recoveryShowArrows').addEventListener('change',draw);
 $('recoveryShowDormant').addEventListener('change',draw);
 $('recoveryShowGrid').addEventListener('change',draw);
 ['recoveryArrowColour','recoveryGridColour'].forEach(id=>$(id)?.addEventListener('input',()=>{saveRecoveryColours();draw();}));
@@ -366,13 +372,13 @@ $('recoveryClearGroup').addEventListener('click',clearGroup);
 $('recoveryUndo').addEventListener('click',undo);
 $('recoveryRevert').addEventListener('click',revert);
 $('trackSelect')?.addEventListener('change',()=>{finishPointerGesture(null,true);selectedGroup.clear();grabGroup=false;$('recoveryGrabGroup')?.classList.remove('active');setTimeout(()=>{updateStats();draw();},0);});
-document.addEventListener('indyheat-recovery-capture',()=>{if(active){updateStats();draw();}});
-$('fileInput')?.addEventListener('change',()=>{finishPointerGesture(null,true);selectedGroup.clear();grabGroup=false;$('recoveryGrabGroup')?.classList.remove('active');if(active){setStatus('Loading recovery data…');setTimeout(draw,0);}});
-$('dropZone')?.addEventListener('drop',()=>{finishPointerGesture(null,true);selectedGroup.clear();grabGroup=false;$('recoveryGrabGroup')?.classList.remove('active');if(active){setStatus('Loading recovery data…');setTimeout(draw,0);}});
+document.addEventListener('indyheat-recovery-capture',()=>{updateStats();draw();});
+$('fileInput')?.addEventListener('change',()=>{finishPointerGesture(null,true);selectedGroup.clear();grabGroup=false;$('recoveryGrabGroup')?.classList.remove('active');if(active)setStatus('Loading recovery data…');setTimeout(draw,0);});
+$('dropZone')?.addEventListener('drop',()=>{finishPointerGesture(null,true);selectedGroup.clear();grabGroup=false;$('recoveryGrabGroup')?.classList.remove('active');if(active)setStatus('Loading recovery data…');setTimeout(draw,0);});
 $('editorScale')?.addEventListener('change',()=>setTimeout(draw,0));
 $('opacity')?.addEventListener('input',draw);
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>draw()).observe(view);
 
 loadRecoveryColours();
-setTimeout(()=>{updateStats();if(active)draw();},800);
+setTimeout(()=>{updateStats();draw();},800);
 })();

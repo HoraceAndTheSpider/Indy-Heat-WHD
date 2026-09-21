@@ -288,7 +288,7 @@ function activate(){
   active=true;$('layerEditRaceSetup')?.classList.add('active');$('raceSetupPane').hidden=false;$('layerDrawingPane')&&( $('layerDrawingPane').hidden=true );$('layerWaypointHost')&&( $('layerWaypointHost').hidden=true );
   const c=overlayCanvas();c?.classList.add('editing');refreshPanel();draw();
 }
-function deactivate(){active=false;drag=null;$('layerEditRaceSetup')?.classList.remove('active');$('raceSetupPane').hidden=true;const c=overlayCanvas();c?.classList.remove('editing','dragging');if(c)c.getContext('2d').clearRect(0,0,c.width,c.height);}
+function deactivate(){active=false;drag=null;$('layerEditRaceSetup')?.classList.remove('active');$('raceSetupPane').hidden=true;const c=overlayCanvas();c?.classList.remove('editing','dragging');draw();}
 
 function refreshPanel(){
   const s=currentSetup();if(!s){setStatus('Race setup data is not available for this circuit yet.');return;}
@@ -330,7 +330,8 @@ function drawCarFootprint(ctx,x,y,S,heading16,text){
   ctx.strokeStyle='#ffd84a';ctx.beginPath();ctx.moveTo(2*S,0);ctx.lineTo(5*S,0);ctx.moveTo(4*S,-1*S);ctx.lineTo(5*S,0);ctx.lineTo(4*S,1*S);ctx.stroke();ctx.restore();label(ctx,text,(x+5)*S,(y-7)*S,S);
 }
 function draw(){
-  const c=overlayCanvas(),v=viewCanvas();if(!c||!v)return;syncSize();const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);hitTargets=[];if(!active)return;
+  const c=overlayCanvas(),v=viewCanvas();if(!c||!v)return;syncSize();const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);hitTargets=[];
+  if(!active&&root.IndyHeatRaceOverlayOverride!==true)return;
   const s=currentSetup();if(!s)return;const S=c.width/320,alpha=Math.max(.25,Math.min(1,Number($('opacity')?.value||55)/100));ctx.globalAlpha=alpha;
   if($('raceShowStart')?.checked){const q=projectFixedXZ(s.startX,s.startY);if(q)anchor(ctx,q.x,q.y,S,'START GRID','start');}
   if($('raceShowGridCars')?.checked){for(const car of gridCarPositions(s)){const q=projectFixedXZ(car.x,car.y);if(q)drawCarFootprint(ctx,q.x,q.y,S,car.heading16,`C${car.index+1}`);}}

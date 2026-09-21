@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.38 — Recovery view group and cross-mode Race/Pits overlays
+
+- Added a foldable **Recovery** group to the left-side View controls.
+- Recovery **Arrows** and **Grid** now have independent visibility checkboxes there, with their existing colour pickers alongside them; the grid display control is no longer left isolated in the Recovery edit pane.
+- Recovery arrows can now be displayed as an overlay while another edit mode is active. Selecting Recovery mode still enables the arrows by default; other mode selections default them off, after which the left View control can deliberately re-enable them for comparison.
+- **Pits** and **Race Control** overlays now render when enabled from the left View controls even when Race edit mode is not active. This allows comparisons such as PIT-board positions against Surface or Foreground overlays.
+- Mode selection still applies the established default of hiding Race/Pits overlays outside Race mode, but a subsequent left-panel selection is now treated as an explicit visibility override rather than being ignored.
+- Fixed the left Pits/Race mirror checkboxes so they stay synchronised when mode defaults change the underlying race visibility controls.
+- Race HUD overlays can also be shown outside Race edit mode without exposing the Race edit drag cursor/anchor.
+- Updated the editor's visible/internal version and changed-script cache-busting values to v0.38.
+
 ## v0.37 — restore left-side folding controls
 
 - Restored the accepted foldable **Surface Types**, **Waypoints**, **Pits** and **Race Control** sections in the left-side View controls.
