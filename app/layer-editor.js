@@ -490,23 +490,21 @@ function drawSurface(){
   octx.restore();
 }
 function primitivePoints(tool,a,b){
-  if(tool==='line')return L.linePoints(a.x,a.y,b.x,b.y);
-  if(tool==='rectangle')return L.rectanglePoints(a.x,a.y,b.x,b.y);
-  if(tool==='rectangle-filled')return L.filledRectanglePoints(a.x,a.y,b.x,b.y);
-  if(tool==='ellipse')return L.ellipsePoints(a.x,a.y,b.x,b.y);
-  if(tool==='ellipse-filled')return L.filledEllipsePoints(a.x,a.y,b.x,b.y);
-  return [];
+  return L.toolPoints(tool,a,b);
 }
 function brushSize(){return Math.max(1,Number(ui.brushSize?.value)||1);}
 function brushShape(){return ui.brushShape?.dataset.shape||'square';}
 function brushed(points,size=brushSize(),shape=brushShape(),hatched=brushHatched(),hatchPhase=0){
-  const expanded=L.expandPointsWithBrush(points,size,shape);
-  return hatched?L.hatchPoints(expanded,hatchPhase):expanded;
+  return L.applyBrush(points,{brushSize:size,brushShape:shape,hatched,hatchPhase});
 }
 function currentPreviewPoints(){
-  if(!gesture||!gesture.start||!gesture.current||!editMode)return [];
-  const base=primitivePoints(gesture.tool,gesture.start,gesture.current);
-  return brushed(base,gesture.brushSize,gesture.brushShape,gesture.hatched,gesture.hatchPhase);
+  if(!gesture||!gesture.start||!gesture.current||!editMode||!L.isPrimitiveTool(gesture.tool))return [];
+  return L.paintPoints(
+    gesture.tool,
+    gesture.start,
+    gesture.current,
+    {brushSize:gesture.brushSize,brushShape:gesture.brushShape,hatched:gesture.hatched,hatchPhase:gesture.hatchPhase}
+  );
 }
 function drawPreview(){
   const pts=currentPreviewPoints();if(!pts.length)return;
@@ -672,7 +670,7 @@ function gridPoint(pos,allowOutside=false){
   return {x:Math.floor(pos.x),y:Math.floor(pos.y)};
 }
 function primitiveAllowsOutside(tool){
-  return tool==='line'||tool==='rectangle'||tool==='rectangle-filled'||tool==='ellipse'||tool==='ellipse-filled';
+  return L.isPrimitiveTool(tool);
 }
 function paintValue(){return currentPaint();}
 function secondaryPaintValue(){
@@ -698,7 +696,8 @@ function writePoint(x,y,value){
   }
 }
 function writePoints(points,value){
-  for(const [x,y] of points)writePoint(x,y,value);
+  const size=gridSize();
+  return L.paintRaster({points,width:size.w,height:size.h,value,set:writePoint});
 }
 function writeBrushedPoints(points,value,size=brushSize(),shape=brushShape(),hatched=brushHatched(),hatchPhase=0){
   writePoints(brushed(points,size,shape,hatched,hatchPhase),value);
@@ -779,9 +778,8 @@ function beginGestureFrom(ev,source='main'){
   const tool=currentTool(),erase=ev.button===2,value=erase?secondaryPaintValue():paintValue(),snapshot=beginHistory();
   const bSize=brushSize(),bShape=brushShape(),hatched=brushHatched(),hatchPhase=(p.x+p.y)&1,capture=overlay;
   if(tool==='fill'){
-    const size=gridSize(),vals=gridValues(),indices=L.floodFillIndices(vals,size.w,size.h,p.x,p.y,value);
-    let pts=indices.map(i=>[i%size.w,(i/size.w)|0]);
-    if(hatched)pts=L.hatchPoints(pts,hatchPhase);
+    const size=gridSize(),vals=gridValues();
+    const pts=L.floodFillPoints(vals,size.w,size.h,p.x,p.y,value,{hatched,hatchPhase});
     writePoints(pts,value);
     commitHistory(snapshot);ev.preventDefault();return;
   }
@@ -800,7 +798,7 @@ function moveGestureFrom(ev,source='main'){
   const p=gridPoint(pos,allowOutside);if(!p)return;
   gesture.current=p;
   if(gesture.tool==='freehand'){
-    writeBrushedPoints(L.linePoints(gesture.last.x,gesture.last.y,p.x,p.y),gesture.value,gesture.brushSize,gesture.brushShape,gesture.hatched,gesture.hatchPhase);
+    writeBrushedPoints(L.toolPoints('freehand',gesture.last,p),gesture.value,gesture.brushSize,gesture.brushShape,gesture.hatched,gesture.hatchPhase);
     gesture.last=p;
   }
   queueRedraw();
@@ -823,7 +821,7 @@ function endGestureFrom(ev,source='main',cancel=false){
   if(release){
     g.current=release;
     if(g.tool==='freehand'&&(release.x!==g.last.x||release.y!==g.last.y)){
-      writeBrushedPoints(L.linePoints(g.last.x,g.last.y,release.x,release.y),g.value,g.brushSize,g.brushShape,g.hatched,g.hatchPhase);
+      writeBrushedPoints(L.toolPoints('freehand',g.last,release),g.value,g.brushSize,g.brushShape,g.hatched,g.hatchPhase);
       g.last=release;
     }
   }

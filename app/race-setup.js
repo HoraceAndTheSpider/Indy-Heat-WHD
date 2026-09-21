@@ -141,6 +141,62 @@ function replaceHighWord(raw,newHigh){
   newHigh=clampInt(newHigh,-32768,32767,'Coordinate high word');
   return s32((((newHigh&0xffff)<<16)>>>0)|(Number(raw)&0xffff));
 }
+function mergeProjectedFixed(raw,new22_6){
+  new22_6=Math.max(-0x200000,Math.min(0x1fffff,Math.round(Number(new22_6)||0)));
+  // The race projection consumes signed 22.6 coordinates (raw 16.16 >> 10).
+  // Keep the ten projection-invisible low bits from the existing value so a
+  // drag changes only data that can affect the rendered/game position.
+  return s32(((((new22_6<<10)>>>0)|(Number(raw)&0x3ff))>>>0));
+}
+function projectFixed22_6(x6,z6){
+  x6=Math.round(Number(x6));z6=Math.round(Number(z6));
+  if(!Number.isFinite(x6)||!Number.isFinite(z6))return null;
+  const denominator=0x3200+((z6*0x31)>>6);
+  if(!denominator)return null;
+  return {
+    x:0x168+Math.trunc((x6*0x200)/denominator),
+    y:0x80-Math.trunc((z6*0x140)/denominator),
+    denominator
+  };
+}
+function inverseFixedXZ(screenX,screenY,preferXRaw=0,preferZRaw=0){
+  screenX=Number(screenX);screenY=Number(screenY);
+  if(!Number.isFinite(screenX)||!Number.isFinite(screenY))return null;
+
+  const preferX=(Number(preferXRaw)|0)>>10;
+  const preferZ=(Number(preferZRaw)|0)>>10;
+
+  // Continuous inverse gives the centre of a compact integer search. The real
+  // forward path truncates several integer operations, so the search evaluates
+  // the exact forward projection and picks the closest screen result.
+  const dy=0x80-screenY;
+  const zDen=0x140-(dy*0x31/64);
+  const zEstimate=Math.abs(zDen)>1e-9?(dy*0x3200)/zDen:preferZ;
+
+  let best=null;
+  const zCentre=Math.round(Number.isFinite(zEstimate)?zEstimate:preferZ);
+  for(let dz=-160;dz<=160;dz++){
+    const z6=Math.max(-0x200000,Math.min(0x1fffff,zCentre+dz));
+    const denominator=0x3200+((z6*0x31)>>6);
+    if(!denominator)continue;
+    const xEstimate=((screenX-0x168)*denominator)/0x200;
+    const xCentre=Math.round(Number.isFinite(xEstimate)?xEstimate:preferX);
+    for(let dx=-5;dx<=5;dx++){
+      const x6=Math.max(-0x200000,Math.min(0x1fffff,xCentre+dx));
+      const q=projectFixed22_6(x6,z6);if(!q)continue;
+      const ex=q.x-screenX,ey=q.y-screenY,d2=ex*ex+ey*ey;
+      const tie=(Math.abs(x6-preferX)+Math.abs(z6-preferZ))*1e-9;
+      const score=d2+tie;
+      if(!best||score<best.score)best={x6,z6,screenX:q.x,screenY:q.y,d2,score};
+    }
+  }
+  if(!best)return null;
+  return {
+    ...best,
+    xRaw:mergeProjectedFixed(preferXRaw,best.x6),
+    zRaw:mergeProjectedFixed(preferZRaw,best.z6)
+  };
+}
 
 function addFixed32(a,b){return s32((((Number(a)>>>0)+(Number(b)>>>0))>>>0));}
 function gridCarPositions(setup){
@@ -168,6 +224,7 @@ function pitHeadingFromRoute(record,pit){
 const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
   be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
   writeCommon,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
+  mergeProjectedFixed,projectFixed22_6,inverseFixedXZ,
   addFixed32,gridCarPositions,angle16ToCanvasRadians,angle16FromWorldVector,pitHeadingFromRoute};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatRaceSetupTools=api;
@@ -354,11 +411,22 @@ function writeDrag(t,x,y){
   const r=currentRecord(),s=currentSetup();if(!r||!s||!C.model)return;
   if(t.kind==='flag'){writeCommon(C.model.main,r.offset,{flagX:Math.round(x),flagY:Math.round(y)});return;}
   if(t.kind==='screen'){writePit(C.model.main,s.pitFileOffset,t.index,{screenX:Math.round(x),screenY:Math.round(y)});return;}
-  const inv=typeof T.inverseWaypointA082==='function'?T.inverseWaypointA082(x,y,0,0):null;if(!inv)return;
-  if(t.kind==='start'){writeCommon(C.model.main,r.offset,{startX:replaceHighWord(s.startX,inv.x),startY:replaceHighWord(s.startY,inv.y)});return;}
-  const pit=s.pits[t.index];
-  if(t.kind==='service')writePit(C.model.main,s.pitFileOffset,t.index,{serviceX:replaceHighWord(pit.serviceX,inv.x),serviceY:replaceHighWord(pit.serviceY,inv.y)});
-  if(t.kind==='board')writePit(C.model.main,s.pitFileOffset,t.index,{boardX:replaceHighWord(pit.boardX,inv.x),boardY:replaceHighWord(pit.boardY,inv.y)});
+
+  if(t.kind==='start'){
+    const inv=inverseFixedXZ(x,y,s.startX,s.startY);if(!inv)return;
+    writeCommon(C.model.main,r.offset,{startX:inv.xRaw,startY:inv.zRaw});
+    return;
+  }
+
+  const pit=s.pits[t.index];if(!pit)return;
+  if(t.kind==='service'){
+    const inv=inverseFixedXZ(x,y,pit.serviceX,pit.serviceY);if(!inv)return;
+    writePit(C.model.main,s.pitFileOffset,t.index,{serviceX:inv.xRaw,serviceY:inv.zRaw});
+  }
+  if(t.kind==='board'){
+    const inv=inverseFixedXZ(x,y,pit.boardX,pit.boardY);if(!inv)return;
+    writePit(C.model.main,s.pitFileOffset,t.index,{boardX:inv.xRaw,boardY:inv.zRaw});
+  }
 }
 function pointerMove(e){if(!drag||drag.pointerId!==e.pointerId)return;const p=eventXY(e);writeDrag(drag,p.x,p.y);refreshPanel();draw();}
 function pointerUp(e){if(!drag||drag.pointerId!==e.pointerId)return;try{overlayCanvas().releasePointerCapture?.(e.pointerId);}catch(_e){}drag=null;overlayCanvas().classList.remove('dragging');refreshPanel();draw();}

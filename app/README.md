@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.44**.
+Current editor version: **v0.48**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -10,10 +10,10 @@ This directory is the complete deployable browser editor. It is intentionally ke
 - `style.css` — base application styling.
 - `indyheat.js` — Disk.1/resource decoding, race records, waypoint data and shared binary helpers.
 - `recovery-hook.js` — early capture/bridge layer used to keep the core and extension editors on the same live Disk.1 models.
-- `layer-tools.js` — bitmap/surface drawing primitives.
+- `layer-tools.js` — shared resource-neutral raster editing core used by Surface/Foreground and MiniMap (geometry, brush expansion, fill and bounded writes), with compatibility wrappers for existing callers.
 - `indyheat_race_graphics.js` — authentic race-object/BOB graphics decoder.
 - `app.js` — core circuit viewer and waypoint editor.
-- `layer-editor.js` — Foreground and Surface editors, drawing tools, magnifier and whole-layer Foreground inversion.
+- `layer-editor.js` — Foreground and Surface editor UI/resource adapter using the shared raster tools, plus whole-layer Foreground inversion and fixed viewport support.
 - `waypoint-actions.js` — waypoint-mode convenience actions, including AI Turbo-marker toggle and whole-route left/right mirroring.
 - `recovery-editor.js` — +3 recovery-direction editor, group selection, held rotation and cell grid.
 - `race-setup.js` — race/pit/start/flag setup editing.
@@ -26,6 +26,14 @@ This directory is the complete deployable browser editor. It is intentionally ke
 Waypoint mode includes **Flip all waypoints L/R**, which mirrors every point on Routes A/B/C in game-screen space using `screen X = 320 - screen X`. The stored/runtime X values are solved through the code-derived A082 projection; Y, sequence, flags and link topology are left unchanged.
 
 Master Circuit Zoom now supports 100%–1000% in 50% increments.
+
+Surface/Foreground and MiniMap now share one raster-tool core in `layer-tools.js`. Tool-name aliases (`freehand`/`pencil`, `rectangle`/`rect`), geometry, outlined/filled shapes, brush expansion, hatching, bounded painting and flood-fill are defined there rather than reimplemented per editor. Surface/Foreground use the generic API directly; MiniMap's existing calls remain compatible wrappers over the same implementation. The shared API is deliberately resource-neutral so Backdrop can adopt it later without another set of drawing primitives.
+
+Race mode now drags **START GRID**, **P× STOP** and **P× PIT** using their actual fixed-point coordinate precision rather than waypoint integer quantisation. These markers can therefore settle at single-pixel screen positions where the game projection permits it. PIT CREW and FLAG remain direct integer screen coordinates.
+
+Recovery group editing now uses the selected group consistently: the Rotate left/right buttons act on the grabbed selection, and holding left/right mouse on a selected arrow continuously rotates the whole group even if Grab group is still enabled. **Auto recovery** is independent of selection and always recalculates the whole map using the chosen propagation depth; existing group selection is preserved.
+
+Recovery mode includes an explicit **Auto recovery** calculation. It derives boundary directions from the current Surface class 1/collision layout, carries the result one cell into the active wall field, and propagates through nearby non-active cells for a selectable 1–10 cell depth (default 5). Multiple influences are vector-averaged and the complete pass is one Undo operation.
 
 The normal circuit workflow now uses the circuit ZIP as the authoring/export deliverable. Raw resource `.bin` downloads, Track JSON, waypoint patch and modified-main exports are retained only under the collapsed **Developer exports** area for debugging and inspection. `indyheat_playlist.bin` remains a normal Playlist Editor import/export because it is the runtime playlist format itself.
 

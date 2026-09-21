@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.48 — Recovery group controls and Auto Recovery feedback
+
+- Fixed grouped Recovery rotation controls so **Rotate left** and **Rotate right** explicitly operate on the current grabbed selection.
+- Selected groups can now be rotated by pressing and holding left/right mouse on a selected recovery arrow even while **Grab group** remains enabled.
+- With Grab group enabled, left-drag on unselected space still starts/extends the marquee; right-click with a selected group rotates that group.
+- Preserved the existing continuous hold behaviour: the first rotation happens immediately, then repeats after the hold delay until release.
+- Clarified that **Auto recovery** is a whole-map operation and never requires a selection.
+- Auto Recovery no longer clears an existing group selection.
+- Added visible Auto Recovery running/completion feedback and error reporting so the button no longer appears inert.
+- Added brief pressed feedback to the manual rotate buttons.
+- Updated the editor version and `recovery-editor.js` cache-busting value to v0.48.
+
+## v0.47 — shared raster tools for Surface / MiniMap
+
+- Consolidated raster-editing primitives in `layer-tools.js` into a resource-neutral shared API.
+- Added common tool aliases so Surface/Foreground names (`freehand`, `rectangle`, filled variants) and MiniMap names (`pencil`, `rect`) resolve through the same implementation.
+- Added generic shared helpers for primitive generation, brush application, hatching, bounded raster writes and flood-fill points.
+- Refactored `layer-editor.js` so Surface and Foreground use the generic shared API rather than their own primitive-routing and fill/write loops.
+- Preserved all existing `linePoints`, `rectanglePoints`, `ellipsePoints`, filled-shape, brush and `floodFillIndices` entry points so MiniMap continues to use the same core without a compatibility break.
+- Kept MiniMap-specific templates, palette handling and resource encoding in `circuit-package.js`; those are not generic raster concerns.
+- Structured the shared API so a future Backdrop drawing editor can use the same tools with only a 320×256 indexed-pixel resource adapter.
+- Corrected editor version labelling to read `INDY_HEAT_EDITOR_VERSION` rather than hard-coding v0.44 inside `editor-ui.js`.
+- Updated `layer-tools.js`, `layer-editor.js` and `editor-ui.js` cache-busting values to v0.47.
+
+## v0.46 — full-precision Race/PIT dragging
+
+- Fixed `START GRID`, `P× STOP` and `P× PIT` markers moving in coarse ~2-pixel jumps.
+- These fields are signed 16.16 race coordinates; the old drag path incorrectly reused the integer waypoint inverse and replaced only the high 16-bit word.
+- Added a dedicated inverse for the race `$B082` fixed-point projection, solving in the actual signed 22.6 precision consumed by the game projection.
+- Dragging now chooses the closest exactly rendered screen position and writes the corresponding fixed-point coordinate while preserving the ten low bits that the projection does not consume.
+- `P× CREW` and `FLAG` remain direct integer screen-coordinate fields and are unchanged.
+- Updated the editor version and `race-setup.js` cache-busting value to v0.46.
+
+## v0.45 — automatic recovery-direction calculation
+
+- Added an explicit **Auto recovery** button in Recovery mode.
+- Added an **Auto propagation depth** slider from 1–10 cells, defaulting to 5.
+- Uses the existing Surface class 1 / collision intersection rule to decide which 40×28 Recovery cells are active.
+- Active boundary cells that touch non-active/open cells point towards the averaged open-cell direction.
+- The first active cell immediately behind each boundary cell inherits that direction; influences from multiple boundary cells are vector-averaged.
+- Directions propagate out through non-active/open cells for the selected depth. Cells reached from more than one boundary flow at the same distance use the averaged direction.
+- Thin-wall cases where opposing open neighbours cancel use the existing recovery arrow only as a tie-breaker to choose an open side.
+- The complete automatic pass is stored as one Recovery undo operation.
+- Updated the editor version and `recovery-editor.js` cache-busting value to v0.45.
+
 ## v0.44 — UI copy and export cleanup
 
 - Removed verbose reverse-engineering/development prose from the main editor UI, including Race setup, Backdrop and Recovery explanatory blocks.

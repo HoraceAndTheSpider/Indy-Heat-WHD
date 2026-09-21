@@ -9,7 +9,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.44 — consolidated UI coordination.
+ * Indy Heat Circuit Editor — consolidated UI coordination.
  *
  * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
  * opacity policy and Race presentation controls already accepted by the project.
@@ -124,9 +124,10 @@ function presentation(){
 }
 
 function setVersionLabel(){
+  const version=String(root.INDY_HEAT_EDITOR_VERSION||'0.47');
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.44';
-  document.title='Indy Heat Amiga – Circuit Editor v0.44';
+  if(h)h.textContent=`Indy Heat Amiga — Circuit Editor v${version}`;
+  document.title=`Indy Heat Amiga – Circuit Editor v${version}`;
 }
 
 function installStyle(){
@@ -1146,7 +1147,7 @@ else
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.44 — consolidated accepted refinements.
+ * Indy Heat Circuit Editor — consolidated accepted refinements.
  *
  * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
  * Race-to-Garage MiniMap palette map and final editor-mode ordering.
@@ -1261,9 +1262,10 @@ function currentPresentation(){
 }
 
 function setVersion(){
+  const version=String(root.INDY_HEAT_EDITOR_VERSION||'0.47');
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.44';
-  document.title='Indy Heat Amiga – Circuit Editor v0.44';
+  if(h)h.textContent=`Indy Heat Amiga — Circuit Editor v${version}`;
+  document.title=`Indy Heat Amiga – Circuit Editor v${version}`;
 }
 
 

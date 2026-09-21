@@ -22,6 +22,11 @@ style.textContent=`
   .recoveryActions button{font-size:11px;padding:6px}
   #recoveryGrabGroup.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
   #recoveryStep{width:100%;margin-top:4px}
+  #recoveryAutoDepth{width:100%;margin-top:5px}
+  .recoveryAutoValue{float:right;color:#d7dbe2;font-variant-numeric:tabular-nums}
+  #recoveryAuto{grid-column:1/-1}
+  #recoveryAuto.active,#recoveryRotateLeft.active,#recoveryRotateRight.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
+  #recoveryAuto.running{cursor:progress}
   .recoveryColourGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 10px}
   .recoveryColourControl{display:flex!important;align-items:center;justify-content:space-between;gap:7px;margin:0!important;padding:5px 7px;border:1px solid #3b424d;border-radius:5px;background:#20242b}
   .recoveryColourWheel{width:21px!important;height:21px!important;min-width:21px!important;padding:0!important;border:1px solid #687282!important;border-radius:50%!important;background:transparent!important;overflow:hidden;cursor:pointer;box-sizing:border-box}
@@ -60,6 +65,13 @@ pane.innerHTML=`
         <option value="32">32 raw steps · 45°</option>
         <option value="64">64 raw steps · 90°</option>
       </select></label></div>
+    <div class="recoveryRow"><label>Auto propagation depth <span id="recoveryAutoDepthText" class="recoveryAutoValue">5 cells</span>
+      <input id="recoveryAutoDepth" type="range" min="1" max="10" step="1" value="5">
+    </label></div>
+    <div class="recoveryActions">
+      <button id="recoveryAuto" type="button" title="Calculate recovery directions across the whole map from the current Surface edge">Auto recovery</button>
+    </div>
+    <div class="recoveryRow muted">Whole map · no selection required.</div>
     <div class="recoveryActions">
       <button id="recoveryGrabGroup" type="button" title="Toggle group selection mode">☝ Grab group</button>
       <button id="recoveryClearGroup" type="button">Clear group</button>
@@ -137,6 +149,24 @@ function clearGroup(){
   setGrabGroup(false);
   setStatus(`Recovery group cleared. Left/right click now edits one recovery cell at a time.${isDirty()?' · Modified':''}`);
 }
+function flashButton(button,duration=180){
+  if(!button)return;
+  button.classList.add('active');
+  clearTimeout(button._recoveryFlashTimer);
+  button._recoveryFlashTimer=setTimeout(()=>button.classList.remove('active'),duration);
+}
+function rotateSelected(delta,label,button=null){
+  finishPointerGesture(null,false);
+  const indices=selectionIndices();
+  if(!indices.length){
+    setStatus('Select one or more recovery cells first.');
+    return false;
+  }
+  flashButton(button);
+  applyDelta(indices,delta,label);
+  return true;
+}
+
 function applyRaw(index,value){
   for(const c of captures('heading')){
     c.result.values[index]=value;
@@ -156,6 +186,211 @@ function applyDelta(indices,delta,label){
   pushHistory(unique,before);
   updateStats();draw();setStatus(`${label}: ${unique.length} recovery ${unique.length===1?'cell':'cells'} changed.${isDirty()?' · Modified':''}`);
 }
+
+const AUTO_NEIGHBOURS=Object.freeze([
+  [-1,-1],[0,-1],[1,-1],
+  [-1, 0],        [1, 0],
+  [-1, 1],[0, 1],[1, 1]
+]);
+function autoDepth(){
+  return Math.max(1,Math.min(10,Number($('recoveryAutoDepth')?.value||5)));
+}
+function updateAutoDepthText(){
+  const n=autoDepth(),el=$('recoveryAutoDepthText');
+  if(el)el.textContent=`${n} ${n===1?'cell':'cells'}`;
+}
+function neighbourCells(gx,gy){
+  const out=[];
+  for(const [dx,dy] of AUTO_NEIGHBOURS){
+    const x=gx+dx,y=gy+dy;
+    if(x<0||x>=GRID_W||y<0||y>=GRID_H)continue;
+    const mag=Math.hypot(dx,dy)||1;
+    out.push({gx:x,gy:y,index:y*GRID_W+x,dx:dx/mag,dy:dy/mag});
+  }
+  return out;
+}
+function recoveryValueFromVector(x,y){
+  const mag=Math.hypot(x,y);
+  if(mag<1e-9)return null;
+  const a=Math.atan2(-y/mag,x/mag);
+  return R.normByte(Math.round(a*256/(Math.PI*2)));
+}
+function unitVector(x,y){
+  const mag=Math.hypot(x,y);
+  return mag<1e-9?null:{x:x/mag,y:y/mag};
+}
+function addInfluence(map,index,x,y){
+  let q=map.get(index);
+  if(!q){q={x:0,y:0,count:0};map.set(index,q);}
+  q.x+=x;q.y+=y;q.count++;
+}
+function normalisedInfluences(map){
+  const out=new Map();
+  for(const [index,q] of map){
+    const u=unitVector(q.x,q.y);
+    if(u)out.set(index,u);
+  }
+  return out;
+}
+function calculateAutoRecovery(){
+  finishPointerGesture(null,false);
+  const surface=surfaceCapture(),v=values(),state=trackState();
+  if(!surface||!v||!state){
+    setStatus('Recovery or Surface data is not available yet.');
+    return {changed:0,error:true};
+  }
+
+  const total=GRID_W*GRID_H;
+  const activeMask=new Uint8Array(total);
+  for(let gy=0;gy<GRID_H;gy++)for(let gx=0;gx<GRID_W;gx++){
+    const index=gy*GRID_W+gx;
+    activeMask[index]=R.cellIntersectsSurfaceClass(
+      surface.result.cells,gx,gy,1,surface.result.width,surface.result.height
+    )?1:0;
+  }
+
+  // Boundary seed (CELL A): active recovery cells touching one or more open cells.
+  // The seed points towards the circular/Cartesian mean of those open neighbours.
+  const seeds=new Map();
+  for(let gy=0;gy<GRID_H;gy++)for(let gx=0;gx<GRID_W;gx++){
+    const index=gy*GRID_W+gx;
+    if(!activeMask[index])continue;
+    let sx=0,sy=0,count=0;
+    const open=[];
+    for(const n of neighbourCells(gx,gy)){
+      if(activeMask[n.index])continue;
+      sx+=n.dx;sy+=n.dy;count++;open.push(n);
+    }
+    if(!count)continue;
+    let u=unitVector(sx,sy);
+    if(!u){
+      // Opposing open neighbours can cancel on a thin wall. Use the existing
+      // recovery direction only to choose the closest open side in this tie.
+      const old=R.screenVector(v[index]);
+      let best=-Infinity,bx=0,by=0,bn=0;
+      for(const n of open){
+        const score=old.x*n.dx+old.y*n.dy;
+        if(score>best+1e-9){best=score;bx=n.dx;by=n.dy;bn=1;}
+        else if(Math.abs(score-best)<=1e-9){bx+=n.dx;by+=n.dy;bn++;}
+      }
+      if(bn)u=unitVector(bx,by);
+    }
+    if(u)seeds.set(index,u);
+  }
+
+  if(!seeds.size){
+    setStatus('Auto recovery found no active Surface-edge boundary cells.');
+    return {changed:0,seeds:0};
+  }
+
+  const targets=new Map();
+  for(const [index,u] of seeds){
+    const value=recoveryValueFromVector(u.x,u.y);
+    if(value!=null)targets.set(index,value);
+  }
+
+  // First active ring behind CELL A: inherit/average the directions of touching
+  // boundary seeds, but only when that active cell is not itself a boundary seed.
+  const innerInfluence=new Map();
+  for(const [index,u] of seeds){
+    const gx=index%GRID_W,gy=Math.floor(index/GRID_W);
+    for(const n of neighbourCells(gx,gy)){
+      if(!activeMask[n.index]||seeds.has(n.index))continue;
+      addInfluence(innerInfluence,n.index,u.x,u.y);
+    }
+  }
+  const inner=normalisedInfluences(innerInfluence);
+  for(const [index,u] of inner){
+    const value=recoveryValueFromVector(u.x,u.y);
+    if(value!=null)targets.set(index,value);
+  }
+
+  // Propagate through open/non-active cells for the requested depth. Each layer
+  // inherits the direction field from the nearest previous layer. If multiple
+  // boundary flows reach the same cell at equal depth, use their vector average.
+  const depth=autoDepth();
+  const distance=new Int16Array(total);
+  distance.fill(-1);
+  let frontierInfluence=new Map();
+
+  for(const [index,u] of seeds){
+    const gx=index%GRID_W,gy=Math.floor(index/GRID_W);
+    for(const n of neighbourCells(gx,gy)){
+      if(activeMask[n.index])continue;
+      if(distance[n.index]===-1)distance[n.index]=1;
+      if(distance[n.index]===1)addInfluence(frontierInfluence,n.index,u.x,u.y);
+    }
+  }
+
+  let openCount=0;
+  for(let layer=1;layer<=depth&&frontierInfluence.size;layer++){
+    const directions=normalisedInfluences(frontierInfluence);
+    for(const [index,u] of directions){
+      const value=recoveryValueFromVector(u.x,u.y);
+      if(value!=null){targets.set(index,value);openCount++;}
+    }
+    if(layer===depth)break;
+
+    const next=new Map();
+    for(const [index,u] of directions){
+      const gx=index%GRID_W,gy=Math.floor(index/GRID_W);
+      for(const n of neighbourCells(gx,gy)){
+        if(activeMask[n.index])continue;
+        const wanted=layer+1;
+        if(distance[n.index]===-1)distance[n.index]=wanted;
+        if(distance[n.index]===wanted)addInfluence(next,n.index,u.x,u.y);
+      }
+    }
+    frontierInfluence=next;
+  }
+
+  const changed=[];
+  const before=[];
+  for(const [index,value] of targets){
+    if(v[index]===value)continue;
+    changed.push(index);before.push(v[index]);
+  }
+  if(!changed.length){
+    setStatus(`Auto recovery: ${seeds.size} boundary cells analysed; arrows already match.`);
+    return {changed:0,seeds:seeds.size,inner:inner.size,open:openCount,depth};
+  }
+
+  changed.forEach((index,n)=>applyRaw(index,targets.get(index)));
+  pushHistory(changed,before);
+
+  const arrows=$('recoveryShowArrows');
+  if(arrows&&!arrows.checked){arrows.checked=true;}
+  const dormant=$('recoveryShowDormant');
+  if(dormant&&!dormant.checked){dormant.checked=true;}
+
+  updateStats();
+  draw();
+  setStatus(`Auto recovery: ${changed.length} cells updated · ${seeds.size} boundary · ${inner.size} inner · ${openCount} open (${depth}-cell depth).`);
+  return {changed:changed.length,seeds:seeds.size,inner:inner.size,open:openCount,depth};
+}
+let autoRecoveryBusy=false;
+function runAutoRecovery(){
+  if(autoRecoveryBusy)return;
+  const button=$('recoveryAuto');
+  autoRecoveryBusy=true;
+  if(button){button.classList.add('active','running');button.textContent='Calculating…';button.disabled=true;}
+  setStatus(`Auto recovery: calculating whole map at ${autoDepth()}-cell propagation depth…`);
+  const run=()=>{
+    try{calculateAutoRecovery();}
+    catch(e){console.error(e);setStatus(`Auto recovery failed: ${e.message||e}`);}
+    finally{
+      autoRecoveryBusy=false;
+      if(button){
+        button.disabled=false;button.classList.remove('running');button.textContent='Auto recovery';
+        button.classList.add('active');clearTimeout(button._recoveryFlashTimer);
+        button._recoveryFlashTimer=setTimeout(()=>button.classList.remove('active'),650);
+      }
+    }
+  };
+  if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>setTimeout(run,0));
+  else setTimeout(run,0);
+}
+
 function undo(){
   finishPointerGesture(null,true);
   const s=trackState();if(!s||!s.history.length){setStatus('Nothing to undo in the Recovery layer.');return;}
@@ -328,7 +563,16 @@ canvas.addEventListener('pointerdown',e=>{
   const cell=pointAtEvent(e);if(!cell)return;
   if(e.button!==0&&e.button!==2)return;
   e.preventDefault();e.stopPropagation();
-  if(grabGroup){if(e.button===0)beginMarquee(e,cell);return;}
+  const cellIndex=cell.gy*GRID_W+cell.gx,hasSelection=selectedGroup.size>0;
+  if(grabGroup){
+    if(hasSelection&&selectedGroup.has(cellIndex)){
+      if(e.button===2){beginRotationHold(e,cell,-step(),'Rotate right');return;}
+      beginRotationHold(e,cell,step(),'Rotate left');return;
+    }
+    if(e.button===2&&hasSelection){beginRotationHold(e,cell,-step(),'Rotate right');return;}
+    if(e.button===0)beginMarquee(e,cell);
+    return;
+  }
   if(e.button===2){beginRotationHold(e,cell,-step(),'Rotate right');return;}
   beginRotationHold(e,cell,step(),'Rotate left');
 });
@@ -365,8 +609,10 @@ $('recoveryShowDormant').addEventListener('change',draw);
 $('recoveryShowGrid').addEventListener('change',draw);
 ['recoveryArrowColour','recoveryGridColour'].forEach(id=>$(id)?.addEventListener('input',()=>{saveRecoveryColours();draw();}));
 $('recoveryStep').addEventListener('change',draw);
-$('recoveryRotateLeft').addEventListener('click',()=>{const a=selectionIndices();if(a.length)applyDelta(a,step(),'Rotate left');else setStatus('Select one or more recovery cells first.');});
-$('recoveryRotateRight').addEventListener('click',()=>{const a=selectionIndices();if(a.length)applyDelta(a,-step(),'Rotate right');else setStatus('Select one or more recovery cells first.');});
+$('recoveryAutoDepth').addEventListener('input',updateAutoDepthText);
+$('recoveryAuto').addEventListener('click',runAutoRecovery);
+$('recoveryRotateLeft').addEventListener('click',()=>rotateSelected(step(),'Rotate left',$('recoveryRotateLeft')));
+$('recoveryRotateRight').addEventListener('click',()=>rotateSelected(-step(),'Rotate right',$('recoveryRotateRight')));
 $('recoveryGrabGroup').addEventListener('click',()=>setGrabGroup(!grabGroup));
 $('recoveryClearGroup').addEventListener('click',clearGroup);
 $('recoveryUndo').addEventListener('click',undo);
@@ -380,5 +626,6 @@ $('opacity')?.addEventListener('input',draw);
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>draw()).observe(view);
 
 loadRecoveryColours();
+updateAutoDepthText();
 setTimeout(()=>{updateStats();draw();},800);
 })();
