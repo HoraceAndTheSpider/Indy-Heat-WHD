@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.43**.
+Current editor version: **v0.44**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -26,6 +26,10 @@ This directory is the complete deployable browser editor. It is intentionally ke
 Waypoint mode includes **Flip all waypoints L/R**, which mirrors every point on Routes A/B/C in game-screen space using `screen X = 320 - screen X`. The stored/runtime X values are solved through the code-derived A082 projection; Y, sequence, flags and link topology are left unchanged.
 
 Master Circuit Zoom now supports 100%–1000% in 50% increments.
+
+The normal circuit workflow now uses the circuit ZIP as the authoring/export deliverable. Raw resource `.bin` downloads, Track JSON, waypoint patch and modified-main exports are retained only under the collapsed **Developer exports** area for debugging and inspection. `indyheat_playlist.bin` remains a normal Playlist Editor import/export because it is the runtime playlist format itself.
+
+The runtime UI deliberately keeps reverse-engineering explanation out of the main controls. Lower diagnostic folds stay concise and link back to the GitHub wiki for detailed data structures and implementation notes.
 
 The former 64×64 magnifier has been removed. Use **Fixed 640×512 viewport** beside Master Circuit Zoom to keep the circuit display to the same visible size as the complete 200% view while using higher zoom levels. At higher zoom, move around the circuit with the trackpad or viewport scrollbars; all circuit overlays remain aligned because the viewport contains the complete shared canvas stack.
 

@@ -9,7 +9,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.41 — consolidated UI coordination.
+ * Indy Heat Circuit Editor v0.44 — consolidated UI coordination.
  *
  * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
  * opacity policy and Race presentation controls already accepted by the project.
@@ -125,8 +125,8 @@ function presentation(){
 
 function setVersionLabel(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.41';
-  document.title='Indy Heat Amiga – Circuit Editor v0.41';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.44';
+  document.title='Indy Heat Amiga – Circuit Editor v0.44';
 }
 
 function installStyle(){
@@ -998,7 +998,7 @@ function ensureHudControls(){
     help.dataset.editorUiHudHelp='1';
     if(!old)controls.appendChild(help);
   }
-  help.textContent='Drag the visible lap tower/HUD directly, or use HUD X/Y. Current-lap and timer cells reproduce the retail $6B02 glyph, mask and source-plane shading; total laps previews the authored maximum 20.';
+  help.textContent='Drag the HUD on the circuit, or edit HUD X/Y.';
 
   const apply=$('circuitHudApply');
   if(apply&&!apply.dataset.editorUiHudAction){
@@ -1146,7 +1146,7 @@ else
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.41 — consolidated accepted refinements.
+ * Indy Heat Circuit Editor v0.44 — consolidated accepted refinements.
  *
  * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
  * Race-to-Garage MiniMap palette map and final editor-mode ordering.
@@ -1262,8 +1262,8 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.41';
-  document.title='Indy Heat Amiga – Circuit Editor v0.41';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.44';
+  document.title='Indy Heat Amiga – Circuit Editor v0.44';
 }
 
 
@@ -1742,4 +1742,137 @@ if(document.readyState==='loading')
 else
   setTimeout(boot,0);
 
+})(typeof globalThis!=='undefined'?globalThis:this);
+
+
+/* v0.44 — runtime UI copy/developer-export cleanup. */
+(function(root){
+'use strict';
+if(typeof document==='undefined')return;
+const $=id=>document.getElementById(id);
+let scheduled=false;
+
+function textContains(el,needle){
+  return !!el&&String(el.textContent||'').includes(needle);
+}
+function removeEmptyActionRow(row){
+  if(!row)return;
+  const useful=[...row.children].some(el=>el.tagName!=='SPAN'||String(el.textContent||'').trim());
+  if(!useful)row.remove();
+}
+function devGroup(key,title){
+  const host=$('developerModeExports');
+  if(!host)return null;
+  let details=host.querySelector(`details[data-developer-group="${key}"]`);
+  if(!details){
+    details=document.createElement('details');
+    details.className='smallDetails';
+    details.dataset.developerGroup=key;
+    details.innerHTML=`<summary>${title}</summary><div class="downloads"></div>`;
+    host.appendChild(details);
+  }
+  return details.querySelector('.downloads');
+}
+function moveDeveloperButton(id,key,title,label){
+  const b=$(id),host=devGroup(key,title);
+  if(!b||!host)return false;
+  if(label)b.textContent=label;
+  if(b.parentElement!==host){
+    const old=b.parentElement;
+    host.appendChild(b);
+    removeEmptyActionRow(old);
+  }
+  return true;
+}
+function installStatusFilter(id,formatter){
+  const el=$(id);if(!el||el.dataset.editorUiCopyFilter)return false;
+  el.dataset.editorUiCopyFilter='1';
+  const apply=()=>{
+    const before=String(el.textContent||'');
+    const after=formatter(before);
+    if(after!==before)el.textContent=after;
+  };
+  new MutationObserver(apply).observe(el,{childList:true,subtree:true,characterData:true});
+  apply();
+  return true;
+}
+function compactRaceStatus(text){
+  if(!text)return text;
+  if(/^ERROR:/i.test(text))return text;
+  if(/^Exported /i.test(text))return 'Developer export complete.';
+  if(/restored to the loaded Disk\.1 data/i.test(text))return 'Race setup restored.';
+  const marker=' · race record ';
+  if(text.includes(marker)){
+    const name=text.split(marker)[0].trim();
+    const state=/\bModified\b/.test(text)?'Modified':'Unmodified';
+    return `${name} · ${state}`;
+  }
+  return text.replace(/\s*· compact export[^.\n]*/i,'').replace(/\n+/g,' · ').trim();
+}
+function compactBackdropStatus(text){
+  if(!text)return text;
+  if(/^ERROR:/i.test(text))return text;
+  if(/^Resource \$[0-9A-F]+/i.test(text)){
+    return `Backdrop · ${/\bModified\b/.test(text)?'Modified':'Unmodified'}`;
+  }
+  if(/^Exported /i.test(text))return 'Developer export complete.';
+  if(/Backdrop restored/i.test(text))return 'Backdrop restored.';
+  if(/^Imported /i.test(text))return text.split('\n')[0].replace(/\s*Exported runtime payload.*$/i,'').trim();
+  return text;
+}
+function cleanRace(){
+  const pane=$('raceSetupPane');
+  if(!pane)return false;
+
+  for(const el of pane.querySelectorAll('.muted')){
+    if(textContains(el,'Pit/service and presentation positions are the real race/pit fields'))el.remove();
+    else if(textContains(el,'Exported as the optional 18-byte name.bin package sidecar'))el.textContent='Displayed in Gasoline Alley.';
+  }
+  const help=pane.querySelector('[data-editor-ui-hud-help]');
+  if(help)help.textContent='Drag the HUD on the circuit, or edit HUD X/Y.';
+
+  moveDeveloperButton('raceExport','race','Race setup raw exports','Race setup .bin');
+  moveDeveloperButton('raceExportAll','race','Race setup raw exports','All race setup .bins');
+  moveDeveloperButton('raceExportMain','race','Race setup raw exports','Modified main .bin');
+  installStatusFilter('raceSetupStatus',compactRaceStatus);
+  return true;
+}
+function cleanBackdrop(){
+  const pane=$('backdropEditorPane');
+  if(!pane)return false;
+  for(const el of pane.querySelectorAll('.muted')){
+    if(textContains(el,'Import a 320×256 ILBM/IFF backdrop'))el.remove();
+  }
+  moveDeveloperButton('backdropExport','backdrop','Backdrop raw export','Backdrop .bin');
+  installStatusFilter('backdropStatus',compactBackdropStatus);
+  return true;
+}
+function cleanRecovery(){
+  const pane=$('recoveryEditorPane');
+  if(!pane)return false;
+  for(const el of pane.querySelectorAll('.recoveryRow.muted')){
+    if(textContains(el,'One byte per 8×8 gameplay cell'))el.remove();
+  }
+  return true;
+}
+function clean(){
+  scheduled=false;
+  cleanRace();
+  cleanBackdrop();
+  cleanRecovery();
+}
+function schedule(){
+  if(scheduled)return;
+  scheduled=true;
+  setTimeout(clean,0);
+}
+function boot(){
+  clean();
+  const rootNode=document.body||document.documentElement;
+  if(rootNode)new MutationObserver(schedule).observe(rootNode,{subtree:true,childList:true});
+  setTimeout(clean,250);
+  setTimeout(clean,1000);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});
+else boot();
 })(typeof globalThis!=='undefined'?globalThis:this);

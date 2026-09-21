@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.44 — UI copy and export cleanup
+
+- Removed verbose reverse-engineering/development prose from the main editor UI, including Race setup, Backdrop and Recovery explanatory blocks.
+- Shortened Race HUD help and dynamic status text so ordinary editing shows only useful state such as Modified/Unmodified, import result or errors.
+- Replaced the long Help / controls and Research interpretation text with concise operating guidance and links to the project wiki.
+- Renamed lower diagnostic folds for clarity and kept their content brief.
+- Moved Track JSON, waypoint patch, modified-main and raw resource downloads into a collapsed **Developer exports** section.
+- Moved the Race setup and Backdrop raw `.bin` exports into the same developer-only area while retaining them as troubleshooting fallbacks.
+- Kept **View PNG** and **Revert all edits** in the normal action area; circuit ZIP remains the normal circuit export workflow.
+- The Playlist `.bin` import/export remains in the Playlist editor because `indyheat_playlist.bin` is itself the canonical runtime playlist file, not a redundant raw-resource export.
+- Removed stale Magnified Area help left behind after the v0.43 viewport change.
+- Updated the editor's visible/internal version and `editor-ui.js` cache-busting value to v0.44.
+
 ## v0.43 — replace 64×64 magnifier with fixed circuit viewport
 
 - Removed the old `Magnified Area · 64×64 px` feature completely, including its secondary canvas, placement frame and edit handlers.
