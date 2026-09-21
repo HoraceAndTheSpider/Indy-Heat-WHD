@@ -1,5 +1,5 @@
 /*
- * Indy Heat Amiga Circuit Editor — consolidated UI module v0.32
+ * Indy Heat Amiga Circuit Editor — consolidated UI module v0.37
  *
  * This replaces the historical corrective-layer file layering. The two internal scopes are deliberately retained to preserve the
  * already accepted behaviour while presenting one stable runtime module.
@@ -9,7 +9,7 @@
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.32 — consolidated UI coordination.
+ * Indy Heat Circuit Editor v0.37 — consolidated UI coordination.
  *
  * Preserves the accepted mode coordination, left-side folds, lap/HUD rendering,
  * opacity policy and Race presentation controls already accepted by the project.
@@ -120,8 +120,8 @@ function presentation(){
 
 function setVersionLabel(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.32';
-  document.title='Indy Heat Amiga – Circuit Editor v0.32';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.37';
+  document.title='Indy Heat Amiga – Circuit Editor v0.37';
 }
 
 function installStyle(){
@@ -367,7 +367,115 @@ function syncMaster(id,ids){
   m.checked=s.checked;
   m.indeterminate=s.indeterminate;
 }
+function makeFoldMirrorToggle(host,id,label,targetId){
+  let box=$(id);
+  if(box)return box;
+  const l=document.createElement('label');
+  l.innerHTML=`<input id="${id}" type="checkbox"> ${label}`;
+  box=l.querySelector('input');
+  const target=$(targetId);
+  if(target)box.checked=!!target.checked;
+  box.addEventListener('change',()=>{
+    const t=$(targetId);
+    if(t){
+      t.checked=box.checked;
+      t.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+    syncFoldMasters();
+    renderHud();
+  });
+  host.appendChild(l);
+  return box;
+}
+
+function restoreLeftFoldContainers(){
+  const surface=$('layerShowSurface'),waypoint=$('showWaypoints');
+  if(!surface||!waypoint||!$('raceShowPits'))return false;
+
+  const surfaceRow=surface.closest('.layerControlRow')||surface.parentElement;
+  const oldSurface=$('showSurface')?.closest('label');
+  const surfaceControls=oldSurface?.nextElementSibling?.classList?.contains('classToggles')
+    ? oldSurface.nextElementSibling:null;
+
+  if(surfaceRow&&!surfaceRow.closest('details[data-circuit-fold]')){
+    const d=document.createElement('details');
+    d.dataset.circuitFold='1';
+    d.open=true;
+    const sm=document.createElement('summary');
+    sm.textContent='Surface types';
+    surfaceRow.parentNode.insertBefore(d,surfaceRow);
+    d.append(sm,surfaceRow);
+    if(surfaceControls)d.appendChild(surfaceControls);
+    const sp=surfaceRow.querySelector('span');
+    if(sp)sp.textContent='Show overlay';
+  }
+
+  const wpLabel=waypoint.closest('label');
+  const wpControls=wpLabel?.nextElementSibling;
+  if(wpLabel&&!wpLabel.closest('details[data-circuit-fold]')){
+    const d=document.createElement('details');
+    d.dataset.circuitFold='1';
+    d.open=true;
+    const sm=document.createElement('summary');
+    sm.textContent='Waypoints';
+    wpLabel.parentNode.insertBefore(d,wpLabel);
+    d.append(sm,wpLabel);
+    if(wpControls?.classList?.contains('classToggles'))d.appendChild(wpControls);
+  }
+
+  const viewSection=surfaceRow?.closest('section')||waypoint.closest('section');
+  if(!viewSection)return false;
+
+  let pits=$('circuitViewPits');
+  if(!pits){
+    pits=document.createElement('details');
+    pits.id='circuitViewPits';
+    pits.open=true;
+    pits.innerHTML='<summary>Pits</summary><div class="circuitViewToggleBody"></div>';
+    const ph=pits.querySelector('div');
+    makeFoldMirrorToggle(ph,'circuitShowPits','Pit/service + crew','raceShowPits');
+    makeFoldMirrorToggle(ph,'circuitShowBoards','PIT boards','raceShowBoards');
+    makeFoldMirrorToggle(ph,'circuitShowPitCars','Cars in pits','raceShowPitCars');
+    viewSection.appendChild(pits);
+  }
+
+  let race=$('circuitViewRaceControl');
+  if(!race){
+    race=document.createElement('details');
+    race.id='circuitViewRaceControl';
+    race.open=true;
+    race.innerHTML='<summary>Race control</summary><div class="circuitViewToggleBody"></div>';
+    const rh=race.querySelector('div');
+    makeFoldMirrorToggle(rh,'circuitShowStart','Start / grid anchor','raceShowStart');
+    makeFoldMirrorToggle(rh,'circuitShowGridCars','Cars on grid','raceShowGridCars');
+    makeFoldMirrorToggle(rh,'circuitShowFlag','Flag man','raceShowFlag');
+    for(const [id,label] of [
+      ['circuitShowCurrentLaps','Current-lap tower'],
+      ['circuitShowTotalLaps','Total laps'],
+      ['circuitShowTimer','Timer']
+    ]){
+      if($(id))continue;
+      const l=document.createElement('label');
+      l.innerHTML=`<input id="${id}" type="checkbox" checked> ${label}`;
+      l.querySelector('input').addEventListener('change',()=>{
+        syncFoldMasters();
+        renderHud();
+      });
+      rh.appendChild(l);
+    }
+    viewSection.appendChild(race);
+  }
+
+  return !!(surface.closest('details[data-circuit-fold]')&&
+    waypoint.closest('details[data-circuit-fold]')&&pits&&race);
+}
+
 function ensureLeftFolds(){
+  // v0.37 regression repair: the original fold-builder can lose its startup
+  // race during consolidation. Re-create the accepted containers here, inside
+  // the coordination module that already retries until the left UI is ready.
+  restoreLeftFoldContainers();
+
   const surface=$('layerShowSurface'),waypoint=$('showWaypoints');
   const surfaceRow=surface?.closest('.layerControlRow')||surface?.parentElement||null;
   const wpLabel=waypoint?.closest('label')||null;
@@ -882,7 +990,7 @@ else
 'use strict';
 
 /*
- * Indy Heat Circuit Editor v0.32 — consolidated accepted refinements.
+ * Indy Heat Circuit Editor v0.37 — consolidated accepted refinements.
  *
  * Preserves the accepted overlay colours, lap slider, global HUD drag, explicit
  * Race-to-Garage MiniMap palette map and final editor-mode ordering.
@@ -998,8 +1106,8 @@ function currentPresentation(){
 
 function setVersion(){
   const h=document.querySelector('header h1');
-  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.32';
-  document.title='Indy Heat Amiga – Circuit Editor v0.32';
+  if(h)h.textContent='Indy Heat Amiga — Circuit Editor v0.37';
+  document.title='Indy Heat Amiga – Circuit Editor v0.37';
 }
 
 

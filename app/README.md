@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.36**.
+Current editor version: **v0.37**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -32,6 +32,8 @@ Custom race length is **1–20 laps**. The editor uses the established runtime-s
 The current championship runtime remains **11 races**. The playlist editor therefore exposes the championship-length control but keeps it visibly disabled at 11. The IHPL header already contains a count word and the editor's parser/serializer is count-driven, so no file-format redesign is required when WHDLoad eventually supports shorter or longer championships.
 
 Overlay colours are editor display preferences only; they do not alter circuit resource data. Foreground and Surface colours are shared with the layer renderer, while Recovery has separate arrow/grid display colours.
+
+The left-side **Surface Types**, **Waypoints**, **Pits** and **Race Control** groups are foldable. Folding a group does not change overlay visibility: each fold header retains its independent `[x]` master visibility control, while the existing colour controls remain available with the relevant overlay controls.
 
 The Recovery layer is the authentic **40×28** direction grid, one byte per **8×8** gameplay cell. Grab group supports click selection and drag-marquee selection. With Grab group off, left/right mouse rotation can be held continuously and a complete hold is one Undo operation.
 
@@ -80,4 +82,3 @@ Circuit ZIP export in v0.32+ is a single direct serialisation path. At **Export 
 ## Development history
 
 Earlier per-version changelogs, integration patches, research probes and `test_*.js` files are deliberately not part of this deployable `app/` folder. Their history remains available in Git. Development-only material should live outside `app/` rather than being reintroduced into the runtime directory.
-

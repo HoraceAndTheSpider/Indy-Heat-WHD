@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.37 — restore left-side folding controls
+
+- Restored the accepted foldable **Surface Types**, **Waypoints**, **Pits** and **Race Control** sections in the left-side View controls.
+- The fold arrow and section description control only whether the section is expanded; the adjacent `[x]` master checkbox remains an independent overlay on/off control.
+- Preserved the existing overlay colour controls and their visibility behaviour rather than replacing the master toggles.
+- Moved fold-container recovery into the consolidated UI coordination retry path so the controls are rebuilt reliably even when the layer/race controls initialise after the earlier package startup pass.
+- Updated the editor's visible/internal version and `editor-ui.js` cache-busting version to v0.37.
+
 ## v0.36 — foreground layer invert
 
 - Added **Invert layer** to Foreground edit mode.
