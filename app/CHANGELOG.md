@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.43 — replace 64×64 magnifier with fixed circuit viewport
+
+- Removed the old `Magnified Area · 64×64 px` feature completely, including its secondary canvas, placement frame and edit handlers.
+- Added a `Fixed 640×512 viewport` toggle beside the Master Circuit Zoom controls.
+- When enabled, the complete circuit/overlay canvas stack is clipped inside a 640×512 window — equivalent to the full circuit at 200% zoom.
+- Higher zoom levels, including 1000%, remain unchanged; the larger circuit is viewed by scrolling/panning the fixed viewport with the trackpad or scrollbars.
+- All editor overlays move together because the viewport contains the shared `.canvasStack`.
+- The viewport opens centred on the circuit and preserves the viewed centre when zoom changes.
+- Updated the editor's visible/internal version and `layer-editor.js` cache-busting value to v0.43.
+
 ## v0.42 — extend master zoom to 1000%
 
 - Increased the Master Circuit Zoom control maximum from 600% to 1000%.

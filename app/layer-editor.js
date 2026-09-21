@@ -14,7 +14,6 @@ let model=null,currentIndex=0,currentResources=null;
 let raceRecords=[],researchWaypoints=null;
 let bg=null,mask=null,surface=null,heading=null;
 let editMode=null,gesture=null,history=[];
-const magnifier={active:false,placing:false,x:128,y:96};
 let manualLoadSerial=0,manualLayerRequested=false,redrawPending=false;
 const originals=new Map();
 const dirtyResources=new Set();
@@ -86,21 +85,18 @@ function injectStyles(){
     .layerActionBtns button{font-size:11px;padding:6px}
     #layerInvert{grid-column:1/-1}
     #layerEditorStatus{margin:8px 0 0;min-height:34px;font-size:11px;line-height:1.35}
-    #magnifierPanel{margin-top:12px;padding-top:10px;border-top:1px solid #303640}
-    .magnifierHeader{display:grid;grid-template-columns:1fr auto;gap:7px;align-items:center;margin-bottom:6px}
-    .magnifierHeader .toolGroupTitle{margin:0}
-    #magnifierToggle{font-size:17px;line-height:1;padding:5px 8px}
-    #magnifierToggle.active{border-color:#d6b54a;background:#5a4a1c}
-    #magnifierCanvas{display:block;width:256px;height:256px;max-width:100%;aspect-ratio:1/1;background:#000;border:1px solid #3a404a;image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none;cursor:crosshair}
-    #magnifierHint{font-size:10px;color:#8f97a3;line-height:1.3;margin-top:5px}
+    #circuitViewportToggle{display:block;width:100%;margin-top:9px;font-size:12px;padding:6px}
+    #circuitViewportToggle.active{border-color:#d6b54a;background:#5a4a1c}
+    #circuitViewport{position:relative;width:max-content;max-width:100%;overflow:visible}
+    #circuitViewport.fixed{width:640px;height:512px;max-width:100%;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:auto}
     .canvasStack{position:relative;width:max-content;height:max-content}
     .canvasStack canvas#view{position:relative;z-index:0}
     #layerEditCanvas{position:absolute;inset:0;z-index:1;display:block;image-rendering:pixelated;touch-action:none;user-select:none;pointer-events:none}
-    #layerEditCanvas.editing,#layerEditCanvas.magnifying{pointer-events:auto;cursor:crosshair}
+    #layerEditCanvas.editing{pointer-events:auto;cursor:crosshair}
     @media(max-width:1050px){
       main{grid-template-columns:1fr}
       #layerEditorColumn{grid-column:auto;position:static;max-height:none}
-      #magnifierCanvas{width:256px;height:256px}
+      #circuitViewport.fixed{max-width:100%}
     }
   `;
   document.head.appendChild(style);
@@ -186,14 +182,6 @@ function setupControls(){
         </div>
         <div id="layerEditorStatus" class="muted"></div>
       </div>
-      <div id="magnifierPanel">
-        <div class="magnifierHeader">
-          <div class="toolGroupTitle">Magnified Area · 64×64 px</div>
-          <button id="magnifierToggle" type="button" title="Show / clear magnified area" aria-label="Show / clear magnified area">🔍</button>
-        </div>
-        <canvas id="magnifierCanvas" width="256" height="256"></canvas>
-        <div id="magnifierHint">Click 🔍, then place the 64×64 frame on the circuit. Edit directly in this window with the same tools; right-click erases.</div>
-      </div>
     </div>
     <div id="layerWaypointHost" hidden></div>
   `;
@@ -211,6 +199,13 @@ function setupControls(){
   const overlayOpacityControl=$('overlayOpacityControl')||$('opacity')?.closest('label');
   if(overlayOpacityControl)column.querySelector('#masterZoomHost')?.appendChild(overlayOpacityControl);
 
+  const viewportToggle=document.createElement('button');
+  viewportToggle.id='circuitViewportToggle';
+  viewportToggle.type='button';
+  viewportToggle.textContent='▢ Fixed 640×512 viewport';
+  viewportToggle.title='Restrict the circuit to a 640×512 window; use the trackpad or scrollbars to move around at higher zoom.';
+  column.querySelector('#masterZoomHost')?.appendChild(viewportToggle);
+
   const waypointSection=Array.from(document.querySelectorAll('aside section.editorSection')).find(sec=>sec.querySelector('#wpSelectList'));
   if(waypointSection)column.querySelector('#layerWaypointHost')?.appendChild(waypointSection);
 
@@ -223,7 +218,7 @@ function setupControls(){
     paintChoices:$('layerPaintChoices'),
     brushSize:$('layerBrushSize'),brushSizeText:$('layerBrushSizeText'),brushShape:$('layerBrushShape'),brushHatch:$('layerBrushHatch'),
     undo:$('layerUndo'),revert:$('layerRevert'),invert:$('layerInvert'),status:$('layerEditorStatus'),
-    magnifierToggle:$('magnifierToggle'),magnifierCanvas:$('magnifierCanvas'),magnifierHint:$('magnifierHint')
+    viewportToggle:$('circuitViewportToggle')
   };
 }
 
@@ -232,15 +227,16 @@ const ui=setupControls();
 if(!ui)return;
 
 function setupCanvas(){
+  const viewport=document.createElement('div');viewport.id='circuitViewport';
   const stack=document.createElement('div');stack.className='canvasStack';
-  view.parentNode.insertBefore(stack,view);stack.appendChild(view);
+  view.parentNode.insertBefore(viewport,view);
+  viewport.appendChild(stack);stack.appendChild(view);
   const overlay=document.createElement('canvas');overlay.id='layerEditCanvas';
   stack.appendChild(overlay);
-  return overlay;
+  return {overlay,viewport,stack};
 }
-const overlay=setupCanvas(),octx=overlay.getContext('2d',{alpha:true});
-const magnifierCanvas=ui.magnifierCanvas,mctx=magnifierCanvas.getContext('2d',{alpha:false});
-mctx.imageSmoothingEnabled=false;mctx.fillStyle='#000';mctx.fillRect(0,0,magnifierCanvas.width,magnifierCanvas.height);
+const canvasSetup=setupCanvas(),overlay=canvasSetup.overlay,circuitViewport=canvasSetup.viewport,octx=overlay.getContext('2d',{alpha:true});
+let viewportCentre=null;
 
 function syncEditorPane(){
   const drawing=!!editMode;
@@ -249,12 +245,44 @@ function syncEditorPane(){
   ui.modeWaypoints.classList.toggle('active',!drawing);
   ui.editSurface.classList.toggle('active',editMode==='surface');
   ui.editMask.classList.toggle('active',editMode==='mask');
-  if(!drawing){
-    magnifier.active=false;magnifier.placing=false;
-    updateMagnifierButton();
-    mctx.fillStyle='#000';mctx.fillRect(0,0,magnifierCanvas.width,magnifierCanvas.height);
+}
+function viewportIsFixed(){
+  return circuitViewport.classList.contains('fixed');
+}
+function captureViewportCentre(){
+  if(!viewportIsFixed())return null;
+  const sw=Math.max(1,circuitViewport.scrollWidth),sh=Math.max(1,circuitViewport.scrollHeight);
+  return {
+    x:(circuitViewport.scrollLeft+circuitViewport.clientWidth/2)/sw,
+    y:(circuitViewport.scrollTop+circuitViewport.clientHeight/2)/sh
+  };
+}
+function restoreViewportCentre(pos=viewportCentre){
+  if(!viewportIsFixed()||!pos)return;
+  const left=pos.x*circuitViewport.scrollWidth-circuitViewport.clientWidth/2;
+  const top=pos.y*circuitViewport.scrollHeight-circuitViewport.clientHeight/2;
+  circuitViewport.scrollLeft=Math.max(0,left);
+  circuitViewport.scrollTop=Math.max(0,top);
+}
+function setViewportFixed(on){
+  const wasFixed=viewportIsFixed();
+  const existing=wasFixed?captureViewportCentre():null;
+  circuitViewport.classList.toggle('fixed',!!on);
+  ui.viewportToggle.classList.toggle('active',!!on);
+  ui.viewportToggle.textContent=on?'▣ Fixed 640×512 viewport':'▢ Fixed 640×512 viewport';
+  ui.viewportToggle.setAttribute('aria-pressed',on?'true':'false');
+  if(on&&!wasFixed){
+    requestAnimationFrame(()=>{
+      // First activation starts centred on the circuit rather than at the top-left.
+      const pos=existing||{x:.5,y:.5};
+      restoreViewportCentre(pos);
+    });
   }
 }
+function toggleViewport(){
+  setViewportFixed(!viewportIsFixed());
+}
+
 function syncCanvasSize(){
   if(overlay.width!==view.width||overlay.height!==view.height){
     overlay.width=view.width;overlay.height=view.height;
@@ -613,52 +641,11 @@ function drawWaypointResearchOverlays(){
     octx.restore();
   }
 }
-function clampMagnifier(){
-  magnifier.x=Math.max(0,Math.min(256,Math.round(magnifier.x)));
-  magnifier.y=Math.max(0,Math.min(192,Math.round(magnifier.y)));
-}
-function setMagnifierFromWorld(pos){
-  magnifier.x=pos.x-32;magnifier.y=pos.y-32;clampMagnifier();
-}
-function drawMagnifierFrame(){
-  if(!magnifier.active)return;
-  const S=scale(),x=magnifier.x*S,y=magnifier.y*S,w=64*S,h=64*S;
-  octx.save();
-  octx.strokeStyle=magnifier.placing?'#ffffff':'#ffd84a';
-  octx.lineWidth=Math.max(2,0.8*S);
-  octx.setLineDash(magnifier.placing?[4*S,2*S]:[]);
-  octx.strokeRect(x+octx.lineWidth/2,y+octx.lineWidth/2,w-octx.lineWidth,h-octx.lineWidth);
-  octx.restore();
-}
-function renderMagnifier(){
-  mctx.imageSmoothingEnabled=false;
-  mctx.fillStyle='#000';mctx.fillRect(0,0,magnifierCanvas.width,magnifierCanvas.height);
-  if(!magnifier.active)return;
-  const S=view.width/320,sx=magnifier.x*S,sy=magnifier.y*S,sw=64*S,sh=64*S;
-  mctx.drawImage(view,sx,sy,sw,sh,0,0,magnifierCanvas.width,magnifierCanvas.height);
-  mctx.drawImage(overlay,sx,sy,sw,sh,0,0,magnifierCanvas.width,magnifierCanvas.height);
-}
-function updateMagnifierButton(){
-  ui.magnifierToggle.classList.toggle('active',magnifier.active);
-  overlay.classList.toggle('magnifying',magnifier.active);
-  ui.magnifierToggle.title=magnifier.active?'Clear magnified area':'Show magnified area';
-  ui.magnifierHint.textContent=magnifier.active
-    ? (magnifier.placing?'Move over the circuit and click to place the 64×64 frame.':'Edit directly here with the current drawing tools; right-click erases. Toggle 🔍 to clear.')
-    : 'Click 🔍, then place the 64×64 frame on the circuit. Edit directly in this window with the same tools; right-click erases.';
-}
-function toggleMagnifier(){
-  magnifier.active=!magnifier.active;
-  magnifier.placing=magnifier.active;
-  if(!magnifier.active){mctx.fillStyle='#000';mctx.fillRect(0,0,magnifierCanvas.width,magnifierCanvas.height);}
-  updateMagnifierButton();queueRedraw(true);
-}
 function drawNow(){
   redrawPending=false;
   if(overlay.width!==view.width||overlay.height!==view.height){overlay.width=view.width;overlay.height=view.height;}
   octx.clearRect(0,0,overlay.width,overlay.height);
   drawMask();drawSurface();drawPreview();drawWaypointResearchOverlays();
-  renderMagnifier();
-  drawMagnifierFrame();
 }
 function queueRedraw(immediate=false){
   if(immediate){drawNow();return;}
@@ -673,18 +660,8 @@ function canvasPoint(ev,canvas=overlay,clamp=true){
     ? {x:Math.max(0,Math.min(319,x)),y:Math.max(0,Math.min(255,y))}
     : {x,y};
 }
-function magnifierPoint(ev,clamp=true){
-  const r=magnifierCanvas.getBoundingClientRect();
-  let lx=(ev.clientX-r.left)*64/r.width;
-  let ly=(ev.clientY-r.top)*64/r.height;
-  if(clamp){
-    lx=Math.max(0,Math.min(63.999,lx));
-    ly=Math.max(0,Math.min(63.999,ly));
-  }
-  return {x:magnifier.x+lx,y:magnifier.y+ly};
-}
 function worldPoint(ev,source='main',clamp=true){
-  return source==='magnifier'?magnifierPoint(ev,clamp):canvasPoint(ev,overlay,clamp);
+  return canvasPoint(ev,overlay,clamp);
 }
 function gridPoint(pos,allowOutside=false){
   if(editMode==='surface'){
@@ -796,16 +773,11 @@ function beginGestureFrom(ev,source='main'){
   if(ev.button!==0&&ev.button!==2)return;
   const pos=worldPoint(ev,source);
 
-  if(source==='main'&&magnifier.active&&magnifier.placing&&ev.button===0){
-    setMagnifierFromWorld(pos);magnifier.placing=false;updateMagnifierButton();queueRedraw(true);ev.preventDefault();return;
-  }
-
-  if(source==='magnifier'&&!magnifier.active)return;
   if(!editMode||!model||!currentResources)return;
 
   const p=gridPoint(pos);if(!p)return;
   const tool=currentTool(),erase=ev.button===2,value=erase?secondaryPaintValue():paintValue(),snapshot=beginHistory();
-  const bSize=brushSize(),bShape=brushShape(),hatched=brushHatched(),hatchPhase=(p.x+p.y)&1,capture=source==='magnifier'?magnifierCanvas:overlay;
+  const bSize=brushSize(),bShape=brushShape(),hatched=brushHatched(),hatchPhase=(p.x+p.y)&1,capture=overlay;
   if(tool==='fill'){
     const size=gridSize(),vals=gridValues(),indices=L.floodFillIndices(vals,size.w,size.h,p.x,p.y,value);
     let pts=indices.map(i=>[i%size.w,(i/size.w)|0]);
@@ -821,10 +793,6 @@ function beginGestureFrom(ev,source='main'){
 function moveGestureFrom(ev,source='main'){
   const cursorPos=worldPoint(ev,source,true);
   updateEditCursorAt(cursorPos);
-
-  if(source==='main'&&magnifier.active&&magnifier.placing&&!gesture){
-    setMagnifierFromWorld(cursorPos);queueRedraw();return;
-  }
 
   if(!gesture||gesture.pointerId!==ev.pointerId||gesture.source!==source)return;
   const allowOutside=primitiveAllowsOutside(gesture.tool);
@@ -868,9 +836,6 @@ function endGestureFrom(ev,source='main',cancel=false){
 function beginGesture(ev){beginGestureFrom(ev,'main');}
 function moveGesture(ev){moveGestureFrom(ev,'main');}
 function endGesture(ev,cancel=false){endGestureFrom(ev,'main',cancel);}
-function beginMagnifierGesture(ev){beginGestureFrom(ev,'magnifier');}
-function moveMagnifierGesture(ev){moveGestureFrom(ev,'magnifier');}
-function endMagnifierGesture(ev,cancel=false){endGestureFrom(ev,'magnifier',cancel);}
 
 function patchNormalCursor(ev){
   if(!model||editMode||!surface||!mask||!heading)return;
@@ -927,28 +892,27 @@ for(const id of ['wpProjectionMode','wpScaleX','wpOffsetX','wpScaleY','wpOffsetY
 }
 $('opacity')?.addEventListener('input',()=>queueRedraw());
 $('editorScale')?.addEventListener('input',e=>{
+  viewportCentre=captureViewportCentre();
   const text=$('editorScaleText');
   if(text)text.textContent=`${Math.round(Number(e.target.value)*100)}%`;
   e.target.dispatchEvent(new Event('change'));
 });
-$('editorScale')?.addEventListener('change',()=>setTimeout(syncCanvasSize,0));
+$('editorScale')?.addEventListener('change',()=>setTimeout(()=>{
+  syncCanvasSize();
+  restoreViewportCentre();
+  viewportCentre=null;
+},0));
+ui.viewportToggle.addEventListener('click',toggleViewport);
 $('trackSelect')?.addEventListener('change',e=>selectedTrack(Number(e.target.value)));
 $('showWaypoints')?.addEventListener('change',e=>{if(e.target.checked&&editMode)enterWaypointMode();else{syncEditorPane();queueRedraw(true);}});
-ui.magnifierToggle.addEventListener('click',toggleMagnifier);
 $('fileInput')?.addEventListener('change',e=>{if(e.target.files?.[0])loadManualFile(e.target.files[0]);});
 $('dropZone')?.addEventListener('drop',e=>{if(e.dataTransfer?.files?.[0])loadManualFile(e.dataTransfer.files[0]);});
 
-overlay.addEventListener('contextmenu',e=>{if(editMode||magnifier.active)e.preventDefault();});
+overlay.addEventListener('contextmenu',e=>{if(editMode)e.preventDefault();});
 overlay.addEventListener('pointerdown',beginGesture);
 overlay.addEventListener('pointermove',moveGesture);
 overlay.addEventListener('pointerup',e=>endGesture(e,false));
 overlay.addEventListener('pointercancel',e=>endGesture(e,true));
-
-magnifierCanvas.addEventListener('contextmenu',e=>{if(magnifier.active)e.preventDefault();});
-magnifierCanvas.addEventListener('pointerdown',beginMagnifierGesture);
-magnifierCanvas.addEventListener('pointermove',moveMagnifierGesture);
-magnifierCanvas.addEventListener('pointerup',e=>endMagnifierGesture(e,false));
-magnifierCanvas.addEventListener('pointercancel',e=>endMagnifierGesture(e,true));
 
 view.addEventListener('pointermove',patchNormalCursor);
 // app.js updates the waypoint editor fields before this listener runs. Mirror those
@@ -972,7 +936,7 @@ $('revertAll')?.addEventListener('click',()=>revertAllLayers(),true);
 const editCount=$('editCount');
 if(editCount)new MutationObserver(syncGlobalRevertButton).observe(editCount,{childList:true,subtree:true,characterData:true});
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(syncCanvasSize).observe(view);
-editMode=null;syncEditorPane();updateMagnifierButton();syncCanvasSize();syncGlobalRevertButton();
+editMode=null;syncEditorPane();setViewportFixed(false);syncCanvasSize();syncGlobalRevertButton();
 preloadDisk();
 
 })();
