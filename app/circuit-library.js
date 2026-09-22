@@ -11,7 +11,7 @@
  * retail host before another selection is activated.
  */
 
-const VERSION='0.69';
+const VERSION='0.71';
 const CUSTOM_MIN=10,CUSTOM_MAX=99,RUNTIME_MAIN_BASE=0x1000;
 const $=id=>document.getElementById(id);
 const slots=new Map();
@@ -19,6 +19,7 @@ let activeSlot=null;
 let importPassThrough=false;
 let bootTimer=null;
 let refreshTimer=null,refreshToken=0;
+let waypointRefreshTimer=null,waypointRefreshToken=0;
 
 function P(){return root.IndyHeatCircuitPackage||null;}
 function T(){return root.IndyHeatTools||null;}
@@ -61,6 +62,29 @@ function selectedCustomNumber(){
   const n=Number(o.dataset.indyheatCircuitIndex);return Number.isInteger(n)?n:null;
 }
 function currentSelectedSlot(){const n=selectedCustomNumber();return n==null?null:slots.get(n)||null;}
+function queueWaypointRefresh(){
+  const token=++waypointRefreshToken;
+  if(waypointRefreshTimer!=null)clearTimeout(waypointRefreshTimer);
+  waypointRefreshTimer=setTimeout(()=>{
+    if(token!==waypointRefreshToken)return;
+    waypointRefreshTimer=null;
+    try{
+      // Core selectTrack() can retain the race record's previously parsed
+      // waypointDescriptors when a custom circuit reuses the same retail host.
+      // Re-run the established waypoint-model refresh after the selection event
+      // has fully settled. This is the same path an actual waypoint edit uses.
+      if(typeof refreshWaypointModels==='function')refreshWaypointModels(null);
+      if(typeof updateWaypointValidation==='function')updateWaypointValidation();
+      if(typeof updateWaypointEditor==='function')updateWaypointEditor();
+      if(typeof updateWaypointFitStats==='function')updateWaypointFitStats();
+      if(typeof updateEditExportButtons==='function')updateEditExportButtons();
+      if(typeof render==='function')render();
+    }catch(err){
+      status(`ERROR refreshing waypoints: ${err.message}`,true);
+    }
+  },0);
+  return true;
+}
 function queueFullRefresh(reason='circuit data changed'){
   const sel=$('trackSelect');if(!sel)return false;
   const token=++refreshToken;
@@ -199,12 +223,17 @@ function restoreHost(slot){
 function captureSlot(slot=activeSlot){
   if(!slot)return;
   const mapId=currentMapId(slot.mapId),snap=snapshotTrack(slot.hostIndex,{circuitIndex:slot.circuitIndex,mapId,slot});
-  slot.package={...slot.package,...snap,circuitIndex:slot.circuitIndex};slot.mapId=mapId;slot.name=currentName(slot.name);
+  slot.package={...slot.package,...snap,circuitIndex:slot.circuitIndex};slot.mapId=mapId;
+  // The slot name is updated eagerly by nameChanged().  Do not re-read the
+  // visible Race name field while the track selector is in the middle of a
+  // transition: at that point another retail/custom selection may already own
+  // the UI and would contaminate this slot's saved identity.
   updateOption(slot);
 }
-function deactivateActiveSlot(){
+function deactivateActiveSlot({refresh=true}={}){
   if(!activeSlot)return;
-  const old=activeSlot;captureSlot(old);restoreHost(old);activeSlot=null;queueFullRefresh('retail host restored');
+  const old=activeSlot;captureSlot(old);restoreHost(old);activeSlot=null;
+  if(refresh)queueFullRefresh('retail host restored');
 }
 function syncCanonicalUi(slot){
   if(!slot||activeSlot!==slot)return;
@@ -212,14 +241,17 @@ function syncCanonicalUi(slot){
   if(number&&Number(number.value)!==slot.circuitIndex){number.value=String(slot.circuitIndex);number.dispatchEvent(new Event('change',{bubbles:true}));}
   if(map&&Number(map.value)!==slot.mapId){map.value=String(slot.mapId);map.dispatchEvent(new Event('change',{bubbles:true}));}
 }
-function activateSlot(slot){
-  if(!slot||activeSlot===slot){if(slot)syncCanonicalUi(slot);return;}
-  if(activeSlot)deactivateActiveSlot();
+function activateSlot(slot,{refresh=true,syncUi=true}={}){
+  if(!slot||activeSlot===slot){if(slot&&syncUi)syncCanonicalUi(slot);return;}
+  if(activeSlot)deactivateActiveSlot({refresh:false});
   slot.hostSnapshot=snapshotTrack(slot.hostIndex,{circuitIndex:slot.hostIndex,mapId:0});
-  applyPackage(slot);activeSlot=slot;
-  syncCanonicalUi(slot);
-  setTimeout(()=>syncCanonicalUi(slot),0);setTimeout(()=>syncCanonicalUi(slot),60);
-  queueFullRefresh('custom circuit materialised');
+  try{applyPackage(slot);activeSlot=slot;}
+  catch(err){try{restoreHost(slot);}catch(_e){}throw err;}
+  if(syncUi){
+    syncCanonicalUi(slot);
+    setTimeout(()=>syncCanonicalUi(slot),0);setTimeout(()=>syncCanonicalUi(slot),60);
+  }
+  if(refresh)queueFullRefresh('custom circuit materialised');
 }
 function updateOption(slot){
   if(!slot?.option)return;
@@ -278,17 +310,38 @@ async function importHandler(e){
   finally{if(!importPassThrough&&input)input.value='';}
 }
 function selectedTrackChanged(){
+  // The capture-phase handler below normally completes the materialisation before
+  // any ordinary track consumer sees this event. Keep this as a fallback for
+  // unusual programmatic changes or late module installation.
   const slot=currentSelectedSlot();
-  if(slot)activateSlot(slot);
-  else if(activeSlot)deactivateActiveSlot();
+  try{
+    if(slot&&activeSlot!==slot)activateSlot(slot,{refresh:false});
+    else if(slot)syncCanonicalUi(slot);
+    else if(activeSlot)deactivateActiveSlot({refresh:false});
+  }catch(err){status(`ERROR: ${err.message}`,true);}
+  // Waypoint overlays may be visible while another editor mode (for example
+  // Race) is active. Force their model reparse/redraw after the complete
+  // circuit-selection event rather than waiting for a waypoint interaction.
+  queueWaypointRefresh();
 }
 function beforeTrackChange(e){
-  if(e.target?.id!=='trackSelect'||!activeSlot)return;
-  const o=e.target.selectedOptions?.[0],next=Number(o?.dataset?.indyheatCircuitIndex);
-  if(o?.dataset?.indyheatCustom==='1'&&next===activeSlot.circuitIndex)return;
-  // Restore the host before circuit-package.js's own target-capture selection
-  // handler has a chance to activate a retail package into the same host.
-  deactivateActiveSlot();
+  if(e.target?.id!=='trackSelect')return;
+  const nextSlot=currentSelectedSlot();
+  if(nextSlot===activeSlot)return;
+  try{
+    // Make the selected option authoritative before app.js, layer-editor.js,
+    // Backdrop, Recovery and the other normal change listeners run.  Custom
+    // options deliberately retain their retail host value (0..9), so allowing
+    // consumers to run between host restoration and custom materialisation can
+    // otherwise expose a transient Illinois/retail frame and leave same-host
+    // caches with mixed circuit content.
+    if(activeSlot)deactivateActiveSlot({refresh:false});
+    if(nextSlot){
+      activateSlot(nextSlot,{refresh:false,syncUi:false});
+      setTimeout(()=>syncCanonicalUi(nextSlot),0);
+      setTimeout(()=>syncCanonicalUi(nextSlot),60);
+    }
+  }catch(err){status(`ERROR: ${err.message}`,true);}
 }
 function rekeyActiveSlot(n){
   const slot=activeSlot;if(!slot||n===slot.circuitIndex)return;
@@ -310,6 +363,8 @@ function nameChanged(e){
   activeSlot.name=name;updateOption(activeSlot);emitChanged();
 }
 function reset(){
+  if(waypointRefreshTimer!=null){clearTimeout(waypointRefreshTimer);waypointRefreshTimer=null;}
+  waypointRefreshToken++;
   if(activeSlot){try{restoreHost(activeSlot);}catch(_e){}activeSlot=null;queueFullRefresh('custom circuit library reset');}
   for(const s of slots.values())s.option?.remove();slots.clear();emitChanged();
 }

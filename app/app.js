@@ -4,6 +4,10 @@ let model=null, selected=null, raceRecords=[], originalMain=null, paletteSet=nul
 const ONLINE_DISK_URL='https://raw.githubusercontent.com/HoraceAndTheSpider/Indy-Heat-WHD/master/whdload/data/Disk.1';
 let manualDiskRequested=false;
 let loadSerial=0;
+let linkTargetPickMode=false;
+const circuitCompareSlots={A:null,B:null};
+let lastDiskUiStatus={text:'',ok:false,bad:false};
+let diskTopStatusObserver=null;
 const edits=new Map();
 const $=id=>document.getElementById(id);
 const canvas=$('view'), ctx=canvas.getContext('2d',{alpha:false});
@@ -27,7 +31,117 @@ function wpScreen(p){return projectWaypointForDisplay(pointForDisplay(p));}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function hx(v,n=4){return T.hex(v,n)}
 function log(s){$('scanLog').textContent += s+'\n';}
-function status(html){$('diskStatus').innerHTML=html;}
+function stripStatusHtml(html){
+  const tmp=document.createElement('div');tmp.innerHTML=String(html??'');return (tmp.textContent||'').trim();
+}
+function syncDiskStatusToTop(){
+  const top=$('circuitPackageTopStatus');if(!top)return false;
+  const q=lastDiskUiStatus;if(!q.text)return false;
+  top.textContent=q.text;
+  top.classList.toggle('bad',!!q.bad);
+  top.classList.toggle('diskLoadOk',!!q.ok);
+  top.dataset.diskLoadStatusText=q.text;
+  if(!diskTopStatusObserver&&typeof MutationObserver!=='undefined'){
+    diskTopStatusObserver=new MutationObserver(()=>{
+      const own=top.dataset.diskLoadStatusText||'';
+      if(own&&top.textContent!==own){
+        top.classList.remove('diskLoadOk');
+        delete top.dataset.diskLoadStatusText;
+      }
+    });
+    diskTopStatusObserver.observe(top,{childList:true,characterData:true,subtree:true});
+  }
+  return true;
+}
+function status(html){
+  const text=stripStatusHtml(html),ok=/disk loaded\.?$/i.test(text),bad=/error|could not be loaded/i.test(text);
+  lastDiskUiStatus={text,ok,bad};
+  const old=$('diskStatus');if(old)old.textContent=text;
+  if(!syncDiskStatusToTop()){
+    setTimeout(syncDiskStatusToTop,0);
+    setTimeout(syncDiskStatusToTop,100);
+    setTimeout(syncDiskStatusToTop,500);
+  }
+}
+function circuitOptionIdentity(option){
+  if(!option)return null;
+  const custom=option.dataset?.indyheatCustom==='1';
+  if(custom){
+    return {
+      kind:'custom',
+      packageKey:String(option.dataset?.indyheatPackageKey||''),
+      circuitIndex:Number(option.dataset?.indyheatCircuitIndex),
+      label:String(option.textContent||'Custom circuit').trim()
+    };
+  }
+  return {kind:'retail',value:String(option.value),label:String(option.textContent||'Retail circuit').trim()};
+}
+function circuitOptionMatches(option,identity){
+  if(!option||!identity)return false;
+  if(identity.kind==='custom'){
+    if(option.dataset?.indyheatCustom!=='1')return false;
+    if(identity.packageKey&&String(option.dataset?.indyheatPackageKey||'')===identity.packageKey)return true;
+    return Number.isInteger(identity.circuitIndex)&&Number(option.dataset?.indyheatCircuitIndex)===identity.circuitIndex;
+  }
+  return option.dataset?.indyheatCustom!=='1'&&String(option.value)===String(identity.value);
+}
+function currentCircuitIdentity(){
+  const select=$('trackSelect');return circuitOptionIdentity(select?.selectedOptions?.[0]||null);
+}
+function circuitCompareLabel(slot){
+  const q=circuitCompareSlots[slot];
+  return q?.label||'Not set';
+}
+function syncCircuitCompareUi(){
+  for(const slot of ['A','B']){
+    const label=$(`circuitCompareLabel${slot}`),show=$(`circuitCompareShow${slot}`);
+    if(label)label.textContent=circuitCompareLabel(slot);
+    if(show)show.disabled=!circuitCompareSlots[slot];
+  }
+}
+function setCircuitCompareSlot(slot){
+  const q=currentCircuitIdentity();if(!q)return;
+  circuitCompareSlots[slot]=q;syncCircuitCompareUi();
+}
+function showCircuitCompareSlot(slot){
+  const q=circuitCompareSlots[slot],select=$('trackSelect');if(!q||!select)return;
+  const options=[...select.options],target=options.find(o=>circuitOptionMatches(o,q));
+  if(!target){
+    const label=$(`circuitCompareLabel${slot}`);
+    if(label)label.textContent=`${q.label} (not loaded)`;
+    return;
+  }
+  select.selectedIndex=options.indexOf(target);
+  select.dispatchEvent(new Event('change',{bubbles:true}));
+}
+function installCircuitCompareUi(){
+  const select=$('trackSelect');if(!select)return false;
+  const disk=$('diskStatus')?.closest('section');if(disk)disk.hidden=true;
+  if(!$('circuitCompareAB')){
+    const style=document.createElement('style');style.id='circuitCompareStyle';style.textContent=`
+      #circuitCompareAB{display:grid;gap:4px;margin-top:6px}
+      .circuitCompareRow{display:grid;grid-template-columns:18px 42px 46px minmax(0,1fr);gap:4px;align-items:center}
+      .circuitCompareRow .circuitCompareSlot{font-weight:700;text-align:center;color:#d7dce5}
+      .circuitCompareRow button{min-width:0;padding:4px 5px;font-size:10px}
+      .circuitCompareLabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#9fa7b4}
+      #circuitPackageTopStatus.diskLoadOk{color:#67d17c!important}
+    `;document.head.appendChild(style);
+    const host=document.createElement('div');host.id='circuitCompareAB';
+    for(const slot of ['A','B']){
+      const row=document.createElement('div');row.className='circuitCompareRow';
+      row.innerHTML=`<span class="circuitCompareSlot">${slot}</span><button id="circuitCompareSet${slot}" type="button">Set</button><button id="circuitCompareShow${slot}" type="button" disabled>Show</button><span id="circuitCompareLabel${slot}" class="circuitCompareLabel">Not set</span>`;
+      host.appendChild(row);
+    }
+    select.insertAdjacentElement('afterend',host);
+    for(const slot of ['A','B']){
+      $(`circuitCompareSet${slot}`)?.addEventListener('click',()=>setCircuitCompareSlot(slot));
+      $(`circuitCompareShow${slot}`)?.addEventListener('click',()=>showCircuitCompareSlot(slot));
+    }
+  }
+  syncCircuitCompareUi();
+  syncDiskStatusToTop();
+  return true;
+}
 function setEnabled(on){
   $('trackSelect').disabled=!on; $('savePng').disabled=!on; $('saveJson').disabled=!on;
   document.querySelectorAll('[data-dl]').forEach(b=>b.disabled=!on);
@@ -286,19 +400,20 @@ function sequenceGroupEdges(){
   }
   return edges;
 }
+function waypointOverlayAlpha(){return Math.max(0,Math.min(1,Number($('opacity')?.value??55)/100));}
 function drawSequenceGroups(S){
   const edges=sequenceGroupEdges();if(!edges.length)return;
-  ctx.save();ctx.strokeStyle='#ffd84a';ctx.lineWidth=Math.max(1.5,.65*S);ctx.globalAlpha=.9;ctx.setLineDash([2.2*S,1.6*S]);
+  ctx.save();ctx.strokeStyle='#ffd84a';ctx.lineWidth=Math.max(1.5,.65*S);ctx.globalAlpha=.9*waypointOverlayAlpha();ctx.setLineDash([2.2*S,1.6*S]);
   for(const e of edges){ctx.beginPath();ctx.moveTo(e.a.q.x*S,e.a.q.y*S);ctx.lineTo(e.b.q.x*S,e.b.q.y*S);ctx.stroke();}
   ctx.restore();
 }
 function drawWaypoints(){
   const enabled=visibleWaypointSetIndices(),S=editorScale();if(!enabled.size)return;
-  const colors=['#ff5353','#53f06b','#4fd8ff'],showLinks=$('showWaypointLinks')?.checked;
-  ctx.save();
+  const colors=['#ff5353','#53f06b','#4fd8ff'],showLinks=$('showWaypointLinks')?.checked,overlayAlpha=waypointOverlayAlpha();
+  ctx.save();ctx.globalAlpha=overlayAlpha;
   drawSequenceGroups(S);
   if(showLinks){
-    ctx.globalAlpha=.78;ctx.lineWidth=Math.max(1.2,0.55*S);
+    ctx.globalAlpha=.78*overlayAlpha;ctx.lineWidth=Math.max(1.2,0.55*S);
     for(const set of state.waypoints){
       if(!enabled.has(set.index))continue;ctx.strokeStyle=colors[set.index]||'#fff';
       const byAddress=waypointAddressMapForSet(set);
@@ -311,7 +426,7 @@ function drawWaypoints(){
         ctx.beginPath();ctx.moveTo(a.x*S,a.y*S);ctx.lineTo(b.x*S,b.y*S);ctx.stroke();
       }
     }
-    ctx.globalAlpha=1;
+    ctx.globalAlpha=overlayAlpha;
   }
   for(const set of state.waypoints){
     if(!enabled.has(set.index))continue;const col=colors[set.index]||'#fff';
@@ -351,6 +466,15 @@ function nearestWaypointAt(x,y,maxD2=64){
   for(const set of state.waypoints){if(!enabled.has(set.index))continue;for(const p of set.points){
     const q=wpScreen(p),dx=q.x-x,dy=q.y-y,dd=dx*dx+dy*dy;if(dd<bd){bd=dd;best={set:set.index,p,q,d2:dd};}
   }}
+  return best;
+}
+function nearestWaypointInRoute(x,y,setIndex,maxD2=100){
+  const set=state.waypoints?.find(q=>q.index===setIndex);if(!set)return null;
+  let best=null,bd=maxD2+1;
+  for(const p of set.points){
+    const q=wpScreen(p),dx=q.x-x,dy=q.y-y,dd=dx*dx+dy*dy;
+    if(dd<bd){bd=dd;best={set:set.index,p,q,d2:dd};}
+  }
   return best;
 }
 function eventCanvasXY(ev){
@@ -507,16 +631,20 @@ function updateWaypointEditor(){
   const enabled=visibleWaypointSetIndices();
   let p=state.selectedWaypoint;
   if(p&&!enabled.has(p.setIndex)){state.selectedWaypoint=null;p=null;}
-  const controls=['editWpX','editWpY','editWpProgress','editWpFlag','editWpDelta','editWpTarget','applyWaypoint','revertWaypoint'];
+  const controls=['editWpX','editWpY','editWpProgress','editWpFlag','editWpDelta','editWpTarget','revertWaypoint'];
   controls.forEach(id=>{$(id).disabled=!p;});populateWaypointSelectList();
-  if(!p){$('wpSelectedInfo').textContent=enabled.size?'Select or drag a visible waypoint.':'Turn on Waypoints and a route to edit.';$('editWpTarget').innerHTML='<option>—</option>';return;}
+  const pick=$('pickWaypointTarget');if(pick)pick.disabled=!p;
+  for(const id of ['waypointSequenceMinus','waypointSequencePlus']){const b=$(id);if(b)b.disabled=!p;}
+  if(!p){setLinkTargetPickMode(false);$('wpSelectedInfo').textContent=enabled.size?'Select or drag a visible waypoint.':'Turn on Waypoints and a route to edit.';$('editWpTarget').innerHTML='<option>—</option>';return;}
   $('wpSelectList').value=String(p.runtimeAddress);
   $('wpSelectedInfo').textContent=`Route ${'ABC'[p.setIndex]} · waypoint ${p.index} · sequence ${p.progress}`;
   $('editWpX').value=p.x;$('editWpY').value=p.y;$('editWpProgress').value=p.progress;$('editWpFlag').checked=p.progressFlag;$('editWpDelta').value=p.linkDelta;
   const sel=$('editWpTarget');sel.innerHTML='';
   const keep=document.createElement('option');keep.value='';keep.textContent=`Current · ${p.linkDelta} → ${hx(p.linkTarget,4)}${p.linkResolved?'':' (unresolved)'}`;sel.appendChild(keep);
-  for(const set of state.waypoints)for(const q of set.points){const o=document.createElement('option');o.value=q.runtimeAddress;o.textContent=`${'ABC'[set.index]} ${q.index} · ${hx(q.runtimeAddress,4)}${q.runtimeAddress===p.linkTarget?' ← current':''}`;sel.appendChild(o);}
-  if(p.linkResolved&&!p.linkTargetBoundary)sel.value=String(p.linkTarget);
+  const route=state.waypoints?.find(set=>set.index===p.setIndex);
+  for(const q of route?.points||[]){const o=document.createElement('option');o.value=q.runtimeAddress;o.textContent=`${'ABC'[p.setIndex]} ${q.index} · ${hx(q.runtimeAddress,4)}${q.runtimeAddress===p.linkTarget?' ← current':''}`;sel.appendChild(o);}
+  if(p.linkResolved&&!p.linkTargetBoundary&&(route?.points||[]).some(q=>q.runtimeAddress===p.linkTarget))sel.value=String(p.linkTarget);
+  if(pick)pick.disabled=false;
 }
 function noteEdit(point){
   const off=point.fileOffset,orig=Array.from(originalMain.slice(off,off+6)),cur=Array.from(model.main.slice(off,off+6));
@@ -534,7 +662,11 @@ function applyWaypointEdit(){
   const p=state.selectedWaypoint;if(!p)return;
   try{
     let linkDelta=Number($('editWpDelta').value);const target=$('editWpTarget').value;
-    if(target!=='')linkDelta=Number(target)-p.runtimeAddress;
+    if(target!==''){
+      const addr=Number(target),route=state.waypoints?.find(set=>set.index===p.setIndex);
+      if(!(route?.points||[]).some(q=>q.runtimeAddress===addr))throw new Error(`Link target must be on Route ${'ABC'[p.setIndex]}.`);
+      linkDelta=addr-p.runtimeAddress;
+    }
     T.writeWaypoint(model.main,p,{x:Number($('editWpX').value),y:Number($('editWpY').value),progress:Number($('editWpProgress').value),progressFlag:$('editWpFlag').checked,linkDelta});
     noteEdit(p);const addr=p.runtimeAddress;refreshWaypointModels(addr);updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();render();
     $('editStatus').textContent=`Updated ${hx(addr,4)}.`;
@@ -545,6 +677,79 @@ function revertSelectedWaypoint(){
 }
 function revertAllWaypoints(){
   if(!originalMain||!model)return;for(const e of edits.values())model.main.set(originalMain.slice(e.fileOffset,e.fileOffset+6),e.fileOffset);edits.clear();const addr=state.selectedWaypoint?.runtimeAddress??null;refreshWaypointModels(addr);updateWaypointValidation();updateWaypointEditor();updateEditExportButtons();render();$('editStatus').textContent='All waypoint edits reverted.';
+}
+function setLinkTargetPickMode(on){
+  linkTargetPickMode=!!on&&!!state.selectedWaypoint;
+  const button=$('pickWaypointTarget');
+  if(button){button.classList.toggle('active',linkTargetPickMode);button.textContent=linkTargetPickMode?'Cancel target pick':'Pick link target';}
+  if(linkTargetPickMode){
+    const p=state.selectedWaypoint;
+    $('editStatus').textContent=`Click a waypoint on Route ${'ABC'[p.setIndex]} to set and apply its link target.`;
+  }
+}
+function applyPickedLinkTarget(target){
+  const p=state.selectedWaypoint;if(!p||!target)return false;
+  if(target.set!==p.setIndex){$('editStatus').textContent=`Link target must be on Route ${'ABC'[p.setIndex]}.`;return false;}
+  try{
+    const linkDelta=target.p.runtimeAddress-p.runtimeAddress,addr=p.runtimeAddress;
+    T.writeWaypoint(model.main,p,{x:p.x,y:p.y,progress:p.progress,progressFlag:p.progressFlag,linkDelta});
+    noteEdit(p);refreshWaypointModels(addr);updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();render();
+    setLinkTargetPickMode(false);
+    $('editStatus').textContent=`Route ${'ABC'[target.set]} waypoint ${target.p.index} set as link target.`;
+    return true;
+  }catch(e){setLinkTargetPickMode(false);$('editStatus').textContent='ERROR: '+e.message;return false;}
+}
+function linkTargetPickPointerDown(ev){
+  if(!linkTargetPickMode||ev.button!==0)return;
+  const source=state.selectedWaypoint;if(!source){setLinkTargetPickMode(false);return;}
+  const pos=eventCanvasXY(ev),best=nearestWaypointInRoute(pos.x,pos.y,source.setIndex,100);
+  ev.preventDefault();ev.stopImmediatePropagation();
+  if(!best){$('editStatus').textContent=`Pick a waypoint on Route ${'ABC'[source.setIndex]}.`;return;}
+  applyPickedLinkTarget(best);
+}
+function installLinkTargetPicker(){
+  if($('pickWaypointTarget'))return true;
+  const apply=$('applyWaypoint'),revert=$('revertWaypoint'),row=apply?.parentElement||revert?.parentElement;if(!row)return false;
+  const button=document.createElement('button');button.id='pickWaypointTarget';button.type='button';button.textContent='Pick link target';button.disabled=true;
+  row.insertBefore(button,revert||apply||row.firstChild);
+  if(apply)apply.hidden=true;
+  button.addEventListener('click',()=>setLinkTargetPickMode(!linkTargetPickMode));
+  return true;
+}
+function applyWaypointFieldChange(){
+  if(!state.selectedWaypoint)return;
+  applyWaypointEdit();
+}
+function stepWaypointSequence(delta){
+  const input=$('editWpProgress');if(!input||input.disabled||!state.selectedWaypoint)return;
+  const next=Math.max(0,Math.min(127,(Number(input.value)||0)+Number(delta||0)));
+  if(next===Number(input.value))return;
+  input.value=String(next);
+  applyWaypointEdit();
+}
+function installWaypointInstantControls(){
+  const input=$('editWpProgress');if(!input)return false;
+  if(!$('waypointSequenceStepControls')){
+    const style=document.createElement('style');style.id='waypointSequenceStepStyle';style.textContent=`
+      #waypointSequenceStepControls{display:grid;grid-template-columns:minmax(0,1fr) 28px 28px;gap:3px;align-items:stretch}
+      #waypointSequenceStepControls input{width:100%}
+      #waypointSequenceStepControls button{min-width:0;padding:4px 0;font-size:15px;line-height:1}
+    `;document.head.appendChild(style);
+    const wrap=document.createElement('span');wrap.id='waypointSequenceStepControls';
+    input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
+    for(const [id,label,delta,title] of [
+      ['waypointSequenceMinus','−',-1,'Decrease sequence by 1'],
+      ['waypointSequencePlus','+',1,'Increase sequence by 1']
+    ]){
+      const button=document.createElement('button');button.id=id;button.type='button';button.textContent=label;button.title=title;
+      button.addEventListener('click',e=>{e.preventDefault();stepWaypointSequence(delta);});
+      wrap.appendChild(button);
+    }
+  }
+  for(const id of ['editWpX','editWpY','editWpProgress','editWpDelta'])
+    $(id)?.addEventListener('change',applyWaypointFieldChange);
+  $('editWpFlag')?.addEventListener('change',applyWaypointFieldChange);
+  return true;
 }
 function renderRaceRecords(){
   const recs=raceRecords;
@@ -562,7 +767,8 @@ const dz=$('dropZone');
 ['dragenter','dragover'].forEach(n=>dz.addEventListener(n,e=>{e.preventDefault();dz.classList.add('drag')}));
 ['dragleave','drop'].forEach(n=>dz.addEventListener(n,e=>{e.preventDefault();dz.classList.remove('drag')}));
 dz.addEventListener('drop',e=>{if(e.dataTransfer.files[0]){manualDiskRequested=true;loadFile(e.dataTransfer.files[0]);}});
-$('trackSelect').addEventListener('change',e=>selectTrack(Number(e.target.value)));
+$('trackSelect').addEventListener('change',e=>{setLinkTargetPickMode(false);selectTrack(Number(e.target.value));syncCircuitCompareUi();});
+window.addEventListener('indyheat-circuit-library-changed',()=>setTimeout(syncCircuitCompareUi,0));
 ['showBg','showMask1','showSurface','showWaypointLinks','showSequenceGroups','showHeading','headingReverse'].forEach(id=>$(id).addEventListener('change',render));
 $('paletteMode').addEventListener('change',render);
 $('wpLabelMode').addEventListener('change',render);
@@ -570,6 +776,7 @@ $('headingDensity').addEventListener('change',render);
 $('editorScale').addEventListener('change',()=>{resizeEditorCanvas();render();});
 document.querySelectorAll('.surfaceClass').forEach(c=>c.addEventListener('change',render));
 function waypointVisibilityChanged(){
+  setLinkTargetPickMode(false);
   const enabled=visibleWaypointSetIndices();
   if(state.selectedWaypoint&&!enabled.has(state.selectedWaypoint.setIndex))state.selectedWaypoint=null;
   if(!$('showWaypoints').checked)state.drag=null;
@@ -589,16 +796,21 @@ $('wpProjectionMode').addEventListener('change',()=>{syncProjectionControls();up
 $('wpReset').addEventListener('click',()=>{$('wpProjectionMode').value='a082';$('wpScaleX').value=2;$('wpOffsetX').value=338;$('wpScaleY').value=-1.5;$('wpOffsetY').value=142.5;syncProjectionControls();updateWaypointFitStats();render();});
 $('wpAutoFit').addEventListener('click',()=>{autoFitWaypointsToRoad();syncProjectionControls();updateWaypointFitStats();render();});
 
+canvas.addEventListener('pointerdown',linkTargetPickPointerDown,true);
 canvas.addEventListener('pointerdown',beginWaypointDrag);
 canvas.addEventListener('pointermove',moveWaypointDrag);
 canvas.addEventListener('pointerup',e=>endWaypointDrag(e,false));
 canvas.addEventListener('pointercancel',e=>endWaypointDrag(e,true));
 canvas.addEventListener('pointerleave',e=>{if(!state.drag)cursorAt(e);});
 $('wpSelectList').addEventListener('change',e=>{const addr=Number(e.target.value);if(!addr)return;const enabled=visibleWaypointSetIndices();for(const set of state.waypoints||[]){if(!enabled.has(set.index))continue;const p=set.points.find(q=>q.runtimeAddress===addr);if(p){state.selectedWaypoint=p;updateWaypointEditor();render();return;}}});
-$('editWpTarget').addEventListener('change',()=>{const p=state.selectedWaypoint;if(p&&$('editWpTarget').value!=='')$('editWpDelta').value=Number($('editWpTarget').value)-p.runtimeAddress;});
-$('applyWaypoint').addEventListener('click',applyWaypointEdit);
+$('editWpTarget').addEventListener('change',()=>{
+  const p=state.selectedWaypoint;if(!p)return;
+  if($('editWpTarget').value!=='')$('editWpDelta').value=Number($('editWpTarget').value)-p.runtimeAddress;
+  applyWaypointEdit();
+});
 $('revertWaypoint').addEventListener('click',revertSelectedWaypoint);
 $('revertAll').addEventListener('click',revertAllWaypoints);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&linkTargetPickMode){e.preventDefault();setLinkTargetPickMode(false);$('editStatus').textContent='Link target pick cancelled.';}});
 $('savePng').addEventListener('click',()=>canvas.toBlob(b=>downloadBlob(b,`indyheat_group_${selected.index+1}_view.png`),'image/png'));
 $('saveJson').addEventListener('click',()=>downloadBlob(new Blob([JSON.stringify(trackJson(),null,2)],{type:'application/json'}),`indyheat_group_${selected.index+1}_v011.json`));
 $('savePatch').addEventListener('click',()=>downloadBlob(new Blob([JSON.stringify(waypointPatchJson(),null,2)],{type:'application/json'}),'indyheat_waypoint_patch_v011.json'));
@@ -606,6 +818,7 @@ $('saveMain').addEventListener('click',()=>downloadBytes(model.main,'indyheat_ma
 document.querySelectorAll('[data-dl]').forEach(b=>b.addEventListener('click',()=>{const i=Number(b.dataset.dl),r=state.resources[i];downloadBytes(r.data,`indyheat_${hx(r.id,2).slice(1)}_${['background','bitmap1','surface2bpp','heading'][i]}.bin`)}));
 
 async function preloadOnlineDisk(){
+  installCircuitCompareUi();
   const startManualState=manualDiskRequested;
   status('Loading repository Disk.1…');
   try{
@@ -622,5 +835,5 @@ async function preloadOnlineDisk(){
   }
 }
 
-syncProjectionControls();resizeEditorCanvas();ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+installCircuitCompareUi();installLinkTargetPicker();installWaypointInstantControls();syncProjectionControls();resizeEditorCanvas();ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
 preloadOnlineDisk();
