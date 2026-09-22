@@ -13,7 +13,7 @@
 
 
 ;
-; Development 1.3 test 33 replaces the proof-of-concept deferred custom-resource
+; Development 1.3 test 34 refines the proof-of-concept deferred custom-resource
 ; replacement path for circuit_10..99 with one permanent active custom-circuit
 ; arena above the original 512 KiB game address space:
 ; - require WHDLoad v20 for ws_MemConfig support;
@@ -56,6 +56,8 @@
 ;   template data;
 ; - the three race descriptors are repointed to the active route arena with
 ;   authored start/end/count values; template +$0A words remain inherited;
+; - custom routes retain each authored route's independent point-0 and explicit boundary;
+;   no retail shared-boundary byte alias is required between route A/B or B/C;
 ; - custom arena contents are reloaded on the native $5902/+82 event progression;
 ; - regional-map interception remains unchanged from the runtime-proven path;
 ; - preserve the established editor package files: background, foreground,
@@ -237,7 +239,7 @@ _memcfg
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 33"
+	dc.b	"1.3 test 34"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -1843,10 +1845,9 @@ infer_custom_template
 ; OUT: D0.l = 1 valid / loaded at CUSTOM_ROUTE_ARENA_BASE, 0 invalid
 ; SIDE: inferred_route_counts receives A/B/C ordinary point counts.
 ;
-; Validation also proves the retail boundary-sharing shape encoded by IHWP:
-; route A boundary == route B point 0, and B boundary == C point 0.  That lets
-; the active loader reconstruct the original contiguous runtime layout while
-; still accepting arbitrary positive counts.
+; Validation is deliberately format/safety based rather than retail-topology based.
+; Custom routes may have independent point-0 and boundary records; the active
+; loader preserves them and performs decoded link/bounds validation separately.
 validate_custom_waypoint_file
 	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d7
@@ -1875,11 +1876,13 @@ validate_custom_waypoint_file
 	cmp.w	#CIRCUIT_WAYPOINT_ROUTES,6(a0)
 	bne.w	.failed
 
+	; Custom authoring may add/delete route points independently.  Validate only
+	; the IHWP structure needed by the runtime: positive counts, one explicit
+	; boundary per route, complete payloads, and exact file consumption.  Runtime
+	; link safety is checked after decode in load_active_custom_routes.
 	subq.l	#8,d6
 	lea	8(a0),a1
 	lea	inferred_route_counts(pc),a4
-	suba.l	a5,a5			; previous route boundary in stored file
-	moveq	#0,d4			; route index
 	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d5
 .validate_route
 	cmp.l	#4,d6
@@ -1889,33 +1892,18 @@ validate_custom_waypoint_file
 	move.w	(a1),d0			; ordinary point count
 	beq.w	.failed
 	move.w	d0,(a4)+
-	cmp.w	#1,2(a1)			; all proven retail routes carry a boundary
+	cmp.w	#1,2(a1)			; explicit boundary required by race descriptor
 	bne.w	.failed
 	lea	4(a1),a2			; first stored point
 	subq.l	#4,d6
-
-	; Starting with route B, point 0 must alias the preceding route boundary.
-	tst.w	d4
-	beq.b	.alias_ok
-	move.l	(a5),d1
-	cmp.l	(a2),d1
-	bne.w	.failed
-	move.w	4(a5),d1
-	cmp.w	4(a2),d1
-	bne.w	.failed
-.alias_ok
 
 	mulu	#6,d0
 	addq.l	#6,d0			; ordinary points + explicit boundary
 	cmp.l	d0,d6
 	blo.w	.failed
-	movea.l	a2,a5
-	adda.l	d0,a5
-	subq.l	#6,a5			; boundary record pointer
 	adda.l	d0,a2
 	sub.l	d0,d6
 	movea.l	a2,a1
-	addq.w	#1,d4
 	dbf	d5,.validate_route
 
 	tst.l	d6
@@ -2429,10 +2417,10 @@ load_active_custom_pits
 ; OUT: D0.l = 1 success / 0 failure
 ;
 ; validate_custom_waypoint_file first leaves the raw IHWP file at $94000.
-; This routine compacts the three route payloads downward in the same arena,
-; normalises each stored record field-by-field, validates every relative link against the
-; compacted runtime record set, then atomically commits start/end/count fields.
-; The +$0A descriptor word remains inherited from the chosen retail template.
+; This routine decodes all three route payloads downward in the same arena while
+; preserving each route's own point-0 and explicit boundary, validates every
+; relative link against the decoded runtime record set, then atomically commits
+; start/end/count fields.  Template +$0A words remain inherited.
 load_active_custom_routes
 	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d7
@@ -2441,11 +2429,10 @@ load_active_custom_routes
 	beq.w	.failed
 
 	lea	CUSTOM_ROUTE_ARENA_BASE+8,a2	; first IHWP route header
-	lea	CUSTOM_ROUTE_ARENA_BASE,a1	; compact runtime destination
+	lea	CUSTOM_ROUTE_ARENA_BASE,a1	; independent runtime-route destination
 	lea	active_route_starts(pc),a4
 	lea	active_route_ends(pc),a5
 	lea	active_route_counts(pc),a6
-	moveq	#0,d7			; route index
 	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d6
 .decode_route
 	moveq	#0,d0
@@ -2453,29 +2440,23 @@ load_active_custom_routes
 	move.w	d0,(a6)+
 	lea	4(a2),a2			; source ordinary points
 
-	tst.w	d7
-	bne.b	.shared_start
-	move.l	a1,(a4)+			; route A start
-	bra.b	.copy_points
-.shared_start
-	lea	-6(a1),a0			; previous boundary == this route point 0
-	move.l	a0,(a4)+
-	lea	6(a2),a2			; skip duplicate stored point 0
-	subq.w	#1,d0
-
-.copy_points
+	; Keep every authored route independent.  In particular, do not force route
+	; B point 0 to alias route A's boundary (or C point 0 to alias B's).
+	move.l	a1,(a4)+			; descriptor start
 	bsr.w	copy_normalize_waypoint_records
-	move.l	a1,(a5)+			; descriptor end / boundary address
+	move.l	a1,(a5)+			; descriptor end / explicit boundary address
 	moveq	#1,d0
 	bsr.w	copy_normalize_waypoint_records	; explicit boundary
 
-	addq.w	#1,d7
 	dbf	d6,.decode_route
 
-	move.l	a1,d7			; one-past-final compact record
+	move.l	a1,d7			; one-past-final decoded record
+	cmp.l	#CUSTOM_ROUTE_ARENA_END,d7
+	bhi.w	.failed
 
-	; Validate every decoded +4.w relative link.  Because the runtime layout is
-	; compact and six-byte aligned, valid targets must land on one of its records.
+	; Validate every decoded +4.w relative link.  Valid targets must land on a
+	; six-byte record in the decoded arena.  Only the final boundary may target
+	; the one-past-final +6 sentinel.
 	lea	CUSTOM_ROUTE_ARENA_BASE,a0
 .validate_link
 	cmpa.l	d7,a0
@@ -2490,7 +2471,6 @@ load_active_custom_routes
 	cmp.l	d7,d0
 	blo.b	.target_in_arena
 	bne.w	.failed
-	; The final retail boundary may point +6 to the one-past-end sentinel.
 	move.l	d7,d1
 	subq.l	#6,d1
 	cmp.l	d1,a0
@@ -2524,7 +2504,6 @@ load_active_custom_routes
 .return
 	movem.l	(a7)+,d1-d7/a0-a6
 	rts
-
 
 ; IN: D0.w = number of six-byte stored waypoint records, A2 source, A1 dest
 ; OUT: A2/A1 advanced; D0 exhausted.

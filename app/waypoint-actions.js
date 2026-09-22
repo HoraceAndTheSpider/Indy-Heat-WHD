@@ -5,6 +5,7 @@
 // - right-click a visible waypoint to toggle its code-proven AI Turbo marker
 // - flip every waypoint on Routes A/B/C left/right across the 320-pixel game screen
 // - add/delete waypoint records through a detached authoring model when route structure changes
+// - clean route bookkeeping without flattening intentional branch/progress semantics
 //
 // Bitmap edit modes use their own overlay canvas and therefore retain their
 // existing right-click paint behaviour.
@@ -261,6 +262,76 @@ function logicalFollowersAfterDelete(points,index,removedSequence){
   return run;
 }
 
+// Progress is shared race/checkpoint metadata, not a physical waypoint ID.
+// Retail Route C deliberately contains route-local gaps, duplicates and branch
+// runs, so a safe clean may remove only ordinals unused by ALL three routes.
+function globalSequenceCompression(sets){
+  const used=new Set();
+  for(const set of sets||[])for(const p of set.points||[])used.add(Number(p.progress));
+  if(!used.size)return {map:new Map(),gaps:[],max:null};
+  if(!used.has(0))throw new Error('Route clean cannot compact sequence values because no route contains sequence 0. Repair the lap/start progress data manually first.');
+  const max=Math.max(...used),map=new Map(),gaps=[];let shift=0;
+  for(let value=0;value<=max;value++){
+    if(!used.has(value)){gaps.push(value);shift++;continue;}
+    map.set(value,value-shift);
+  }
+  return {map,gaps,max};
+}
+function percentile90(values){
+  if(!values?.length)return null;
+  const sorted=[...values].sort((a,b)=>a-b);
+  return sorted[Math.floor((sorted.length-1)*.9)];
+}
+function routeCProximity(sets){
+  const c=sets?.[2]?.points||[];if(!c.length)return null;
+  const result={};
+  for(const setIndex of [0,1]){
+    const points=sets?.[setIndex]?.points||[],distances=[];
+    for(const p of points){
+      let best=Infinity;
+      for(const q of c){const dx=Number(p.x)-Number(q.x),dy=Number(p.y)-Number(q.y),d=Math.hypot(dx,dy);if(d<best)best=d;}
+      if(Number.isFinite(best))distances.push(best);
+    }
+    result['AB'[setIndex]]={
+      p90:percentile90(distances),
+      max:distances.length?Math.max(...distances):null
+    };
+  }
+  return result;
+}
+function cleanRouteData(){
+  try{
+    if(!selected||!model||!state?.waypoints?.length)throw new Error('Load a circuit before cleaning route data.');
+    const ov=ensureOverride(),selectedPoint=state.selectedWaypoint||null;
+    const beforeTargets=new Map();
+    let unresolved=0;
+    for(const set of ov.sets)for(const p of set.points){
+      if(p.__ihLinkTarget)beforeTargets.set(p,p.__ihLinkTarget);
+      else unresolved++;
+    }
+    const plan=globalSequenceCompression(ov.sets);
+    let changedSequences=0;
+    for(const set of ov.sets)for(const p of set.points){
+      const next=plan.map.get(p.progress);
+      if(next!=null&&next!==p.progress){p.progress=next;changedSequences++;}
+    }
+    normaliseOverride(ov);
+    // normaliseOverride reassigns physical IDs 0..N-1 and recalculates every
+    // resolved relative displacement from the retained target object.
+    let changedTargets=0;
+    for(const [point,target] of beforeTargets)if(point.__ihLinkTarget!==target)changedTargets++;
+    state.selectedWaypoint=selectedPoint&&allNodes(ov.sets).includes(selectedPoint)?selectedPoint:null;
+    updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();updateEditExportButtons();render();
+    const prox=routeCProximity(ov.sets),fmt=v=>v==null?'—':Number(v).toFixed(1);
+    const seqText=plan.gaps.length
+      ?` Removed globally unused sequence ${plan.gaps.length===1?'value':'values'} ${plan.gaps.join(', ')} across A/B/C (${changedSequences} records updated).`
+      :' No globally unused sequence values were found; route-specific gaps/duplicates were preserved.';
+    const proximityText=prox?` Route C proximity: A→C p90 ${fmt(prox.A.p90)} / max ${fmt(prox.A.max)}; B→C p90 ${fmt(prox.B.p90)} / max ${fmt(prox.B.max)} world units.`:'';
+    setStatus(`Route data cleaned. Physical waypoint IDs are contiguous and ${beforeTargets.size} resolved link target${beforeTargets.size===1?' was':'s were'} rebuilt without changing topology.${unresolved?` ${unresolved} unresolved/raw link${unresolved===1?' was':'s were'} retained.`:''}${changedTargets?` WARNING: ${changedTargets} logical link target${changedTargets===1?' changed':'s changed'} unexpectedly.`:''}${seqText}${proximityText}`);
+    return {sequenceGapsRemoved:plan.gaps.slice(),changedSequences,resolvedLinks:beforeTargets.size,unresolvedLinks:unresolved,changedTargets,proximity:prox};
+  }catch(e){setStatus('ERROR: '+e.message);return null;}
+}
+
 function addWaypointAt(pos,candidate=insertionCandidate(pos)){
   if(!candidate)throw new Error('Turn on Waypoints and at least one Route A/B/C layer before adding a waypoint.');
   const ov=ensureOverride(),set=ov.sets[candidate.setIndex];
@@ -339,7 +410,7 @@ function setActionMode(mode,announce=true){
 }
 function syncActionButtons(){
   let ready=false;try{ready=!!(selected&&model&&state?.waypoints?.some(set=>set.points?.length));}catch(_e){}
-  for(const id of ['addWaypointMode','deleteWaypointMode','flipWaypointsLR']){const b=document.getElementById(id);if(b)b.disabled=!ready;}
+  for(const id of ['addWaypointMode','deleteWaypointMode','cleanWaypointRoutes','flipWaypointsLR']){const b=document.getElementById(id);if(b)b.disabled=!ready;}
 }
 
 function installActionControls(){
@@ -351,7 +422,8 @@ function installActionControls(){
   const row=document.createElement('div');row.className='wpBtns';
   const add=document.createElement('button');add.id='addWaypointMode';add.type='button';add.className='wpActionToggle';add.textContent='Add waypoint (+)';add.setAttribute('aria-pressed','false');add.title='Insert a waypoint on the nearest visible logical route link and renumber following IDs/sequences.';
   const del=document.createElement('button');del.id='deleteWaypointMode';del.type='button';del.className='wpActionToggle';del.textContent='Delete waypoint (−)';del.setAttribute('aria-pressed','false');del.title=`Delete a visible waypoint, repair links to the next waypoint and keep at least ${MIN_ROUTE_WAYPOINTS} per route.`;
-  row.append(add,del);anchor.insertAdjacentElement('afterend',row);add.addEventListener('click',()=>setActionMode('add'));del.addEventListener('click',()=>setActionMode('delete'));syncActionButtons();
+  const clean=document.createElement('button');clean.id='cleanWaypointRoutes';clean.type='button';clean.textContent='Clean route data';clean.title='Rebuild physical waypoint IDs and resolved link displacements. Sequence values are compacted only when an ordinal is unused by Routes A, B and C together; route-specific branch gaps/duplicates are preserved.';
+  row.append(add,del,clean);anchor.insertAdjacentElement('afterend',row);add.addEventListener('click',()=>setActionMode('add'));del.addEventListener('click',()=>setActionMode('delete'));clean.addEventListener('click',cleanRouteData);syncActionButtons();
 }
 
 /*
@@ -618,10 +690,10 @@ else setTimeout(()=>{retryPackageBridges();syncActionButtons();},0);
 
 // Small public bridge for package/export diagnostics and focused regression tests.
 globalThis.IndyHeatWaypointAuthoring={
-  version:'0.55',minimumPerRoute:MIN_ROUTE_WAYPOINTS,
+  version:'0.57',minimumPerRoute:MIN_ROUTE_WAYPOINTS,
   hasStructuralEdits:()=>!!currentOverride(),
   currentRoutes:()=>currentOverride()?.sets||null,
   routeCounts:()=>currentOverride()?.sets?.map(s=>s.points.length)||null,
-  installPackageRoutes
+  installPackageRoutes,cleanRouteData,globalSequenceCompression,routeCProximity
 };
 })();

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.55</title>
+<title>Indy Heat Amiga – Circuit Editor v0.66</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
@@ -33,6 +33,18 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 .playlistActions button,#playlistExport{padding:7px 10px}
 #playlistStatus{min-height:34px;white-space:pre-line;margin-top:7px}
 .playlistRuntimeNote{margin:8px 0 12px;padding:9px 10px;border-left:3px solid #5a6474;background:#12151a;line-height:1.4}
+/* v0.66 view/edit layout consolidation */
+main{grid-template-columns:300px minmax(0,1fr) 286px!important}
+#viewPrimaryRow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;margin:4px 0 8px}
+#viewPrimaryRow label{margin:0;white-space:nowrap}
+#viewPrimaryRow #circuitViewportToggle{width:auto!important;margin:0!important;padding:5px 7px!important;font-size:11px!important;white-space:nowrap}
+.viewSliderRow{display:grid!important;grid-template-columns:86px minmax(0,1fr) 38px;gap:6px;align-items:center;margin:7px 0!important;font-size:12px}
+.viewSliderRow>span:first-child{white-space:nowrap}
+.viewSliderRow input[type=range]{width:100%!important;min-width:0;margin:0!important}
+.viewSliderRow>span:last-child{text-align:right;font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+#legacyUiCompatibility{display:none!important}
+@media(max-width:1050px){main{grid-template-columns:1fr!important}}
+
 @media(max-width:760px){
   #appIdentity{gap:8px}
   .playlistHead{display:none}
@@ -44,10 +56,10 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 
 </head>
 <body>
-<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.55";</script>
+<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.66";</script>
 <header>
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor v0.55</h1>
+    <h1>Indy Heat Amiga — Circuit Editor v0.66</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
@@ -101,14 +113,14 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
     <section>
       <h2>Circuit</h2>
       <select id="trackSelect" disabled></select>
-      <div id="trackMeta" class="mini muted"></div>
+      <div id="trackMeta" class="mini muted" hidden></div>
     </section>
 
     <section>
       <h2>View</h2>
-      <label><input id="showBg" type="checkbox" checked> Track image</label>
-      <label>Track opacity <input id="backgroundOpacity" type="range" min="0" max="100" value="100"><span id="backgroundOpacityText">100%</span></label>
-      <label class="inlineControl">Colours
+      <label><input id="showBg" type="checkbox" checked> Image</label>
+      <label>Image opacity <input id="backgroundOpacity" type="range" min="0" max="100" value="100"><span id="backgroundOpacityText">100%</span></label>
+      <label id="paletteModeControl" class="inlineControl" hidden>Colours
         <select id="paletteMode"><option value="game" selected>Original colour</option><option value="mono">Monochrome</option></select>
       </label>
       <label><input id="showMask1" type="checkbox"> Foreground / bridge mask</label>
@@ -132,7 +144,6 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
         <label class="inlineControl">Labels
           <select id="wpLabelMode"><option value="off">Off</option><option value="index" selected>Waypoint ID</option><option value="sequence">Sequence</option></select>
         </label>
-        <div id="sequenceSummary" class="sequenceSummary mini muted">Sequence summary unavailable.</div>
       </div>
 
       <div id="legacyRecoveryControls" hidden>
@@ -141,7 +152,7 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
         <input id="headingPhase" type="range" min="0" max="255" value="0"><span id="phaseText">0</span>
         <input id="headingReverse" type="checkbox">
       </div>
-      <label id="masterZoomControl">Master Circuit Zoom
+      <label id="masterZoomControl">Zoom
         <div class="masterZoomSlider">
           <input id="editorScale" type="range" min="1" max="10" step="0.5" value="2">
           <span id="editorScaleText">200%</span>
@@ -191,11 +202,11 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
     <details>
       <summary>Help / controls</summary>
       <div class="prose">
-        <p><b>Waypoints:</b> click or drag a visible point; right-click toggles its AI Turbo marker. Add waypoint (+) splits the nearest visible logical route link and resequences following points; Delete waypoint (−) removes the hovered point, repairs incoming links and keeps at least five points per route.</p>
+        <p><b>Waypoints:</b> click or drag a visible point; right-click toggles its AI Turbo marker. Add waypoint (+) splits the nearest visible logical route link and resequences following points; Delete waypoint (−) removes the hovered point, repairs incoming links and keeps at least five points per route. Clean route data rebuilds contiguous physical IDs/link displacements and removes only sequence ordinals unused by all three routes, preserving intentional branch gaps/duplicates.</p>
         <p><b>Foreground / Surface:</b> choose a drawing tool, paint value and brush. Curve uses three clicks; Free-form closes near its start point. Right-click uses the secondary paint action.</p>
         <p><b>Recovery:</b> rotate arrows with left/right mouse; Grab group supports multi-cell selection.</p>
         <p><b>Fixed viewport:</b> use the 640×512 viewport button with higher zoom, then move around with the trackpad or scrollbars.</p>
-        <p><b>Race:</b> drag visible race/pit anchors or edit their fields. MiniMap and Map have their own edit modes.</p>
+        <p><b>Race:</b> drag visible race/pit anchors or edit their fields. Grid X direction is checked against Route A waypoint 3; pit-side and pit-crew placement checks use retail-derived rules. MiniMap uses the shared drawing tools (Pencil, Line, shapes, Curve, Free-form and Fill) and supports reusable captured custom brushes, including multi-edge and traced captures; GeoMap has its own edit mode.</p>
         <p>Full editor and package documentation: <a href="https://github.com/HoraceAndTheSpider/Indy-Heat-WHD/wiki/Editor-and-Track-Package-Workflow" target="_blank" rel="noopener">Editor and Track Package Workflow</a>.</p>
       </div>
     </details>
@@ -279,12 +290,105 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 <script src="indyheat_race_graphics.js"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js?v=052"></script>
-<script src="waypoint-actions.js?v=055"></script>
+<script src="waypoint-actions.js?v=057"></script>
 <script src="recovery-editor.js?v=049"></script>
 <script src="race-setup.js?v=046"></script>
+<script src="race-validation.js?v=057"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
+<script src="brush-tools.js?v=063"></script>
+<script src="minimap-brush-ui.js?v=065"></script>
 <script src="editor-ui.js?v=047"></script>
+
+<script>
+/* v0.66 — consolidate display controls on the left without changing editor data paths. */
+(function(){
+'use strict';
+const $=id=>document.getElementById(id);
+let validationObserver=null,applying=false;
+
+function textTitle(label,title){
+  if(!label)return;
+  let t=label.querySelector(':scope > .viewSliderTitle');
+  if(!t){t=document.createElement('span');t.className='viewSliderTitle';label.insertBefore(t,label.firstChild);}
+  t.textContent=title;
+}
+function normaliseSlider(label,title,inputId,textId){
+  if(!label)return;
+  const input=$(inputId),readout=$(textId);
+  const wrap=input?.closest('.masterZoomSlider');
+  if(wrap&&wrap!==label){if(input)label.appendChild(input);if(readout)label.appendChild(readout);wrap.remove();}
+  for(const n of Array.from(label.childNodes))if(n.nodeType===Node.TEXT_NODE)n.textContent='';
+  label.classList.remove('inlineControl');label.classList.add('viewSliderRow');
+  textTitle(label,title);
+  if(input&&input.parentNode===label)label.appendChild(input);
+  if(readout&&readout.parentNode===label)label.appendChild(readout);
+}
+function shortImageLabel(label){
+  if(!label)return;
+  for(const n of Array.from(label.childNodes)){
+    if(n.nodeType===Node.TEXT_NODE&&/Track\s+image/i.test(n.textContent||''))n.textContent=(n.textContent||'').replace(/Track\s+image/ig,' Image');
+  }
+}
+function hideLegacyUi(){
+  let host=$('legacyUiCompatibility');
+  if(!host){host=document.createElement('div');host.id='legacyUiCompatibility';host.hidden=true;document.body.appendChild(host);}
+  const palette=$('paletteMode');
+  if(palette&&!host.contains(palette)){const label=palette.closest('label');host.appendChild(palette);label?.remove();}
+  const meta=$('trackMeta');if(meta&&!host.contains(meta))host.appendChild(meta);
+  $('sequenceSummary')?.remove();
+}
+function waypointValidationSummary(){
+  const pre=$('wpValidation');if(!pre||applying)return;
+  const lines=pre.textContent.split('\n');let changed=false;
+  const next=lines.map(line=>{
+    if(!/^[ABC]:\s/.test(line)||/ · duplicates \d+/.test(line))return line;
+    const m=line.match(/ · duplicate: (.*?)(?= · MISSING:|$)/);
+    if(m){
+      const count=m[1].split(',').map(x=>x.trim()).filter(Boolean).length;
+      changed=true;return line.replace(m[0],` · duplicates ${count}: ${m[1]}`);
+    }
+    const missing=' · MISSING:';const at=line.indexOf(missing);changed=true;
+    return at>=0?line.slice(0,at)+' · duplicates 0'+line.slice(at):line+' · duplicates 0';
+  });
+  if(changed){applying=true;pre.textContent=next.join('\n');applying=false;}
+}
+function watchValidation(){
+  const pre=$('wpValidation');if(!pre)return;waypointValidationSummary();
+  if(validationObserver)return;
+  validationObserver=new MutationObserver(()=>queueMicrotask(waypointValidationSummary));
+  validationObserver.observe(pre,{subtree:true,childList:true,characterData:true});
+}
+function consolidateView(){
+  const bg=$('showBg'),view=bg?.closest('section');if(!bg||!view)return false;
+  const imageLabel=bg.closest('label');shortImageLabel(imageLabel);
+  let primary=$('viewPrimaryRow');
+  if(!primary){primary=document.createElement('div');primary.id='viewPrimaryRow';const h=view.querySelector(':scope > h2');if(h)h.after(primary);else view.prepend(primary);}
+  if(imageLabel&&imageLabel.parentNode!==primary)primary.appendChild(imageLabel);
+  const fixed=$('circuitViewportToggle');if(fixed&&fixed.parentNode!==primary)primary.appendChild(fixed);
+
+  const imageOpacity=$('backgroundOpacity')?.closest('label');
+  const zoom=$('masterZoomControl');
+  const overlay=$('overlayOpacityControl');
+  normaliseSlider(imageOpacity,'Image opacity','backgroundOpacity','backgroundOpacityText');
+  normaliseSlider(zoom,'Zoom','editorScale','editorScaleText');
+  normaliseSlider(overlay,'Overlay opacity','opacity','opacityText');
+  let anchor=primary;
+  for(const node of [imageOpacity,zoom,overlay])if(node){if(node.parentNode!==view||node.previousElementSibling!==anchor)view.insertBefore(node,anchor.nextSibling);anchor=node;}
+
+  const oldHost=$('masterZoomHost');if(oldHost&&!oldHost.querySelector('#masterZoomControl,#overlayOpacityControl,#circuitViewportToggle'))oldHost.remove();
+  const map=$('layerEditMap');if(map&&map.textContent!=='GeoMap')map.textContent='GeoMap';
+  hideLegacyUi();watchValidation();
+  return !!(fixed&&zoom&&overlay&&map);
+}
+function run(){
+  let tries=0,timer=null;
+  const tick=()=>{tries++;const done=consolidateView();if(done&&timer){clearInterval(timer);timer=null;}else if(tries>240&&timer){clearInterval(timer);timer=null;}};
+  tick();timer=setInterval(tick,50);setTimeout(consolidateView,500);setTimeout(consolidateView,1500);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',run,{once:true});else run();
+})();
+</script>
 
 <script>
 (function(root){
