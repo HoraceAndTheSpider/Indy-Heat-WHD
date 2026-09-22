@@ -610,6 +610,7 @@ function installVariableCountImportHook(){
     (async()=>{
       try{
         const bytes=new Uint8Array(await file.arrayBuffer()),pkg=P.parseCircuitZip(bytes),entries=P.readZipStore(bytes);
+        if(globalThis.IndyHeatCustomCircuitLibrary?.ownsCircuitIndex?.(pkg.circuitIndex))return;
         const templateIndex=templateIndexFromCircuitZip(P,entries,pkg.folder);
         if(templateIndex==null)return;
         const template=waypointTemplateRecord(templateIndex);if(!template)return;
@@ -689,11 +690,19 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 else setTimeout(()=>{retryPackageBridges();syncActionButtons();},0);
 
 // Small public bridge for package/export diagnostics and focused regression tests.
+function routesForKey(key){return waypointOverrides.get(String(key||''))?.sets||null;}
+function clearPackageRoutes(key){
+  key=String(key||'');const had=waypointOverrides.delete(key);
+  if(had&&authoringKey()===key){
+    baseRefreshWaypointModels(null);updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();updateEditExportButtons();render();
+  }
+  return had;
+}
 globalThis.IndyHeatWaypointAuthoring={
-  version:'0.57',minimumPerRoute:MIN_ROUTE_WAYPOINTS,
+  version:'0.68',minimumPerRoute:MIN_ROUTE_WAYPOINTS,
   hasStructuralEdits:()=>!!currentOverride(),
   currentRoutes:()=>currentOverride()?.sets||null,
   routeCounts:()=>currentOverride()?.sets?.map(s=>s.points.length)||null,
-  installPackageRoutes,cleanRouteData,globalSequenceCompression,routeCProximity
+  routesForKey,clearPackageRoutes,installPackageRoutes,cleanRouteData,globalSequenceCompression,routeCProximity
 };
 })();

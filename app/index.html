@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.66</title>
+<title>Indy Heat Amiga – Circuit Editor v0.68</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
@@ -20,20 +20,22 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 #playlistWorkspace .playlistIntro{line-height:1.45;margin-bottom:12px}
 #playlistWorkspace .playlistFuture{opacity:.62}
 #playlistWorkspace input[type=number],#playlistWorkspace select{background:#222730;color:#fff;border:1px solid #495162;border-radius:4px;padding:6px;box-sizing:border-box}
-#playlistRaceCount{width:70px}
+#playlistRaceCount{width:180px;vertical-align:middle}
+#playlistRaceCountText{display:inline-block;min-width:24px;margin-left:7px;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c2c8d2}
 #playlistRows{display:grid;gap:5px;margin:8px 0 12px}
-.playlistHead,.playlistRow{display:grid;grid-template-columns:48px 110px minmax(180px,1fr) 150px;gap:7px;align-items:center}
+.playlistHead,.playlistRow{display:grid;grid-template-columns:48px minmax(250px,1.35fr) minmax(180px,1fr) 150px;gap:7px;align-items:center}
 .playlistHead{font-size:11px;color:#8f97a3;padding:0 7px}
 .playlistRow{padding:7px;border:1px solid #30343d;border-radius:5px;background:#14171c}
 .playlistRace{text-align:center;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#b9c0cc}
 .playlistCircuit{width:100%}
 .playlistCircuitName{font-size:12px;color:#c2c8d2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.playlistCircuitName.notLoaded{color:#8f97a3;font-style:italic}
 .playlistLapSelect{width:100%}
 .playlistActions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
 .playlistActions button,#playlistExport{padding:7px 10px}
 #playlistStatus{min-height:34px;white-space:pre-line;margin-top:7px}
 .playlistRuntimeNote{margin:8px 0 12px;padding:9px 10px;border-left:3px solid #5a6474;background:#12151a;line-height:1.4}
-/* v0.66 view/edit layout consolidation */
+/* v0.68 view/edit layout consolidation + circuit library / playlist integration */
 main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 #viewPrimaryRow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;margin:4px 0 8px}
 #viewPrimaryRow label{margin:0;white-space:nowrap}
@@ -56,10 +58,10 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 
 </head>
 <body>
-<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.66";</script>
+<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.68";</script>
 <header>
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor v0.66</h1>
+    <h1>Indy Heat Amiga — Circuit Editor v0.68</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
@@ -78,8 +80,9 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     </div>
 
     <label class="inlineControl playlistFuture">Championship races
-      <input id="playlistRaceCount" type="number" min="1" max="99" step="1" value="11" disabled
+      <input id="playlistRaceCount" type="range" min="1" max="99" step="1" value="11" disabled
              title="Current WHDLoad runtime requires exactly 11 championship events">
+      <output id="playlistRaceCountText" for="playlistRaceCount">11</output>
     </label>
     <div class="playlistRuntimeNote mini muted">
       The IHPL header already contains an event-count word, but WHDLoad 1.3 test 30 currently requires exactly <b>11</b> races.
@@ -95,8 +98,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 
     <div class="playlistHead">
       <span>Race</span>
-      <span>Circuit ID (0–99)</span>
-      <span>Circuit</span>
+      <span>Circuit (0–99)</span>
+      <span>Name / load state</span>
       <span>Laps (inherit / 1–20)</span>
     </div>
     <div id="playlistRows"></div>
@@ -290,22 +293,56 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="indyheat_race_graphics.js"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js?v=052"></script>
-<script src="waypoint-actions.js?v=057"></script>
+<script src="waypoint-actions.js?v=068"></script>
 <script src="recovery-editor.js?v=049"></script>
 <script src="race-setup.js?v=046"></script>
 <script src="race-validation.js?v=057"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
+<script src="circuit-library.js?v=068"></script>
 <script src="brush-tools.js?v=063"></script>
 <script src="minimap-brush-ui.js?v=065"></script>
 <script src="editor-ui.js?v=047"></script>
 
 <script>
-/* v0.66 — consolidate display controls on the left without changing editor data paths. */
+/* v0.67 — consolidate display controls and keep Waypoint edit controls mode-exclusive. */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
 let validationObserver=null,applying=false;
+let waypointPanelObserver=null;
+
+function waypointModeIsActive(){
+  const host=$('layerModeButtons');
+  if(host?.dataset.currentMode)return host.dataset.currentMode==='layerModeWaypoints';
+  return globalThis.IndyHeatEditorCurrentMode==='layerModeWaypoints';
+}
+function syncWaypointEditPanel(){
+  const pane=$('layerWaypointHost');
+  if(!pane)return false;
+  const show=waypointModeIsActive();
+  if(pane.hidden===show)pane.hidden=!show;
+  pane.style.display=show?'':'none';
+  pane.setAttribute('aria-hidden',show?'false':'true');
+  return true;
+}
+function installWaypointEditPanelGuard(){
+  const pane=$('layerWaypointHost'),host=$('layerModeButtons');
+  if(!pane||!host)return false;
+  syncWaypointEditPanel();
+  if(!waypointPanelObserver){
+    waypointPanelObserver=new MutationObserver(()=>queueMicrotask(syncWaypointEditPanel));
+    waypointPanelObserver.observe(host,{attributes:true,attributeFilter:['data-current-mode']});
+    waypointPanelObserver.observe(pane,{attributes:true,attributeFilter:['hidden','style']});
+    document.addEventListener('change',e=>{
+      if(e.target?.id==='showWaypoints'||e.target?.classList?.contains('waypointSet'))queueMicrotask(syncWaypointEditPanel);
+    });
+    document.addEventListener('click',e=>{
+      if(e.target?.closest?.('#layerModeButtons button'))setTimeout(syncWaypointEditPanel,0);
+    },true);
+  }
+  return true;
+}
 
 function textTitle(label,title){
   if(!label)return;
@@ -378,7 +415,7 @@ function consolidateView(){
 
   const oldHost=$('masterZoomHost');if(oldHost&&!oldHost.querySelector('#masterZoomControl,#overlayOpacityControl,#circuitViewportToggle'))oldHost.remove();
   const map=$('layerEditMap');if(map&&map.textContent!=='GeoMap')map.textContent='GeoMap';
-  hideLegacyUi();watchValidation();
+  hideLegacyUi();watchValidation();installWaypointEditPanelGuard();
   return !!(fixed&&zoom&&overlay&&map);
 }
 function run(){
@@ -495,14 +532,31 @@ function setEditorMode(mode){
   $('showPlaylistEditor')?.classList.toggle('active',playlist);
   $('showCircuitEditor')?.setAttribute('aria-pressed',String(!playlist));
   $('showPlaylistEditor')?.setAttribute('aria-pressed',String(playlist));
+  if(playlist)render();
 }
 $('showCircuitEditor')?.addEventListener('click',()=>setEditorMode('circuit'));
 $('showPlaylistEditor')?.addEventListener('click',()=>setEditorMode('playlist'));
 
 let entries=defaultEntries();
 
-function circuitName(n){
-  return n<RETAIL_NAMES.length?RETAIL_NAMES[n]:`Custom circuit ${n}`;
+function customLibraryMap(){
+  const list=globalThis.IndyHeatCustomCircuitLibrary?.loadedCircuits?.()||[];
+  return new Map(list.map(q=>[Number(q.circuitIndex),q]));
+}
+function circuitDescriptor(n,library=customLibraryMap()){
+  n=Number(n);
+  if(n<RETAIL_NAMES.length)return {name:RETAIL_NAMES[n],loaded:true,label:`${n} – ${RETAIL_NAMES[n]}`};
+  const custom=library.get(n);
+  if(custom)return {name:custom.name||`Custom circuit ${n}`,loaded:true,label:`${n} – ${custom.name||`Custom circuit ${n}`}`};
+  return {name:'Custom circuit – not loaded',loaded:false,label:`${n} – custom circuit – not loaded`};
+}
+function circuitOptions(value){
+  const library=customLibraryMap();let html='';
+  for(let n=CIRCUIT_MIN;n<=CIRCUIT_MAX;n++){
+    const q=circuitDescriptor(n,library);
+    html+=`<option value="${n}"${Number(value)===n?' selected':''}>${q.label}</option>`;
+  }
+  return html;
 }
 function lapOptions(value){
   let html=`<option value="inherit"${value==='inherit'?' selected':''}>Inherit circuit laps</option>`;
@@ -515,17 +569,20 @@ function setStatus(text,bad=false){
 }
 function render(){
   rows.innerHTML='';
+  const raceCount=$('playlistRaceCount'),raceCountText=$('playlistRaceCountText');
+  if(raceCount)raceCount.value=String(entries.length);
+  if(raceCountText)raceCountText.textContent=String(entries.length);
+  const library=customLibraryMap();
   entries.forEach((entry,i)=>{
+    const q=circuitDescriptor(entry.circuit,library);
     const row=document.createElement('div');row.className='playlistRow';row.dataset.index=String(i);
     row.innerHTML=`<span class="playlistRace">${i+1}</span>
-      <input class="playlistCircuit" type="number" min="${CIRCUIT_MIN}" max="${CIRCUIT_MAX}" step="1" value="${entry.circuit}" aria-label="Race ${i+1} circuit ID">
-      <span class="playlistCircuitName">${circuitName(entry.circuit)}</span>
+      <select class="playlistCircuit" aria-label="Race ${i+1} circuit">${circuitOptions(entry.circuit)}</select>
+      <span class="playlistCircuitName${q.loaded?'':' notLoaded'}">${q.name}</span>
       <select class="playlistLapSelect" aria-label="Race ${i+1} lap override">${lapOptions(entry.laps)}</select>`;
     const circuit=row.querySelector('.playlistCircuit'),name=row.querySelector('.playlistCircuitName'),laps=row.querySelector('.playlistLapSelect');
-    circuit.addEventListener('input',()=>{
-      const n=Number(circuit.value);
-      if(Number.isInteger(n)&&n>=CIRCUIT_MIN&&n<=CIRCUIT_MAX){entries[i].circuit=n;name.textContent=circuitName(n);setStatus('Modified · export writes IHPL v2.');}
-      else name.textContent='Invalid circuit';
+    circuit.addEventListener('change',()=>{
+      const n=Number(circuit.value),desc=circuitDescriptor(n);entries[i].circuit=n;name.textContent=desc.name;name.classList.toggle('notLoaded',!desc.loaded);setStatus('Modified · export writes IHPL v2.');
     });
     laps.addEventListener('change',()=>{entries[i].laps=laps.value==='inherit'?'inherit':Number(laps.value);setStatus('Modified · export writes IHPL v2.');});
     rows.appendChild(row);
@@ -552,6 +609,7 @@ async function importFile(file){
 $('playlistImport').addEventListener('click',()=>$('playlistInput').click());
 $('playlistInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importFile(f);e.target.value='';});
 $('playlistReset').addEventListener('click',()=>{entries=defaultEntries();render();setStatus('Reset to the established retail 11-race championship order.');});
+window.addEventListener('indyheat-circuit-library-changed',()=>{render();});
 $('playlistExport').addEventListener('click',()=>{
   try{
     // Pull values directly from the visible controls so export cannot lag behind UI state.
