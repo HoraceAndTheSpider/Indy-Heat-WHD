@@ -671,7 +671,18 @@ view.addEventListener('contextmenu',ev=>{
 });
 
 document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&actionMode)setActionMode(null);});
-document.getElementById('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{actionHover=null;applyPendingVariablePackageImport();syncActionButtons();},0));
+document.getElementById('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{
+  actionHover=null;
+  applyPendingVariablePackageImport();
+  // A normal selected-track refresh reparses the retail host. Variable-count
+  // custom routes live outside those fixed spans, so re-assert the detached
+  // override after every circuit change/materialisation refresh.
+  const ov=currentOverride();
+  if(ov?.sets?.length===3){
+    applyOverrideToState(ov,null);updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();updateEditExportButtons();render();
+  }
+  syncActionButtons();
+},0));
 document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(syncActionButtons,0));
 document.getElementById('fileInput')?.addEventListener('change',()=>setTimeout(syncActionButtons,0));
 
@@ -699,7 +710,7 @@ function clearPackageRoutes(key){
   return had;
 }
 globalThis.IndyHeatWaypointAuthoring={
-  version:'0.68',minimumPerRoute:MIN_ROUTE_WAYPOINTS,
+  version:'0.69',minimumPerRoute:MIN_ROUTE_WAYPOINTS,
   hasStructuralEdits:()=>!!currentOverride(),
   currentRoutes:()=>currentOverride()?.sets||null,
   routeCounts:()=>currentOverride()?.sets?.map(s=>s.points.length)||null,

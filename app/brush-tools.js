@@ -2,13 +2,13 @@
 'use strict';
 
 /*
- * Generic indexed-raster brush engine — v0.62.
+ * Generic indexed-raster brush engine — v0.78.
  *
  * Resource-neutral capture, masking, stamping, transparency handling and IHBR
- * save/load support. MiniMap and future Map/drawing surfaces consume this API
+ * save/load support. MiniMap, Backdrop and future drawing surfaces consume this API
  * through their own UI adapters.
  */
-const VERSION='0.62';
+const VERSION='0.78';
 const BRUSH_MAGIC='IHBR';
 const BRUSH_VERSION=1;
 const BRUSH_HEADER_SIZE=20;
@@ -27,13 +27,33 @@ const DRAW_TOOL_DEFS=Object.freeze([
 
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 function pointKey(x,y){return `${x},${y}`;}
+function rectangleBounds(a,b,width,height){
+  return {
+    minX:clamp(Math.min(a.x,b.x),0,width-1),maxX:clamp(Math.max(a.x,b.x),0,width-1),
+    minY:clamp(Math.min(a.y,b.y),0,height-1),maxY:clamp(Math.max(a.y,b.y),0,height-1)
+  };
+}
+function rectangleMask(a,b,width,height){
+  const q=rectangleBounds(a,b,width,height),out=[];
+  for(let y=q.minY;y<=q.maxY;y++)for(let x=q.minX;x<=q.maxX;x++)out.push([x,y]);
+  return out;
+}
+function ellipseMask(a,b,width,height){
+  const q=rectangleBounds(a,b,width,height),out=[];
+  const cx=(q.minX+q.maxX+1)/2,cy=(q.minY+q.maxY+1)/2;
+  const rx=Math.max(.5,(q.maxX-q.minX+1)/2),ry=Math.max(.5,(q.maxY-q.minY+1)/2);
+  for(let y=q.minY;y<=q.maxY;y++)for(let x=q.minX;x<=q.maxX;x++){
+    const nx=((x+.5)-cx)/rx,ny=((y+.5)-cy)/ry;
+    if(nx*nx+ny*ny<=1)out.push([x,y]);
+  }
+  return out;
+}
+// Backwards-compatible constrained helpers retained for callers that explicitly
+// need a square/circle. Capture tools use rectangleBounds/rectangleMask/ellipseMask.
 function squareBounds(a,b,width,height){
   const dx=b.x-a.x,dy=b.y-a.y,side=Math.max(Math.abs(dx),Math.abs(dy));
   const ex=a.x+(dx<0?-side:side),ey=a.y+(dy<0?-side:side);
-  return {
-    minX:clamp(Math.min(a.x,ex),0,width-1),maxX:clamp(Math.max(a.x,ex),0,width-1),
-    minY:clamp(Math.min(a.y,ey),0,height-1),maxY:clamp(Math.max(a.y,ey),0,height-1)
-  };
+  return rectangleBounds(a,{x:ex,y:ey},width,height);
 }
 function squareMask(a,b,width,height){
   const q=squareBounds(a,b,width,height),out=[];
@@ -59,24 +79,40 @@ function pointInPolygon(px,py,poly){
   }
   return inside;
 }
+function rasterLinePoints(a,b,width,height){
+  let x0=Math.round(Number(a?.x)||0),y0=Math.round(Number(a?.y)||0),x1=Math.round(Number(b?.x)||0),y1=Math.round(Number(b?.y)||0);
+  const out=[],dx=Math.abs(x1-x0),sx=x0<x1?1:-1,dy=-Math.abs(y1-y0),sy=y0<y1?1:-1;let err=dx+dy;
+  while(true){if(x0>=0&&y0>=0&&x0<width&&y0<height)out.push([x0,y0]);if(x0===x1&&y0===y1)break;const e2=2*err;if(e2>=dy){err+=dy;x0+=sx;}if(e2<=dx){err+=dx;y0+=sy;}}
+  return out;
+}
 function polygonMask(poly,width,height){
   if(!Array.isArray(poly)||poly.length<3)return [];
   const minX=clamp(Math.floor(Math.min(...poly.map(p=>p.x))),0,width-1),maxX=clamp(Math.ceil(Math.max(...poly.map(p=>p.x))),0,width-1);
-  const minY=clamp(Math.floor(Math.min(...poly.map(p=>p.y))),0,height-1),maxY=clamp(Math.ceil(Math.max(...poly.map(p=>p.y))),0,height-1),out=[];
-  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)if(pointInPolygon(x+.5,y+.5,poly))out.push([x,y]);
+  const minY=clamp(Math.floor(Math.min(...poly.map(p=>p.y))),0,height-1),maxY=clamp(Math.ceil(Math.max(...poly.map(p=>p.y))),0,height-1),out=[],seen=new Set();
+  const add=(x,y)=>{if(x<0||y<0||x>=width||y>=height)return;const k=pointKey(x,y);if(seen.has(k))return;seen.add(k);out.push([x,y]);};
+  // Include every raster pixel touched by the visible selection boundary. This is
+  // important for tiny captures, where centre-only polygon filling can otherwise
+  // omit most of the pixels underneath the selection line itself.
+  for(let i=0;i<poly.length;i++)for(const [x,y] of rasterLinePoints(poly[i],poly[(i+1)%poly.length],width,height))add(x,y);
+  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)if(pointInPolygon(x+.5,y+.5,poly))add(x,y);
   return out;
 }
 function captureRasterBrush(pixels,width,height,transparent,maskPoints,{name='Captured brush',key='captured'}={}){
   if(!pixels||pixels.length!==width*height)throw new Error('Source raster size does not match its dimensions.');
-  const seen=new Set(),pts=[];
-  for(const p of maskPoints||[]){const x=Number(p[0]),y=Number(p[1]);if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>=width||y>=height)continue;const k=pointKey(x,y);if(seen.has(k))continue;seen.add(k);pts.push([x,y]);}
-  if(!pts.length)throw new Error('The capture selection is empty.');
-  const minX=Math.min(...pts.map(p=>p[0])),maxX=Math.max(...pts.map(p=>p[0])),minY=Math.min(...pts.map(p=>p[1])),maxY=Math.max(...pts.map(p=>p[1]));
+  transparent=Number(transparent);const seen=new Set(),visiblePts=[];
+  for(const p of maskPoints||[]){
+    const x=Number(p[0]),y=Number(p[1]);if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>=width||y>=height)continue;
+    const k=pointKey(x,y);if(seen.has(k))continue;seen.add(k);const v=Number(pixels[y*width+x]);
+    // Editor brush transparency is a capture key: matching source pixels are
+    // not part of the collected object and must not enlarge its brush bounds.
+    if(v!==transparent)visiblePts.push([x,y,v]);
+  }
+  if(!seen.size)throw new Error('The capture selection is empty.');
+  if(!visiblePts.length)throw new Error(`The selected area contains only brush-transparency index ${transparent}.`);
+  const minX=Math.min(...visiblePts.map(p=>p[0])),maxX=Math.max(...visiblePts.map(p=>p[0])),minY=Math.min(...visiblePts.map(p=>p[1])),maxY=Math.max(...visiblePts.map(p=>p[1]));
   const w=maxX-minX+1,h=maxY-minY+1,out=new Uint8Array(w*h);out.fill(transparent);
-  let visible=0;
-  for(const [x,y] of pts){const v=Number(pixels[y*width+x]);out[(y-minY)*w+(x-minX)]=v;if(v!==transparent)visible++;}
-  if(!visible)throw new Error('The selected area contains no visible pixels.');
-  return {key,name,width:w,height:h,hotspotX:Math.floor((w-1)/2),hotspotY:Math.floor((h-1)/2),transparent:Number(transparent),pixels:out,visiblePixels:visible};
+  for(const [x,y,v] of visiblePts)out[(y-minY)*w+(x-minX)]=v;
+  return {key,name,width:w,height:h,hotspotX:Math.floor((w-1)/2),hotspotY:Math.floor((h-1)/2),transparent,pixels:out,visiblePixels:visiblePts.length};
 }
 function prepareTargetTransparency(pixels,targetTransparent,brush,paletteSize=32){
   const out=Uint8Array.from(pixels),visibleBrush=new Set();
@@ -138,6 +174,28 @@ function stampRasterBrushPoints(pixels,width,height,targetTransparent,brush,poin
   }
   return {...prep,pixels:out,written};
 }
+function stampOpaqueRasterBrushPoints(pixels,width,height,brush,points){
+  if(!pixels||pixels.length!==width*height)throw new Error('Target raster size does not match its dimensions.');
+  if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
+  const out=Uint8Array.from(pixels);let written=0;
+  for(const [ax,ay] of uniqueAnchors(points))for(let y=0;y<brush.height;y++)for(let x=0;x<brush.width;x++){
+    const v=brush.pixels[y*brush.width+x];if(v===brush.transparent)continue;
+    const dx=ax-brush.hotspotX+x,dy=ay-brush.hotspotY+y;if(dx<0||dy<0||dx>=width||dy>=height)continue;
+    out[dy*width+dx]=v;written++;
+  }
+  return {pixels:out,written};
+}
+function patternFillOpaqueRasterBrush(pixels,width,height,brush,maskPoints,anchorX,anchorY){
+  if(!pixels||pixels.length!==width*height)throw new Error('Target raster size does not match its dimensions.');
+  if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
+  const out=Uint8Array.from(pixels),mod=(n,m)=>((n%m)+m)%m;let written=0;
+  anchorX=Math.round(Number(anchorX)||0);anchorY=Math.round(Number(anchorY)||0);
+  for(const p of maskPoints||[]){const x=Math.round(Number(p[0])),y=Math.round(Number(p[1]));if(x<0||y<0||x>=width||y>=height)continue;
+    const sx=mod(x-anchorX+brush.hotspotX,brush.width),sy=mod(y-anchorY+brush.hotspotY,brush.height),v=brush.pixels[sy*brush.width+sx];
+    if(v===brush.transparent)continue;out[y*width+x]=v;written++;
+  }
+  return {pixels:out,written};
+}
 function patternFillRasterBrush(pixels,width,height,targetTransparent,brush,maskPoints,anchorX,anchorY,{paletteSize=32,erase=false}={}){
   if(!pixels||pixels.length!==width*height)throw new Error('Target raster size does not match its dimensions.');
   if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
@@ -145,11 +203,32 @@ function patternFillRasterBrush(pixels,width,height,targetTransparent,brush,mask
   anchorX=Math.round(Number(anchorX)||0);anchorY=Math.round(Number(anchorY)||0);let written=0;
   const mod=(n,m)=>((n%m)+m)%m;
   for(const p of maskPoints||[]){const x=Math.round(Number(p[0])),y=Math.round(Number(p[1]));if(x<0||y<0||x>=width||y>=height)continue;
-    if(erase){out[y*width+x]=prep.transparent;written++;continue;}
     const sx=mod(x-anchorX+brush.hotspotX,brush.width),sy=mod(y-anchorY+brush.hotspotY,brush.height),v=brush.pixels[sy*brush.width+sx];
-    if(v===brush.transparent)continue;out[y*width+x]=v;written++;
+    if(v===brush.transparent)continue;out[y*width+x]=erase?prep.transparent:v;written++;
   }
   return {...prep,pixels:out,written};
+}
+function stampBrushMaskPoints(pixels,width,height,brush,points,maskColour){
+  if(!pixels||pixels.length!==width*height)throw new Error('Target raster size does not match its dimensions.');
+  if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
+  maskColour=Number(maskColour);const out=Uint8Array.from(pixels);let written=0;
+  for(const [ax,ay] of uniqueAnchors(points))for(let y=0;y<brush.height;y++)for(let x=0;x<brush.width;x++){
+    const v=brush.pixels[y*brush.width+x];if(v===brush.transparent)continue;
+    const dx=ax-brush.hotspotX+x,dy=ay-brush.hotspotY+y;if(dx<0||dy<0||dx>=width||dy>=height)continue;
+    out[dy*width+dx]=maskColour;written++;
+  }
+  return {pixels:out,written};
+}
+function patternFillBrushMask(pixels,width,height,brush,maskPoints,anchorX,anchorY,maskColour){
+  if(!pixels||pixels.length!==width*height)throw new Error('Target raster size does not match its dimensions.');
+  if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
+  const out=Uint8Array.from(pixels),mod=(n,m)=>((n%m)+m)%m;maskColour=Number(maskColour);let written=0;
+  anchorX=Math.round(Number(anchorX)||0);anchorY=Math.round(Number(anchorY)||0);
+  for(const p of maskPoints||[]){const x=Math.round(Number(p[0])),y=Math.round(Number(p[1]));if(x<0||y<0||x>=width||y>=height)continue;
+    const sx=mod(x-anchorX+brush.hotspotX,brush.width),sy=mod(y-anchorY+brush.hotspotY,brush.height),v=brush.pixels[sy*brush.width+sx];
+    if(v===brush.transparent)continue;out[y*width+x]=maskColour;written++;
+  }
+  return {pixels:out,written};
 }
 function encodeBrushFile(brush,{paletteSize=32}={}){
   if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
@@ -175,7 +254,7 @@ function decodeBrushFile(bytes){
   if(!visible)throw new Error('Brush contains no visible pixels.');return {key:'loaded_brush',name:'Loaded brush',width,height,hotspotX,hotspotY,transparent,paletteSize,pixels,visiblePixels:visible,fileVersion:version};
 }
 
-const api={VERSION,BRUSH_MAGIC,BRUSH_VERSION,BRUSH_HEADER_SIZE,DRAW_TOOL_DEFS,clamp,squareBounds,squareMask,circleMask,pointInPolygon,polygonMask,captureRasterBrush,prepareTargetTransparency,stampRasterBrush,recountVisiblePixels,transformRasterBrush,stampRasterBrushPoints,patternFillRasterBrush,encodeBrushFile,decodeBrushFile};
+const api={VERSION,BRUSH_MAGIC,BRUSH_VERSION,BRUSH_HEADER_SIZE,DRAW_TOOL_DEFS,clamp,rectangleBounds,rectangleMask,ellipseMask,squareBounds,squareMask,circleMask,pointInPolygon,rasterLinePoints,polygonMask,captureRasterBrush,prepareTargetTransparency,stampRasterBrush,recountVisiblePixels,transformRasterBrush,stampRasterBrushPoints,patternFillRasterBrush,stampOpaqueRasterBrushPoints,patternFillOpaqueRasterBrush,stampBrushMaskPoints,patternFillBrushMask,encodeBrushFile,decodeBrushFile};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatBrushTools=api;
 

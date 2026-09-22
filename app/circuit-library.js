@@ -11,13 +11,14 @@
  * retail host before another selection is activated.
  */
 
-const VERSION='0.68';
+const VERSION='0.69';
 const CUSTOM_MIN=10,CUSTOM_MAX=99,RUNTIME_MAIN_BASE=0x1000;
 const $=id=>document.getElementById(id);
 const slots=new Map();
 let activeSlot=null;
 let importPassThrough=false;
 let bootTimer=null;
+let refreshTimer=null,refreshToken=0;
 
 function P(){return root.IndyHeatCircuitPackage||null;}
 function T(){return root.IndyHeatTools||null;}
@@ -60,6 +61,22 @@ function selectedCustomNumber(){
   const n=Number(o.dataset.indyheatCircuitIndex);return Number.isInteger(n)?n:null;
 }
 function currentSelectedSlot(){const n=selectedCustomNumber();return n==null?null:slots.get(n)||null;}
+function queueFullRefresh(reason='circuit data changed'){
+  const sel=$('trackSelect');if(!sel)return false;
+  const token=++refreshToken;
+  if(refreshTimer!=null)clearTimeout(refreshTimer);
+  refreshTimer=setTimeout(()=>{
+    if(token!==refreshToken)return;
+    refreshTimer=null;
+    // Re-run the editor's established selected-track change path only after the
+    // custom package has been materialised (or the retail host restored).  This
+    // refreshes every consumer of the shared models: core backdrop, foreground,
+    // surface, recovery, waypoints, race setup, validation and auxiliary UI.
+    sel.dispatchEvent(new Event('change',{bubbles:true}));
+    document.dispatchEvent(new CustomEvent('indyheat-circuit-content-refreshed',{detail:{reason,trackIndex:Number(sel.value||0),circuitIndex:selectedCustomNumber()}}));
+  },0);
+  return true;
+}
 
 function rawStoredRecord(main,point){
   if(point?.fileOffset!=null&&main&&point.fileOffset>=0&&point.fileOffset+6<=main.length)return main.slice(point.fileOffset,point.fileOffset+6);
@@ -187,7 +204,7 @@ function captureSlot(slot=activeSlot){
 }
 function deactivateActiveSlot(){
   if(!activeSlot)return;
-  const old=activeSlot;captureSlot(old);restoreHost(old);activeSlot=null;
+  const old=activeSlot;captureSlot(old);restoreHost(old);activeSlot=null;queueFullRefresh('retail host restored');
 }
 function syncCanonicalUi(slot){
   if(!slot||activeSlot!==slot)return;
@@ -202,6 +219,7 @@ function activateSlot(slot){
   applyPackage(slot);activeSlot=slot;
   syncCanonicalUi(slot);
   setTimeout(()=>syncCanonicalUi(slot),0);setTimeout(()=>syncCanonicalUi(slot),60);
+  queueFullRefresh('custom circuit materialised');
 }
 function updateOption(slot){
   if(!slot?.option)return;
@@ -281,7 +299,7 @@ function rekeyActiveSlot(n){
   captureSlot(slot);const old=slot.circuitIndex;replaceExistingNumber(n,slot);slots.delete(old);W()?.clearPackageRoutes?.(authorKey(old));
   slot.circuitIndex=n;slot.key=customKey(n);slot.package.circuitIndex=n;slots.set(n,slot);updateOption(slot);sortCustomOptions();
   // Re-install any detached variable route structure under the new package key.
-  applyWaypointPackage(slot);emitChanged();status(`Custom circuit renumbered ${old} → ${n}.`);
+  applyWaypointPackage(slot);queueFullRefresh('custom circuit re-keyed');emitChanged();status(`Custom circuit renumbered ${old} → ${n}.`);
 }
 function circuitNumberChanged(e){
   if(e.target?.id!=='circuitNumber'||!activeSlot)return;rekeyActiveSlot(Number(e.target.value));
@@ -292,7 +310,7 @@ function nameChanged(e){
   activeSlot.name=name;updateOption(activeSlot);emitChanged();
 }
 function reset(){
-  if(activeSlot){try{restoreHost(activeSlot);}catch(_e){}activeSlot=null;}
+  if(activeSlot){try{restoreHost(activeSlot);}catch(_e){}activeSlot=null;queueFullRefresh('custom circuit library reset');}
   for(const s of slots.values())s.option?.remove();slots.clear();emitChanged();
 }
 function install(){
@@ -320,7 +338,8 @@ const api={
   loadedCircuits,
   get:n=>{const s=slots.get(Number(n));return s?{circuitIndex:s.circuitIndex,name:s.name,hostIndex:s.hostIndex,loaded:true}:null;},
   importBytes:importCustomBytes,
-  refresh:emitChanged
+  refresh:emitChanged,
+  refreshSelectedContent:queueFullRefresh
 };
 root.IndyHeatCustomCircuitLibrary=api;
 

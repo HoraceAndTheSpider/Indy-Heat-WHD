@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.68</title>
+<title>Indy Heat Amiga – Circuit Editor v0.76</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
@@ -35,16 +35,22 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 .playlistActions button,#playlistExport{padding:7px 10px}
 #playlistStatus{min-height:34px;white-space:pre-line;margin-top:7px}
 .playlistRuntimeNote{margin:8px 0 12px;padding:9px 10px;border-left:3px solid #5a6474;background:#12151a;line-height:1.4}
-/* v0.68 view/edit layout consolidation + circuit library / playlist integration */
+/* v0.73 explicit shared viewport resize handle; v0.71 brush catalogue retained */
 main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 #viewPrimaryRow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;margin:4px 0 8px}
 #viewPrimaryRow label{margin:0;white-space:nowrap}
 #viewPrimaryRow #circuitViewportToggle{width:auto!important;margin:0!important;padding:5px 7px!important;font-size:11px!important;white-space:nowrap}
+#circuitViewport.fixed{resize:none!important;box-sizing:border-box;min-width:240px;min-height:192px;width:var(--indyheat-viewport-width,640px)!important;height:var(--indyheat-viewport-height,512px)!important;max-width:100%;overflow:auto!important}
+#circuitViewportResizeHandle{position:absolute;display:none;width:18px;height:18px;z-index:80;cursor:nwse-resize;touch-action:none;user-select:none;box-sizing:border-box;border:1px solid #8d96a6;border-radius:3px;background:#2b313b;color:#e8ebef;font:12px/16px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-align:center;box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+#circuitViewportResizeHandle::before{content:"↘"}
+#circuitViewportResizeHandle.visible{display:block}
+#circuitViewportResizeHandle.dragging{background:#5a4a1c;border-color:#d6b54a}
 .viewSliderRow{display:grid!important;grid-template-columns:86px minmax(0,1fr) 38px;gap:6px;align-items:center;margin:7px 0!important;font-size:12px}
 .viewSliderRow>span:first-child{white-space:nowrap}
 .viewSliderRow input[type=range]{width:100%!important;min-width:0;margin:0!important}
 .viewSliderRow>span:last-child{text-align:right;font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
 #legacyUiCompatibility{display:none!important}
+#cursorInfo{box-sizing:border-box!important;width:310px!important;min-width:310px!important;max-width:310px!important;height:58px!important;min-height:58px!important;max-height:58px!important;overflow:hidden!important}
 @media(max-width:1050px){main{grid-template-columns:1fr!important}}
 
 @media(max-width:760px){
@@ -58,10 +64,10 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 
 </head>
 <body>
-<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.68";</script>
+<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.79";</script>
 <header>
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor v0.68</h1>
+    <h1>Indy Heat Amiga — Circuit Editor v0.76</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
@@ -208,8 +214,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
         <p><b>Waypoints:</b> click or drag a visible point; right-click toggles its AI Turbo marker. Add waypoint (+) splits the nearest visible logical route link and resequences following points; Delete waypoint (−) removes the hovered point, repairs incoming links and keeps at least five points per route. Clean route data rebuilds contiguous physical IDs/link displacements and removes only sequence ordinals unused by all three routes, preserving intentional branch gaps/duplicates.</p>
         <p><b>Foreground / Surface:</b> choose a drawing tool, paint value and brush. Curve uses three clicks; Free-form closes near its start point. Right-click uses the secondary paint action.</p>
         <p><b>Recovery:</b> rotate arrows with left/right mouse; Grab group supports multi-cell selection.</p>
-        <p><b>Fixed viewport:</b> use the 640×512 viewport button with higher zoom, then move around with the trackpad or scrollbars.</p>
-        <p><b>Race:</b> drag visible race/pit anchors or edit their fields. Grid X direction is checked against Route A waypoint 3; pit-side and pit-crew placement checks use retail-derived rules. MiniMap uses the shared drawing tools (Pencil, Line, shapes, Curve, Free-form and Fill) and supports reusable captured custom brushes, including multi-edge and traced captures; GeoMap has its own edit mode.</p>
+        <p><b>Fixed viewport:</b> enable the shared viewport, then drag its bottom-right corner to resize it. The chosen size is retained while switching between the circuit, Backdrop, MiniMap and GeoMap views; use the trackpad or scrollbars to move around larger zoomed content.</p>
+        <p><b>Race:</b> drag visible race/pit anchors or edit their fields. Grid X direction is checked against Route A waypoint 3; pit-side and pit-crew placement checks use retail-derived rules. MiniMap and Backdrop use the shared drawing tools (Pencil, Line, shapes, Curve, Free-form and Fill) with pre-made, captured or loaded brushes, including multi-edge and traced captures. Backdrop paints in the verified 32-colour race palette and retains IFF import/remapping; GeoMap has its own edit mode.</p>
         <p>Full editor and package documentation: <a href="https://github.com/HoraceAndTheSpider/Indy-Heat-WHD/wiki/Editor-and-Track-Package-Workflow" target="_blank" rel="noopener">Editor and Track Package Workflow</a>.</p>
       </div>
     </details>
@@ -293,15 +299,18 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="indyheat_race_graphics.js"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js?v=052"></script>
-<script src="waypoint-actions.js?v=068"></script>
+<script src="waypoint-actions.js?v=069"></script>
 <script src="recovery-editor.js?v=049"></script>
 <script src="race-setup.js?v=046"></script>
 <script src="race-validation.js?v=057"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
-<script src="circuit-library.js?v=068"></script>
-<script src="brush-tools.js?v=063"></script>
-<script src="minimap-brush-ui.js?v=065"></script>
+<script src="circuit-library.js?v=069"></script>
+<script src="brush-tools.js?v=078"></script>
+<script src="brush-library.js?v=077"></script>
+<script src="minimap-brush-ui.js?v=078"></script>
+<script src="backdrop-brush-ui.js?v=078"></script>
+<script src="backdrop-ilbm-export.js?v=079"></script>
 <script src="editor-ui.js?v=047"></script>
 
 <script>
@@ -396,6 +405,112 @@ function watchValidation(){
   validationObserver=new MutationObserver(()=>queueMicrotask(waypointValidationSummary));
   validationObserver.observe(pre,{subtree:true,childList:true,characterData:true});
 }
+function installResizableViewport(){
+  const viewport=$('circuitViewport'),button=$('circuitViewportToggle');
+  if(!viewport||!button)return false;
+
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+  const saveSize=()=>{
+    if(!viewport.classList.contains('fixed'))return;
+    const r=viewport.getBoundingClientRect();
+    if(r.width<1||r.height<1)return;
+    viewport.dataset.fixedWidth=String(Math.round(r.width));
+    viewport.dataset.fixedHeight=String(Math.round(r.height));
+    viewport.style.setProperty('--indyheat-viewport-width',`${Math.round(r.width)}px`);
+    viewport.style.setProperty('--indyheat-viewport-height',`${Math.round(r.height)}px`);
+  };
+  const restoreSize=()=>{
+    const w=Number(viewport.dataset.fixedWidth)||640,h=Number(viewport.dataset.fixedHeight)||512;
+    viewport.style.setProperty('--indyheat-viewport-width',`${clamp(w,240,4096)}px`);
+    viewport.style.setProperty('--indyheat-viewport-height',`${clamp(h,192,4096)}px`);
+  };
+  const normaliseButton=()=>{
+    if(button.textContent!=='Fixed viewport')button.textContent='Fixed viewport';
+    button.title='Fix the shared circuit viewport. When enabled, drag the visible bottom-right handle to resize it; the same viewport is used by Backdrop, MiniMap and GeoMap.';
+  };
+
+  const host=viewport.parentElement;
+  if(!host)return false;
+  if(getComputedStyle(host).position==='static')host.style.position='relative';
+  let handle=$('circuitViewportResizeHandle');
+  if(!handle){
+    handle=document.createElement('div');
+    handle.id='circuitViewportResizeHandle';
+    handle.title='Drag to resize the fixed viewport';
+    handle.setAttribute('role','separator');
+    handle.setAttribute('aria-label','Resize fixed viewport');
+    host.appendChild(handle);
+  }
+
+  const positionHandle=()=>{
+    const fixed=viewport.classList.contains('fixed');
+    handle.classList.toggle('visible',fixed);
+    if(!fixed)return;
+    const vr=viewport.getBoundingClientRect(),hr=host.getBoundingClientRect();
+    const x=vr.right-hr.left+host.scrollLeft-handle.offsetWidth+1;
+    const y=vr.bottom-hr.top+host.scrollTop-handle.offsetHeight+1;
+    handle.style.left=`${Math.round(x)}px`;
+    handle.style.top=`${Math.round(y)}px`;
+  };
+
+  normaliseButton();restoreSize();positionHandle();
+  if(!viewport.dataset.resizableViewport){
+    viewport.dataset.resizableViewport='1';
+    let drag=null;
+    handle.addEventListener('pointerdown',e=>{
+      if(e.button!==0||!viewport.classList.contains('fixed'))return;
+      e.preventDefault();e.stopPropagation();
+      const r=viewport.getBoundingClientRect();
+      drag={pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,width:r.width,height:r.height};
+      handle.classList.add('dragging');
+      handle.setPointerCapture?.(e.pointerId);
+    });
+    handle.addEventListener('pointermove',e=>{
+      if(!drag||e.pointerId!==drag.pointerId)return;
+      e.preventDefault();
+      const hostRect=host.getBoundingClientRect();
+      const maxWidth=Math.max(240,hostRect.width-(viewport.getBoundingClientRect().left-hostRect.left)-2);
+      const w=clamp(drag.width+(e.clientX-drag.startX),240,Math.min(4096,maxWidth));
+      const h=clamp(drag.height+(e.clientY-drag.startY),192,4096);
+      viewport.style.setProperty('--indyheat-viewport-width',`${Math.round(w)}px`);
+      viewport.style.setProperty('--indyheat-viewport-height',`${Math.round(h)}px`);
+      viewport.dataset.fixedWidth=String(Math.round(w));
+      viewport.dataset.fixedHeight=String(Math.round(h));
+      positionHandle();
+    });
+    const finishDrag=e=>{
+      if(!drag||(e&&e.pointerId!=null&&e.pointerId!==drag.pointerId))return;
+      if(e)handle.releasePointerCapture?.(drag.pointerId);
+      drag=null;handle.classList.remove('dragging');saveSize();positionHandle();
+    };
+    handle.addEventListener('pointerup',finishDrag);
+    handle.addEventListener('pointercancel',finishDrag);
+
+    const ro=typeof ResizeObserver!=='undefined'?new ResizeObserver(()=>{if(!drag)saveSize();positionHandle();}):null;
+    ro?.observe(viewport);
+    button.addEventListener('click',()=>{
+      setTimeout(()=>{
+        normaliseButton();
+        if(viewport.classList.contains('fixed'))restoreSize();
+        positionHandle();
+      },0);
+    });
+    const mo=new MutationObserver(()=>{
+      normaliseButton();
+      if(viewport.classList.contains('fixed')&&!drag)restoreSize();
+      positionHandle();
+    });
+    mo.observe(button,{childList:true,characterData:true,subtree:true,attributes:true,attributeFilter:['class','aria-pressed']});
+    document.addEventListener('click',e=>{
+      if(e.target?.closest?.('#layerModeButtons button'))setTimeout(()=>{if(viewport.classList.contains('fixed'))restoreSize();positionHandle();},0);
+    },true);
+    host.addEventListener('scroll',positionHandle,{passive:true});
+    window.addEventListener('resize',()=>setTimeout(positionHandle,0),{passive:true});
+  }
+  setTimeout(positionHandle,0);
+  return true;
+}
+
 function consolidateView(){
   const bg=$('showBg'),view=bg?.closest('section');if(!bg||!view)return false;
   const imageLabel=bg.closest('label');shortImageLabel(imageLabel);
@@ -415,7 +530,7 @@ function consolidateView(){
 
   const oldHost=$('masterZoomHost');if(oldHost&&!oldHost.querySelector('#masterZoomControl,#overlayOpacityControl,#circuitViewportToggle'))oldHost.remove();
   const map=$('layerEditMap');if(map&&map.textContent!=='GeoMap')map.textContent='GeoMap';
-  hideLegacyUi();watchValidation();installWaypointEditPanelGuard();
+  hideLegacyUi();watchValidation();installWaypointEditPanelGuard();installResizableViewport();
   return !!(fixed&&zoom&&overlay&&map);
 }
 function run(){

@@ -1,18 +1,18 @@
 (function(root){
 'use strict';
 
-/* MiniMap drawing/custom-brush adapter for shared raster tools — v0.65. */
-const B=root.IndyHeatBrushTools,L=root.IndyHeatLayerTools;
-if(!B||!L)return;
+/* MiniMap drawing/custom-brush adapter for shared raster tools — v0.78. */
+const B=root.IndyHeatBrushTools,L=root.IndyHeatLayerTools,Library=root.IndyHeatBrushLibrary;
+if(!B||!L||!Library)return;
 const {
-  clamp,squareBounds,squareMask,circleMask,polygonMask,captureRasterBrush,
-  stampRasterBrushPoints,patternFillRasterBrush,transformRasterBrush,
+  clamp,rectangleBounds,rectangleMask,ellipseMask,polygonMask,captureRasterBrush,
+  stampRasterBrushPoints,patternFillRasterBrush,stampBrushMaskPoints,patternFillBrushMask,transformRasterBrush,
   encodeBrushFile,decodeBrushFile,BRUSH_VERSION,DRAW_TOOL_DEFS
 }=B;
 
 const $=id=>document.getElementById(id);
-let drawTool='freehand',captureMode=null,gesture=null,hover=null,brush=null,externalTemplate=false,bridgePick=null,transparencyPickArmed=false;
-const miniUndo=new Map();
+let drawTool='freehand',captureMode=null,gesture=null,hover=null,brush=null,activeLibraryId=null,bridgePick=null,transparencyPickArmed=false;
+const miniUndo=new Map(),brushTransparencyBySource=new Map();
 
 function P(){return root.IndyHeatCircuitPackage||null;}
 function T(){return root.IndyHeatTools||null;}
@@ -35,7 +35,7 @@ function sourceKey(q=currentPreview()){
 function stackFor(q=currentPreview()){const k=sourceKey(q);if(!miniUndo.has(k))miniUndo.set(k,[]);return miniUndo.get(k);}
 function clearMiniUndo(){const q=currentPreview();if(q)miniUndo.delete(sourceKey(q));}
 function pushUndoBytes(q,bytes){const st=stackFor(q);st.push(Uint8Array.from(bytes));if(st.length>30)st.shift();}
-function undoMini(){const q=currentPreview();if(!q)return false;const st=stackFor(q),prev=st.pop();if(!prev)return false;q.resource.data.set(prev);syncTransparencyUi();redraw();setState(`MiniMap edit undone.${brush?` Custom brush ${brush.width}×${brush.height} remains active.`:''}`);return true;}
+function undoMini(){const q=currentPreview();if(!q)return false;const st=stackFor(q),prev=st.pop();if(!prev)return false;q.resource.data.set(prev);syncTransparencyUi();redraw();setState(`MiniMap edit undone.${brush?` Brush ${brush.width}×${brush.height} remains active.`:''}`);return true;}
 
 function layout(){
   const c=$('circuitAuxCanvas'),p=P();if(!c||!p)return null;const w=p.PREVIEW_WIDTH,h=p.PREVIEW_HEIGHT;
@@ -52,26 +52,32 @@ function primaryPaintAction(e){return !!e&&e.button===0&&!e.ctrlKey;}
 function setPaintColour(v){document.querySelector(`#circuitPreviewPalette [data-colour="${Number(v)}"]`)?.click();}
 function brushSize(){return Math.max(1,Number($('circuitPreviewBrush')?.value)||1);}
 function decodedPreview(q=currentPreview()){const p=P();return p&&q?p.decodePreviewBob(q.resource.data):null;}
-function writePreview(q,pixels,transparent){const p=P();q.resource.data.set(p.encodePreviewPixels(pixels,q.resource.data,transparent));updatePaletteTransparency(transparent);}
+function writePreview(q,pixels,transparent){const p=P();q.resource.data.set(p.encodePreviewPixels(pixels,q.resource.data,transparent));}
 function isCapture(){return !!captureMode;}
 function isClickShape(tool=drawTool){return tool==='curve'||tool==='freeform';}
 function customBrushActive(){return !!brush;}
 function normalBrushPoints(points){return L.expandPointsWithBrush(points,brushSize(),'square');}
 function freeformCloseReady(g,p){return !!(g&&g.tool==='freeform'&&(g.vertices?.length||0)>=3&&p&&L.pointDistance(g.start,p)<=3);}
-function capturePolygonCloseReady(g,p){return !!(g&&g.kind==='capture-poly'&&(g.vertices?.length||0)>=3&&p&&L.pointDistance(g.start,p)<=3);}
+function capturePolygonCloseTolerance(g){
+  const pts=g?.vertices||[];if(pts.length<3)return 3;
+  const minX=Math.min(...pts.map(p=>p.x)),maxX=Math.max(...pts.map(p=>p.x)),minY=Math.min(...pts.map(p=>p.y)),maxY=Math.max(...pts.map(p=>p.y));
+  const span=Math.max(maxX-minX,maxY-minY);return Math.max(1,Math.min(3,span/3));
+}
+function capturePolygonCloseReady(g,p){return !!(g&&g.kind==='capture-poly'&&(g.vertices?.length||0)>=3&&p&&L.pointDistance(g.start,p)<=capturePolygonCloseTolerance(g));}
 
 function syncUi(){
-  document.querySelectorAll('[data-mini-draw-tool]').forEach(b=>b.classList.toggle('active',!captureMode&&!externalTemplate&&b.dataset.miniDrawTool===drawTool));
+  document.querySelectorAll('[data-mini-draw-tool]').forEach(b=>b.classList.toggle('active',!captureMode&&b.dataset.miniDrawTool===drawTool));
   document.querySelectorAll('[data-brush-capture]').forEach(b=>b.classList.toggle('active',b.dataset.brushCapture===captureMode));
+  document.querySelectorAll('[data-brush-library-id]').forEach(b=>b.classList.toggle('active',!!activeLibraryId&&b.dataset.brushLibraryId===activeLibraryId));
   const slider=$('circuitPreviewBrush');if(slider)slider.disabled=!!brush;
-  const sliderText=$('circuitPreviewBrushText');if(sliderText)sliderText.textContent=brush?`Custom ${brush.width}×${brush.height}`:String(slider?.value||1);
+  const sliderText=$('circuitPreviewBrushText');if(sliderText)sliderText.textContent=brush?`Brush ${brush.width}×${brush.height}`:String(slider?.value||1);
   const clear=$('circuitCustomBrushClear'),save=$('circuitFreeBrushSave');if(clear)clear.disabled=!brush;if(save)save.disabled=!brush;
   document.querySelectorAll('[data-custom-brush-rotate],[data-custom-brush-flip]').forEach(b=>b.disabled=!brush);
   const dims=$('circuitFreeBrushDims');if(dims)dims.textContent=brush?`${brush.width}×${brush.height} · ${brush.visiblePixels} visible px · hotspot ${brush.hotspotX},${brush.hotspotY}`:'Standard pixel brush';
 }
 function selectDrawTool(tool){
   if(!DRAW_TOOL_DEFS.some(d=>d.value===tool))return;
-  drawTool=tool;captureMode=null;externalTemplate=false;transparencyPickArmed=false;gesture=null;hover=null;safeUnderlyingPick();syncUi();
+  drawTool=tool;captureMode=null;transparencyPickArmed=false;gesture=null;hover=null;safeUnderlyingPick();syncUi();
   if(tool==='curve')setState('Curve: click start, click end, then move and click to set the bend.');
   else if(tool==='freeform')setState('Free-form: click vertices; close within 3px of the start to commit.');
   else if(tool==='fill'&&brush)setState('Custom brush Fill tiles the brush as a repeated pattern through the connected area.');
@@ -80,14 +86,15 @@ function selectDrawTool(tool){
 }
 function toolLabel(tool){return DRAW_TOOL_DEFS.find(d=>d.value===tool)?.title||tool;}
 function selectCapture(mode){
-  if(!miniActive())$('layerEditMini')?.click();safeUnderlyingPick();externalTemplate=false;transparencyPickArmed=false;gesture=null;hover=null;captureMode=mode;syncUi();
-  if(mode==='polygon')setState('Multi-edge capture: click successive vertices; close within 3px of the start to capture.');
+  if(!miniActive())$('layerEditMini')?.click();safeUnderlyingPick();transparencyPickArmed=false;gesture=null;hover=null;captureMode=mode;syncUi();
+  if(mode==='polygon')setState('Multi-edge capture: click successive vertices; close near the start to capture. Tiny selections use a tighter close zone.');
   else if(mode==='trace')setState('Hold the left mouse button and trace a freeform capture lasso; release to capture.');
-  else setState(`Drag a ${mode==='circle'?'circle':'square'} capture area; release to create the custom brush.`);
+  else setState(`Drag a ${mode==='ellipse'?'ellipse':'rectangle'} capture area; release to create the custom brush.`);
   redraw();
 }
-function activateCapturedBrush(newBrush,message){brush=newBrush;captureMode=null;externalTemplate=false;drawTool='freehand';gesture=null;hover=null;safeUnderlyingPick();syncUi();setState(`${message} Pencil is now selected; choose Line/Curve/shape/Fill to use the same custom brush.`);redraw();}
-function clearCustomBrush(){brush=null;gesture=null;hover=null;captureMode=null;externalTemplate=false;drawTool='freehand';safeUnderlyingPick();syncUi();setState('Custom brush cleared. Standard brush-size control restored.');redraw();}
+function activateCapturedBrush(newBrush,message,{libraryId=null}={}){brush=newBrush;activeLibraryId=libraryId;captureMode=null;drawTool='freehand';gesture=null;hover=null;safeUnderlyingPick();syncUi();setState(`${message} Pencil is now selected; choose Line/Curve/shape/Fill to use the same brush.`);redraw();}
+function activateLibraryBrush(id){try{const entry=Library.get(id),loaded=Library.materialise(entry);if(!entry||!loaded)throw new Error('Brush library entry is unavailable.');activateCapturedBrush(loaded,`${entry.name} brush selected.`,{libraryId:entry.id});}catch(err){setState(`ERROR: ${err.message}`,true);}}
+function clearCustomBrush(){brush=null;activeLibraryId=null;gesture=null;hover=null;captureMode=null;drawTool='freehand';safeUnderlyingPick();syncUi();setState('Brush cleared. Standard brush-size control restored.');redraw();}
 
 function downloadBrush(){
   if(!brush)return;try{const bytes=encodeBrushFile(brush,{paletteSize:P()?.PRESENTATION_PALETTE_RGB?.length||32}),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));a.download=`indyheat_brush_${brush.width}x${brush.height}.ihbrush`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);setState(`Saved ${brush.width}×${brush.height} brush · ${bytes.length} bytes · IHBR v${BRUSH_VERSION}.`);}catch(err){setState(`ERROR: ${err.message}`,true);}
@@ -95,18 +102,22 @@ function downloadBrush(){
 async function loadBrushFile(file){
   if(!file)return;try{const loaded=decodeBrushFile(new Uint8Array(await file.arrayBuffer())),paletteSize=P()?.PRESENTATION_PALETTE_RGB?.length||32;if(loaded.paletteSize!==paletteSize)throw new Error(`Brush uses a ${loaded.paletteSize}-colour palette; this MiniMap uses ${paletteSize}.`);activateCapturedBrush(loaded,`Loaded ${file.name} · ${loaded.width}×${loaded.height}.`);}catch(err){setState(`ERROR: ${err.message}`,true);}
 }
-function rotateBrush(deg){if(!brush)return;try{brush=transformRasterBrush(brush,{rotation:deg});syncUi();setState(`Custom brush rotated ${deg}° · now ${brush.width}×${brush.height}.`);redraw();}catch(err){setState(`ERROR: ${err.message}`,true);}}
-function flipBrush(axis){if(!brush)return;try{brush=transformRasterBrush(brush,axis==='h'?{flipH:true}:{flipV:true});syncUi();setState(`Custom brush flipped ${axis==='h'?'horizontally':'vertically'}.`);redraw();}catch(err){setState(`ERROR: ${err.message}`,true);}}
+function rotateBrush(deg){if(!brush)return;try{brush=transformRasterBrush(brush,{rotation:deg});activeLibraryId=null;syncUi();setState(`Brush rotated ${deg}° · now ${brush.width}×${brush.height}.`);redraw();}catch(err){setState(`ERROR: ${err.message}`,true);}}
+function flipBrush(axis){if(!brush)return;try{brush=transformRasterBrush(brush,axis==='h'?{flipH:true}:{flipV:true});activeLibraryId=null;syncUi();setState(`Brush flipped ${axis==='h'?'horizontally':'vertically'}.`);redraw();}catch(err){setState(`ERROR: ${err.message}`,true);}}
 
-function updatePaletteTransparency(transparent){
-  transparent=Number(transparent);for(const b of document.querySelectorAll('#circuitPreviewPalette [data-colour]')){const i=Number(b.dataset.colour),word=P()?.PRESENTATION_PALETTE_WORDS?.[i];b.title=i===transparent?`${i} · transparent · right-click to keep/set transparency`:`${i} · $${Number(word||0).toString(16).toUpperCase().padStart(3,'0')} · right-click to set transparent`;b.classList.toggle('transparentIndex',i===transparent);}
+function brushTransparencyIndex(){
+  const key=sourceKey();if(!brushTransparencyBySource.has(key)){const d=decodedPreview();brushTransparencyBySource.set(key,Number.isInteger(d?.transparent)?d.transparent:0);}
+  return brushTransparencyBySource.get(key);
+}
+function updatePaletteTransparency(transparent=brushTransparencyIndex()){
+  transparent=Number(transparent);for(const b of document.querySelectorAll('#circuitPreviewPalette [data-colour]')){const i=Number(b.dataset.colour),word=P()?.PRESENTATION_PALETTE_WORDS?.[i];b.title=i===transparent?`${i} · brush transparency index · right-click to keep/set`:`${i} · $${Number(word||0).toString(16).toUpperCase().padStart(3,'0')} · right-click to set brush transparency`;b.classList.toggle('transparentIndex',i===transparent);}
   const value=$('circuitPreviewTransparentValue');if(value)value.textContent=String(transparent);const swatch=$('circuitPreviewTransparentSwatch'),rgb=P()?.PRESENTATION_PALETTE_RGB?.[transparent];if(swatch&&rgb)swatch.style.background=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
   const arm=$('circuitPreviewSetTransparent');if(arm)arm.classList.toggle('active',transparencyPickArmed);
 }
-function syncTransparencyUi(){const p=P(),q=currentPreview();if(!p||!q)return;try{updatePaletteTransparency(p.decodePreviewBob(q.resource.data).transparent);}catch(_e){}}
+function syncTransparencyUi(){updatePaletteTransparency(brushTransparencyIndex());}
 function setTransparencyPickArmed(on){
   transparencyPickArmed=!!on;const b=$('circuitPreviewSetTransparent');if(b)b.classList.toggle('active',transparencyPickArmed);
-  if(transparencyPickArmed)setState('Set transparent armed · click a MiniMap palette swatch. Right-clicking a swatch also sets transparency directly.');
+  if(transparencyPickArmed)setState('Set transparent armed · choose the editor brush-transparency colour from the palette. Right-click also sets it directly.');
 }
 function paletteColourFromTarget(target){const b=target?.closest?.('#circuitPreviewPalette [data-colour]');return b?Number(b.dataset.colour):null;}
 function palettePointerChoice(e){
@@ -115,20 +126,21 @@ function palettePointerChoice(e){
   if(e.type==='click'&&e.button===0&&transparencyPickArmed){e.preventDefault();e.stopImmediatePropagation();transparencyPickArmed=false;setTransparencyIndex(colour);}
 }
 function setTransparencyIndex(target){
-  const p=P(),q=currentPreview();if(!p||!q)return;target=Number(target);if(!Number.isInteger(target)||target<0||target>31)return;
-  try{const before=p.decodePreviewBob(q.resource.data);if(before.transparent===target){syncTransparencyUi();return;}const snapshot=q.resource.data.slice(),migrated=p.migratePreviewTransparency(q.resource.data,target);q.resource.data.set(migrated);pushUndoBytes(q,snapshot);const after=p.decodePreviewBob(q.resource.data);updatePaletteTransparency(after.transparent);setState(`MiniMap transparency changed ${before.transparent} → ${after.transparent}. Existing pixels were migrated losslessly.`);redraw();}catch(err){setState(`ERROR: ${err.message}`,true);syncTransparencyUi();}
+  target=Number(target);if(!Number.isInteger(target)||target<0||target>31)return;brushTransparencyBySource.set(sourceKey(),target);updatePaletteTransparency(target);
+  setState(`MiniMap brush transparency index set to ${target}. This is an editor brush/mask colour and does not alter the MiniMap resource's game transparency field.`);redraw();
 }
 
-function captureMask(g){const p=P();if(!p||!g)return [];const end=g.current||g.start;if(captureMode==='square')return squareMask(g.start,end,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);if(captureMode==='circle')return circleMask(g.start,end,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);if(captureMode==='polygon')return polygonMask(g.vertices||[],p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);if(captureMode==='trace')return polygonMask(g.path||[],p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);return [];}
+function captureMask(g){const p=P();if(!p||!g)return [];const end=g.current||g.start;if(captureMode==='rectangle')return rectangleMask(g.start,end,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);if(captureMode==='ellipse')return ellipseMask(g.start,end,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);if(captureMode==='polygon')return polygonMask(g.vertices||[],p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);if(captureMode==='trace')return polygonMask(g.path||[],p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT);return [];}
 function finishCapture(){
-  const p=P(),q=currentPreview(),g=gesture;if(!p||!q||!g)return;try{const decoded=p.decodePreviewBob(q.resource.data),mask=captureMask(g),label=captureMode==='square'?'Square':captureMode==='circle'?'Circle':captureMode==='polygon'?'Multi-edge':'Traced freeform',b=captureRasterBrush(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,mask,{name:`${label} capture`,key:'free_brush'});gesture=null;activateCapturedBrush(b,`${label} captured · ${b.width}×${b.height}.`);}catch(err){gesture=null;setState(`ERROR: ${err.message}`,true);syncUi();redraw();}
+  const p=P(),q=currentPreview(),g=gesture;if(!p||!q||!g)return;try{const decoded=p.decodePreviewBob(q.resource.data),mask=captureMask(g),label=captureMode==='rectangle'?'Rectangle':captureMode==='ellipse'?'Ellipse':captureMode==='polygon'?'Multi-edge':'Traced freeform',b=captureRasterBrush(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brushTransparencyIndex(),mask,{name:`${label} capture`,key:'free_brush'});gesture=null;activateCapturedBrush(b,`${label} captured · ${b.width}×${b.height}.`);}catch(err){gesture=null;setState(`ERROR: ${err.message}`,true);syncUi();redraw();}
 }
 
 function applyNormalPoints(basePixels,points,value){const out=Uint8Array.from(basePixels);for(const [x,y] of normalBrushPoints(points))if(x>=0&&y>=0&&x<P().PREVIEW_WIDTH&&y<P().PREVIEW_HEIGHT)out[y*P().PREVIEW_WIDTH+x]=value;return {pixels:out,transparent:null,written:points.length};}
 function applyPoints(decoded,points,{erase=false,filled=false,anchor=null}={}){
-  const p=P(),value=erase?decoded.transparent:currentPaintColour();if(brush){
-    if(filled)return patternFillRasterBrush(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,anchor?.x??0,anchor?.y??0,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase});
-    return stampRasterBrushPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase});
+  const p=P(),maskColour=brushTransparencyIndex(),value=erase?maskColour:currentPaintColour();if(brush){
+    if(erase){const placed=filled?patternFillBrushMask(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brush,points,anchor?.x??0,anchor?.y??0,maskColour):stampBrushMaskPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brush,points,maskColour);return {...placed,transparent:decoded.transparent};}
+    if(filled)return patternFillRasterBrush(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,anchor?.x??0,anchor?.y??0,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase:false});
+    return stampRasterBrushPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase:false});
   }
   const r=applyNormalPoints(decoded.pixels,points,value);r.transparent=decoded.transparent;return r;
 }
@@ -137,7 +149,7 @@ function commitPoints(points,{erase=false,filled=false,anchor=null,snapshot=null
 }
 function commitFill(pt,erase){
   const q=currentPreview(),p=P(),decoded=decodedPreview(q);if(!q||!p||!decoded)return;const target=decoded.pixels[pt.y*p.PREVIEW_WIDTH+pt.x],probe=(target+1)%(p.PRESENTATION_PALETTE_RGB?.length||32),indices=L.floodFillIndices(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,pt.x,pt.y,probe),points=indices.map(i=>[i%p.PREVIEW_WIDTH,(i/p.PREVIEW_WIDTH)|0]);if(!points.length)return;
-  if(brush)commitPoints(points,{erase,filled:true,anchor:pt});else{const value=erase?decoded.transparent:currentPaintColour();const out=decoded.pixels.slice();for(const i of indices)out[i]=value;const snap=q.resource.data.slice();writePreview(q,out,decoded.transparent);pushUndoBytes(q,snap);setState(`Fill committed${erase?' using transparency index '+decoded.transparent:''}.`);redraw();}
+  if(brush)commitPoints(points,{erase,filled:true,anchor:pt});else{const value=erase?brushTransparencyIndex():currentPaintColour();const out=decoded.pixels.slice();for(const i of indices)out[i]=value;const snap=q.resource.data.slice();writePreview(q,out,decoded.transparent);pushUndoBytes(q,snap);setState(`Fill committed${erase?' using brush transparency index '+brushTransparencyIndex():''}.`);redraw();}
 }
 function shapePoints(tool,start,end){if(tool==='line')return L.linePoints(start.x,start.y,end.x,end.y);if(tool==='rectangle')return L.rectanglePoints(start.x,start.y,end.x,end.y);if(tool==='rectangle-filled')return L.filledRectanglePoints(start.x,start.y,end.x,end.y);if(tool==='ellipse')return L.ellipsePoints(start.x,start.y,end.x,end.y);if(tool==='ellipse-filled')return L.filledEllipsePoints(start.x,start.y,end.x,end.y);return [[end.x,end.y]];}
 function toolIsFilled(tool){return tool==='rectangle-filled'||tool==='ellipse-filled';}
@@ -157,15 +169,15 @@ function handleClickShapeDown(e,pt){
 
 function beginDraw(e,pt){
   const secondary=secondaryPaintAction(e);
-  if(drawTool==='pick'){const d=decodedPreview(),picked=d?.pixels[pt.y*P().PREVIEW_WIDTH+pt.x];if(picked==null)return;if(secondary){setTransparencyPickArmed(false);setTransparencyIndex(picked);setState(`Picked MiniMap transparency index ${picked} from canvas.`);}else if(primaryPaintAction(e)){setPaintColour(picked);setState(`Picked MiniMap paint colour ${picked}.`);redraw();}return;}
+  if(drawTool==='pick'){const d=decodedPreview(),picked=d?.pixels[pt.y*P().PREVIEW_WIDTH+pt.x];if(picked==null)return;if(secondary){setTransparencyPickArmed(false);setTransparencyIndex(picked);setState(`Picked MiniMap brush transparency index ${picked} from canvas.`);}else if(primaryPaintAction(e)){setPaintColour(picked);setState(`Picked MiniMap paint colour ${picked}.`);redraw();}return;}
   if(drawTool==='fill'){commitFill(pt,secondary);return;}
   if(isClickShape()){handleClickShapeDown(e,pt);return;}
   const q=currentPreview(),decoded=decodedPreview(q);if(!q||!decoded)return;gesture={kind:'drag',tool:drawTool,pointerId:e.pointerId,start:{x:pt.x,y:pt.y},current:{x:pt.x,y:pt.y},last:{x:pt.x,y:pt.y},erase:secondary,snapshot:q.resource.data.slice(),workingPixels:decoded.pixels.slice(),transparent:decoded.transparent};$('circuitAuxCanvas')?.setPointerCapture?.(e.pointerId);
   if(drawTool==='freehand'){
-    // Pencil secondary action is explicitly the MiniMap's current transparent
-    // palette index. Do not route it through the selected paint colour.
+    // Pencil secondary action paints the editor brush-transparency index.
+    // This is deliberately independent of the MiniMap resource's game transparency field.
     const placed=applyPoints({...decoded,pixels:gesture.workingPixels,transparent:gesture.transparent},[[pt.x,pt.y]],{erase:secondary});gesture.workingPixels=placed.pixels;gesture.transparent=placed.transparent??gesture.transparent;writePreview(q,gesture.workingPixels,gesture.transparent);
-    if(secondary)setState(`Pencil erase · transparency index ${decoded.transparent}.`);
+    if(secondary)setState(`Pencil mask · brush transparency index ${brushTransparencyIndex()}.`);
   }
   redraw();
 }
@@ -188,20 +200,20 @@ function endDraw(e,pt){
 function cancelGesture(){if(gesture?.kind==='drag'&&gesture.snapshot&&currentPreview())currentPreview().resource.data.set(gesture.snapshot);gesture=null;hover=null;redraw();}
 
 function pointerDown(e){
-  if(!miniActive())return;const primary=primaryPaintAction(e),secondary=secondaryPaintAction(e);if(externalTemplate){if(primary)clearMiniUndo();return;}if(!primary&&!secondary)return;const pt=eventPoint(e);if(!pt?.inside)return;e.preventDefault();e.stopImmediatePropagation();
+  if(!miniActive())return;const primary=primaryPaintAction(e),secondary=secondaryPaintAction(e);if(!primary&&!secondary)return;const pt=eventPoint(e);if(!pt?.inside)return;e.preventDefault();e.stopImmediatePropagation();
   if(captureMode){
     if(!primary)return;
     if(captureMode==='polygon'){
       if(!gesture||gesture.kind!=='capture-poly'){
         gesture={kind:'capture-poly',start:{x:pt.x,y:pt.y},current:{x:pt.x,y:pt.y},vertices:[{x:pt.x,y:pt.y}]};
-        setState('Multi-edge capture: start set · click more vertices, then close within 3px of the start.');
+        setState('Multi-edge capture: start set · click more vertices, then close near the start.');
       }else if(capturePolygonCloseReady(gesture,pt)){
         finishCapture();return;
       }else{
         const last=gesture.vertices[gesture.vertices.length-1];
         if(L.pointDistance(last,pt)>=.001)gesture.vertices.push({x:pt.x,y:pt.y});
         gesture.current={x:pt.x,y:pt.y};
-        setState(`Multi-edge capture: ${gesture.vertices.length} vertices · click more or close within 3px of start.`);
+        setState(`Multi-edge capture: ${gesture.vertices.length} vertices · click more or close near start.`);
       }
       redraw();return;
     }
@@ -210,7 +222,7 @@ function pointerDown(e){
   beginDraw(e,pt);
 }
 function pointerMove(e){
-  if(!miniActive()||externalTemplate)return;const pt=eventPoint(e,{clamped:!!gesture});if(!pt)return;e.preventDefault();e.stopImmediatePropagation();
+  if(!miniActive())return;const pt=eventPoint(e,{clamped:!!gesture});if(!pt)return;e.preventDefault();e.stopImmediatePropagation();
   if(captureMode){
     if(captureMode==='polygon'){
       hover=pt.inside?pt:null;
@@ -223,16 +235,16 @@ function pointerMove(e){
   moveDraw(e,pt);
 }
 function pointerUp(e){
-  if(!miniActive()||externalTemplate)return;const pt=eventPoint(e,{clamped:true});
+  if(!miniActive())return;const pt=eventPoint(e,{clamped:true});
   if(captureMode==='polygon'&&gesture?.kind==='capture-poly'){e.preventDefault();e.stopImmediatePropagation();return;}
   if(captureMode&&gesture?.kind==='capture'&&gesture.pointerId===e.pointerId){e.preventDefault();e.stopImmediatePropagation();if(pt)gesture.current={x:pt.x,y:pt.y};if(captureMode==='trace'&&pt){const last=gesture.path[gesture.path.length-1];if(!last||last.x!==pt.x||last.y!==pt.y)gesture.path.push({x:pt.x,y:pt.y});}try{$('circuitAuxCanvas')?.releasePointerCapture?.(e.pointerId);}catch(_e){}finishCapture();return;}
   if(gesture?.kind==='drag'&&gesture.pointerId===e.pointerId){e.preventDefault();e.stopImmediatePropagation();endDraw(e,pt);}
 }
-function pointerCancel(e){if(!miniActive()||externalTemplate)return;if(gesture){e.preventDefault();e.stopImmediatePropagation();cancelGesture();}}
+function pointerCancel(e){if(!miniActive())return;if(gesture){e.preventDefault();e.stopImmediatePropagation();cancelGesture();}}
 
-function drawBrushAt(ctx,l,anchor,alpha=.72,erase=false){if(!brush||!anchor?.inside)return;const p=P(),d=decodedPreview(),eraseCol=p?.PRESENTATION_PALETTE_RGB?.[d?.transparent]||[255,255,255];ctx.save();ctx.globalAlpha=alpha;for(let sy=0;sy<brush.height;sy++)for(let sx=0;sx<brush.width;sx++){const v=brush.pixels[sy*brush.width+sx];if(v===brush.transparent)continue;const dx=anchor.x-brush.hotspotX+sx,dy=anchor.y-brush.hotspotY+sy;if(dx<0||dy<0||dx>=l.w||dy>=l.h)continue;const col=erase?eraseCol:(p.PRESENTATION_PALETTE_RGB[v]||[255,0,255]);ctx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;ctx.fillRect(l.x+dx*l.scale,l.y+dy*l.scale,l.scale,l.scale);}ctx.restore();}
-function drawNormalPoints(ctx,l,points,erase=false){const d=decodedPreview();if(!d)return;const value=erase?d.transparent:currentPaintColour(),rgb=P()?.PRESENTATION_PALETTE_RGB?.[value]||[255,0,255];ctx.save();ctx.globalAlpha=.58;ctx.fillStyle=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;for(const [x,y] of normalBrushPoints(points))if(x>=0&&y>=0&&x<l.w&&y<l.h)ctx.fillRect(l.x+x*l.scale,l.y+y*l.scale,l.scale,l.scale);ctx.restore();}
-function drawCustomPoints(ctx,l,points,erase=false,filled=false,anchor={x:0,y:0}){if(!brush)return;if(filled){const mod=(n,m)=>((n%m)+m)%m;ctx.save();ctx.globalAlpha=.65;for(const [x,y] of points){if(x<0||y<0||x>=l.w||y>=l.h)continue;if(erase){const ec=P()?.PRESENTATION_PALETTE_RGB?.[decodedPreview()?.transparent]||[255,255,255];ctx.fillStyle=`rgb(${ec[0]},${ec[1]},${ec[2]})`;ctx.fillRect(l.x+x*l.scale,l.y+y*l.scale,l.scale,l.scale);continue;}const sx=mod(x-anchor.x+brush.hotspotX,brush.width),sy=mod(y-anchor.y+brush.hotspotY,brush.height),v=brush.pixels[sy*brush.width+sx];if(v===brush.transparent)continue;const c=P().PRESENTATION_PALETTE_RGB[v]||[255,0,255];ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.fillRect(l.x+x*l.scale,l.y+y*l.scale,l.scale,l.scale);}ctx.restore();return;}for(const p of points)drawBrushAt(ctx,l,{x:p[0],y:p[1],inside:true},.58,erase);}
+function drawBrushAt(ctx,l,anchor,alpha=.72,erase=false){if(!brush||!anchor?.inside)return;const p=P(),eraseCol=p?.PRESENTATION_PALETTE_RGB?.[brushTransparencyIndex()]||[255,255,255];ctx.save();ctx.globalAlpha=alpha;for(let sy=0;sy<brush.height;sy++)for(let sx=0;sx<brush.width;sx++){const v=brush.pixels[sy*brush.width+sx];if(v===brush.transparent)continue;const dx=anchor.x-brush.hotspotX+sx,dy=anchor.y-brush.hotspotY+sy;if(dx<0||dy<0||dx>=l.w||dy>=l.h)continue;const col=erase?eraseCol:(p.PRESENTATION_PALETTE_RGB[v]||[255,0,255]);ctx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;ctx.fillRect(l.x+dx*l.scale,l.y+dy*l.scale,l.scale,l.scale);}ctx.restore();}
+function drawNormalPoints(ctx,l,points,erase=false){const d=decodedPreview();if(!d)return;const value=erase?brushTransparencyIndex():currentPaintColour(),rgb=P()?.PRESENTATION_PALETTE_RGB?.[value]||[255,0,255];ctx.save();ctx.globalAlpha=.58;ctx.fillStyle=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;for(const [x,y] of normalBrushPoints(points))if(x>=0&&y>=0&&x<l.w&&y<l.h)ctx.fillRect(l.x+x*l.scale,l.y+y*l.scale,l.scale,l.scale);ctx.restore();}
+function drawCustomPoints(ctx,l,points,erase=false,filled=false,anchor={x:0,y:0}){if(!brush)return;if(filled){const mod=(n,m)=>((n%m)+m)%m;ctx.save();ctx.globalAlpha=.65;for(const [x,y] of points){if(x<0||y<0||x>=l.w||y>=l.h)continue;const sx=mod(x-anchor.x+brush.hotspotX,brush.width),sy=mod(y-anchor.y+brush.hotspotY,brush.height),v=brush.pixels[sy*brush.width+sx];if(v===brush.transparent)continue;const c=erase?(P()?.PRESENTATION_PALETTE_RGB?.[brushTransparencyIndex()]||[255,255,255]):(P().PRESENTATION_PALETTE_RGB[v]||[255,0,255]);ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.fillRect(l.x+x*l.scale,l.y+y*l.scale,l.scale,l.scale);}ctx.restore();return;}for(const p of points)drawBrushAt(ctx,l,{x:p[0],y:p[1],inside:true},.58,erase);}
 function drawCaptureOverlay(ctx,l){
   if(!captureMode||!gesture||!['capture','capture-poly'].includes(gesture.kind))return;const a=gesture.start,b=gesture.current||a;
   ctx.save();ctx.beginPath();ctx.rect(l.x,l.y,l.drawW,l.drawH);ctx.clip();ctx.fillStyle='rgba(255,216,74,.18)';ctx.strokeStyle='#ffd84a';ctx.lineWidth=Math.max(1,l.scale/2);ctx.setLineDash([Math.max(2,l.scale),Math.max(2,l.scale)]);
@@ -241,12 +253,12 @@ function drawCaptureOverlay(ctx,l){
   }else if(captureMode==='polygon'){
     const pts=gesture.vertices||[];if(pts.length){ctx.beginPath();ctx.moveTo(l.x+(pts[0].x+.5)*l.scale,l.y+(pts[0].y+.5)*l.scale);for(let i=1;i<pts.length;i++)ctx.lineTo(l.x+(pts[i].x+.5)*l.scale,l.y+(pts[i].y+.5)*l.scale);if(gesture.current)ctx.lineTo(l.x+(gesture.current.x+.5)*l.scale,l.y+(gesture.current.y+.5)*l.scale);if(capturePolygonCloseReady(gesture,gesture.current)){ctx.closePath();ctx.fill();}ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(l.x+(pts[0].x+.5)*l.scale,l.y+(pts[0].y+.5)*l.scale,Math.max(2,l.scale*1.1),0,Math.PI*2);ctx.stroke();}
   }else{
-    const q=squareBounds(a,b,l.w,l.h),x=l.x+q.minX*l.scale,y=l.y+q.minY*l.scale,w=(q.maxX-q.minX+1)*l.scale,h=(q.maxY-q.minY+1)*l.scale;if(captureMode==='circle'){ctx.beginPath();ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);ctx.fill();ctx.stroke();}else{ctx.fillRect(x,y,w,h);ctx.strokeRect(x+.5,y+.5,w-1,h-1);}
+    const q=rectangleBounds(a,b,l.w,l.h),x=l.x+q.minX*l.scale,y=l.y+q.minY*l.scale,w=(q.maxX-q.minX+1)*l.scale,h=(q.maxY-q.minY+1)*l.scale;if(captureMode==='ellipse'){ctx.beginPath();ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);ctx.fill();ctx.stroke();}else{ctx.fillRect(x,y,w,h);ctx.strokeRect(x+.5,y+.5,w-1,h-1);}
   }
   ctx.restore();
 }
 function drawGestureOverlay(ctx,l){
-  if(captureMode){drawCaptureOverlay(ctx,l);return;}if(externalTemplate)return;
+  if(captureMode){drawCaptureOverlay(ctx,l);return;}
   if(gesture?.kind==='clickshape'){
     let pts=[];if(gesture.tool==='curve'){if(gesture.stage===1)pts=L.linePoints(gesture.start.x,gesture.start.y,(gesture.current||gesture.start).x,(gesture.current||gesture.start).y);else pts=L.curvePoints(gesture.start,gesture.end,gesture.bend||gesture.current||gesture.end);}else{const verts=[...(gesture.vertices||[])];if(gesture.current)verts.push(gesture.current);pts=L.polylinePoints(verts,{closed:false});}
     brush?drawCustomPoints(ctx,l,pts,gesture.erase):drawNormalPoints(ctx,l,pts,gesture.erase);return;
@@ -261,16 +273,33 @@ function drawGestureOverlay(ctx,l){
 function drawOverlay(){if(!miniActive())return;const c=$('circuitAuxCanvas'),l=layout();if(!c||!l)return;const ctx=c.getContext('2d');drawGestureOverlay(ctx,l);}
 function redraw(){renderBase();syncUi();drawOverlay();}
 
+function drawLibraryThumbnail(canvas,entry){
+  const b=entry?.brush,p=P(),ctx=canvas?.getContext?.('2d');if(!b||!ctx||!p)return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;
+  const scale=Math.max(1,Math.floor(Math.min((canvas.width-4)/b.width,(canvas.height-4)/b.height))),ox=Math.floor((canvas.width-b.width*scale)/2),oy=Math.floor((canvas.height-b.height*scale)/2);
+  for(let y=0;y<b.height;y++)for(let x=0;x<b.width;x++){const v=b.pixels[y*b.width+x];if(v===b.transparent)continue;const c=p.PRESENTATION_PALETTE_RGB?.[v]||[255,0,255];ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.fillRect(ox+x*scale,oy+y*scale,scale,scale);}
+}
+function renderBrushLibrary(){
+  const host=$('circuitBrushLibraryList');if(!host)return;const entries=Library.list({target:'minimap'});host.innerHTML='';
+  for(const entry of entries){const b=document.createElement('button');b.type='button';b.dataset.brushLibraryId=entry.id;b.title=`${entry.name} · ${entry.brush.width}×${entry.brush.height} · ${entry.source}`;b.innerHTML=`<canvas width="34" height="26" aria-hidden="true"></canvas><span></span>`;b.querySelector('span').textContent=entry.name;b.addEventListener('click',()=>activateLibraryBrush(entry.id));host.appendChild(b);drawLibraryThumbnail(b.querySelector('canvas'),entry);}
+  const count=$('circuitBrushLibraryCount');if(count)count.textContent=String(entries.length);syncUi();
+}
+function removeLegacyTemplateUi(controls){
+  const grid=controls.querySelector('.circuitTemplateGrid');if(!grid)return;
+  const title=grid.previousElementSibling?.classList?.contains('toolGroupTitle')?grid.previousElementSibling:null;
+  title?.remove();grid.remove();controls.querySelector('.circuitTemplateTransform')?.remove();$('circuitTemplateState')?.remove();
+}
+
 function installUi(){
   const controls=$('circuitPreviewControls'),canvas=$('circuitAuxCanvas');if(!controls||!canvas)return false;if($('circuitFreeBrushTools'))return true;
   const style=document.createElement('style');style.textContent=`
     #circuitPreviewControls .miniDrawToolGrid,#circuitFreeBrushTools .miniCaptureGrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:6px 0}
     #circuitPreviewControls .miniDrawToolGrid button,#circuitFreeBrushTools .miniCaptureGrid button{min-width:0;height:31px;padding:4px;font-size:18px;line-height:1}
     #circuitPreviewControls .miniDrawToolGrid button.active,#circuitFreeBrushTools .miniCaptureGrid button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
-    #circuitFreeBrushTools{margin:3px 0 7px;padding-top:2px}
+    #circuitFreeBrushTools{margin:3px 0 7px;padding-top:2px}#circuitBrushLibraryHeader{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;color:#d7dce5;margin:4px 0 2px}#circuitBrushLibraryHeader .muted{font-size:9px;white-space:nowrap}#circuitBrushLibraryList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:4px;height:160px;min-height:84px;resize:vertical;overflow:auto;padding:2px 4px 7px 2px;margin:2px 0 6px;box-sizing:border-box;border-bottom:1px solid #343b46}#circuitBrushLibraryList button{display:grid;grid-template-columns:38px minmax(0,1fr);gap:4px;align-items:center;min-width:0;padding:3px 4px;text-align:left;font-size:10px}#circuitBrushLibraryList button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}#circuitBrushLibraryList canvas{image-rendering:pixelated;background:#161a21;border:1px solid #3f4652}#circuitBrushLibraryList span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #circuitFreeBrushState{font-size:10px;line-height:1.35;min-height:27px;margin:4px 0 2px;color:#9aa1ad}
     #circuitFreeBrushState.bad{color:#ff8585}#circuitFreeBrushDims{font-size:10px;color:#9aa1ad;margin:3px 0 5px}
-    #circuitCustomBrushTransforms{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin:5px 0}#circuitCustomBrushTransforms button{min-width:0;padding:5px 2px;font-size:10px}
+    #circuitCustomBrushTransforms{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:5px 0}#circuitCustomBrushTransforms button{min-width:0;padding:5px 2px;font-size:10px}
     #circuitMiniBrushSizeRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:end;margin:4px 0 7px}#circuitMiniBrushSizeRow label{margin:0}#circuitCustomBrushClear{white-space:nowrap;padding:6px 7px}
     #circuitTransparencyControl{display:grid;grid-template-columns:minmax(0,1fr) auto 18px;gap:7px;align-items:center;margin:7px 0 5px;font-size:11px;color:#b9c0cc}
     #circuitPreviewSetTransparent{min-width:0;padding:6px 7px}#circuitPreviewSetTransparent.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}#circuitPreviewTransparentReadout{white-space:nowrap}#circuitPreviewTransparentSwatch{width:16px;height:16px;border:1px solid #d6b54a;border-radius:3px;box-sizing:border-box}
@@ -282,24 +311,24 @@ function installUi(){
   oldRow.querySelectorAll('[data-mini-draw-tool]').forEach(b=>b.addEventListener('click',()=>selectDrawTool(b.dataset.miniDrawTool)));
 
   const freeformIcon=DRAW_TOOL_DEFS.find(d=>d.value==='freeform')?.icon||'⬠';
-  const free=document.createElement('div');free.id='circuitFreeBrushTools';free.innerHTML=`<div class="toolGroupTitle">Free brush</div><div class="miniCaptureGrid"><button data-brush-capture="square" type="button" title="Capture square" aria-label="Capture square">□</button><button data-brush-capture="circle" type="button" title="Capture circle" aria-label="Capture circle">○</button><button data-brush-capture="polygon" type="button" title="Capture free-form multi-edge shape" aria-label="Capture free-form multi-edge shape">${freeformIcon}</button><button data-brush-capture="trace" type="button" title="Capture traced freeform lasso" aria-label="Capture traced freeform lasso">〰</button></div><div id="circuitFreeBrushDims">Standard pixel brush</div><div class="raceSetupActions"><button id="circuitFreeBrushSave" type="button" disabled>Save brush</button><button id="circuitFreeBrushLoad" type="button">Load brush</button></div><input id="circuitFreeBrushLoadInput" type="file" accept=".ihbrush,application/octet-stream" hidden><div id="circuitCustomBrushTransforms"><button data-custom-brush-rotate="90" type="button" disabled title="Rotate brush 90 degrees clockwise">↻90°</button><button data-custom-brush-rotate="180" type="button" disabled title="Rotate brush 180 degrees">↻180°</button><button data-custom-brush-rotate="270" type="button" disabled title="Rotate brush 270 degrees clockwise">↻270°</button><button data-custom-brush-flip="h" type="button" disabled>Flip H</button><button data-custom-brush-flip="v" type="button" disabled>Flip V</button></div><div id="circuitFreeBrushState">Capture an area to create a reusable custom brush.</div>`;
+  const free=document.createElement('div');free.id='circuitFreeBrushTools';free.innerHTML=`<div class="toolGroupTitle">Brushes</div><div id="circuitBrushLibraryHeader"><span>Pre-made brushes (<span id="circuitBrushLibraryCount">0</span>)</span><span class="muted">drag edge to resize</span></div><div id="circuitBrushLibraryList" title="Drag the lower edge to resize the pre-made brush area"></div><div class="miniCaptureGrid"><button data-brush-capture="rectangle" type="button" title="Capture rectangle" aria-label="Capture rectangle">□</button><button data-brush-capture="ellipse" type="button" title="Capture ellipse" aria-label="Capture ellipse">○</button><button data-brush-capture="polygon" type="button" title="Capture free-form multi-edge shape" aria-label="Capture free-form multi-edge shape">${freeformIcon}</button><button data-brush-capture="trace" type="button" title="Capture traced freeform lasso" aria-label="Capture traced freeform lasso">〰</button></div><div id="circuitFreeBrushDims">Standard pixel brush</div><div class="raceSetupActions"><button id="circuitFreeBrushSave" type="button" disabled>Save brush</button><button id="circuitFreeBrushLoad" type="button">Load brush</button></div><input id="circuitFreeBrushLoadInput" type="file" accept=".ihbrush,application/octet-stream" hidden><div id="circuitCustomBrushTransforms"><button data-custom-brush-rotate="90" type="button" disabled title="Rotate current brush 90 degrees clockwise">↻90°</button><button data-custom-brush-rotate="180" type="button" disabled title="Rotate current brush 180 degrees">↻180°</button><button data-custom-brush-rotate="270" type="button" disabled title="Rotate current brush 270 degrees clockwise">↻270°</button><button data-custom-brush-flip="h" type="button" disabled>Flip H</button><button data-custom-brush-flip="v" type="button" disabled>Flip V</button></div><div id="circuitFreeBrushState">Choose a pre-made brush, capture one, or load an IHBR file.</div>`;
   oldRow.insertAdjacentElement('afterend',free);free.querySelectorAll('[data-brush-capture]').forEach(b=>b.addEventListener('click',()=>selectCapture(b.dataset.brushCapture)));
+  removeLegacyTemplateUi(controls);Library.refreshBuiltins();renderBrushLibrary();root.addEventListener?.('indyheat-brush-library-changed',renderBrushLibrary);
   free.querySelectorAll('[data-custom-brush-rotate]').forEach(b=>b.addEventListener('click',()=>rotateBrush(Number(b.dataset.customBrushRotate))));free.querySelectorAll('[data-custom-brush-flip]').forEach(b=>b.addEventListener('click',()=>flipBrush(b.dataset.customBrushFlip)));
   $('circuitFreeBrushSave')?.addEventListener('click',downloadBrush);$('circuitFreeBrushLoad')?.addEventListener('click',()=>$('circuitFreeBrushLoadInput')?.click());$('circuitFreeBrushLoadInput')?.addEventListener('change',async e=>{const f=e.target.files?.[0];if(f)await loadBrushFile(f);e.target.value='';});
 
-  const slider=$('circuitPreviewBrush'),sizeLabel=slider?.closest('label');if(sizeLabel&&!$('circuitMiniBrushSizeRow')){const row=document.createElement('div');row.id='circuitMiniBrushSizeRow';sizeLabel.parentNode.insertBefore(row,sizeLabel);row.appendChild(sizeLabel);const clear=document.createElement('button');clear.id='circuitCustomBrushClear';clear.type='button';clear.textContent='Clear custom';clear.disabled=true;clear.addEventListener('click',clearCustomBrush);row.appendChild(clear);}
+  const slider=$('circuitPreviewBrush'),sizeLabel=slider?.closest('label');if(sizeLabel&&!$('circuitMiniBrushSizeRow')){const row=document.createElement('div');row.id='circuitMiniBrushSizeRow';sizeLabel.parentNode.insertBefore(row,sizeLabel);row.appendChild(sizeLabel);const clear=document.createElement('button');clear.id='circuitCustomBrushClear';clear.type='button';clear.textContent='Clear brush';clear.disabled=true;clear.addEventListener('click',clearCustomBrush);row.appendChild(clear);}
 
-  const palette=$('circuitPreviewPalette');if(palette&&!$('circuitTransparencyControl')){const trans=document.createElement('div');trans.id='circuitTransparencyControl';trans.innerHTML=`<button id="circuitPreviewSetTransparent" type="button" title="Arm transparency selection; the next left-click on a palette swatch becomes transparent">Set transparent</button><span id="circuitPreviewTransparentReadout">Index <b id="circuitPreviewTransparentValue">–</b></span><span id="circuitPreviewTransparentSwatch" aria-hidden="true"></span>`;palette.insertAdjacentElement('beforebegin',trans);$('circuitPreviewSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));palette.addEventListener('click',palettePointerChoice,true);palette.addEventListener('contextmenu',palettePointerChoice,true);new MutationObserver(()=>queueMicrotask(syncTransparencyUi)).observe(palette,{childList:true});}
+  const palette=$('circuitPreviewPalette');if(palette&&!$('circuitTransparencyControl')){const trans=document.createElement('div');trans.id='circuitTransparencyControl';trans.innerHTML=`<button id="circuitPreviewSetTransparent" type="button" title="Set the editor brush-transparency index used by brush capture and right-click mask painting">Set transparent</button><span id="circuitPreviewTransparentReadout" title="Editor brush/mask transparency index; separate from game transparency">Index <b id="circuitPreviewTransparentValue">–</b></span><span id="circuitPreviewTransparentSwatch" aria-hidden="true"></span>`;palette.insertAdjacentElement('beforebegin',trans);$('circuitPreviewSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));palette.addEventListener('click',palettePointerChoice,true);palette.addEventListener('contextmenu',palettePointerChoice,true);new MutationObserver(()=>queueMicrotask(syncTransparencyUi)).observe(palette,{childList:true});}
 
-  controls.querySelectorAll('[data-preview-template]').forEach(b=>b.addEventListener('click',()=>{externalTemplate=true;captureMode=null;gesture=null;hover=null;syncUi();setTimeout(syncTransparencyUi,0);}));
   for(const id of ['circuitPreviewBlank','circuitPreviewFromBackdrop','circuitPreviewRevert'])$(id)?.addEventListener('click',()=>{clearMiniUndo();gesture=null;hover=null;setTimeout(()=>{syncTransparencyUi();syncUi();},0);},true);
   $('circuitPreviewUndo')?.addEventListener('click',e=>{const q=currentPreview(),st=q?stackFor(q):[];if(st.length){e.preventDefault();e.stopImmediatePropagation();undoMini();}},true);
   slider?.addEventListener('input',()=>syncUi());
 
   canvas.addEventListener('pointerdown',pointerDown,true);canvas.addEventListener('pointermove',pointerMove,true);canvas.addEventListener('pointerup',pointerUp,true);canvas.addEventListener('pointercancel',pointerCancel,true);
-  canvas.addEventListener('pointerleave',e=>{if(!gesture&&!externalTemplate){hover=null;redraw();}},true);canvas.addEventListener('contextmenu',e=>{if(!externalTemplate){e.preventDefault();e.stopImmediatePropagation();}},true);
+  canvas.addEventListener('pointerleave',e=>{if(!gesture){hover=null;redraw();}},true);canvas.addEventListener('contextmenu',e=>{e.preventDefault();e.stopImmediatePropagation();},true);
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&miniActive()&&gesture){e.preventDefault();cancelGesture();setState('Shape cancelled.');}});
-  $('trackSelect')?.addEventListener('change',()=>{gesture=null;hover=null;captureMode=null;externalTemplate=false;transparencyPickArmed=false;safeUnderlyingPick();syncUi();setState(brush?`Custom brush ${brush.width}×${brush.height} retained; Pencil selected.`:'Standard pixel brush.');setTimeout(syncTransparencyUi,0);});
+  $('trackSelect')?.addEventListener('change',()=>{gesture=null;hover=null;captureMode=null;transparencyPickArmed=false;safeUnderlyingPick();syncUi();setState(brush?`Brush ${brush.width}×${brush.height} retained; Pencil selected.`:'Standard pixel brush.');setTimeout(syncTransparencyUi,0);});
   selectDrawTool('freehand');syncTransparencyUi();return true;
 }
 function boot(){if(installUi())return;let tries=0;const timer=setInterval(()=>{if(installUi()||++tries>200)clearInterval(timer);},50);}
