@@ -15,7 +15,7 @@
 
 const RACE_PALETTE_MAIN_OFFSET = 0x5534; // decrunched retail main image
 const RACE_OBJECT_RESOURCE_IDS = Object.freeze([
-  0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F
+  0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,0x10,0x11
 ]);
 
 const RACE_OBJECT_ROLES = Object.freeze({
@@ -29,7 +29,9 @@ const RACE_OBJECT_ROLES = Object.freeze({
   0x0C:{name:'unresolved race-object bank',confidence:'unresolved'},
   0x0D:{name:'speedometer',confidence:'user-confirmed in-game identity; three instances shown low on race screen'},
   0x0E:{name:'speedometer / pit-status overlay',confidence:'user-confirmed association; blank/default-restoration role remains inferred'},
-  0x0F:{name:'flag man / starting gun',confidence:'established'}
+  0x0F:{name:'flag man / starting gun',confidence:'established'},
+  0x10:{name:'racing car bank A',confidence:'established; 44-frame five-plane retail bank'},
+  0x11:{name:'racing car bank B / horizontal mirror',confidence:'established; near-mirror companion to $10'}
 });
 
 function be16(bytes, offset){
@@ -200,3 +202,21 @@ const api={
 if(typeof module!=='undefined' && module.exports) module.exports=api;
 root.IndyHeatRaceGraphics=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
+
+/*
+ * v0.102 companion UI loader.
+ *
+ * Keep the decoder usable on its own (including Node/tests), while allowing the
+ * browser editor to attach the dedicated retail graphics/animation inspector
+ * without folding that UI into this binary decoder module.
+ */
+(function(){
+'use strict';
+if(typeof document==='undefined')return;
+if(document.querySelector('script[data-indyheat-race-graphics-inspector]'))return;
+const s=document.createElement('script');
+s.src='race-graphics-inspector.js?v=0102';
+s.dataset.indyheatRaceGraphicsInspector='1';
+s.onerror=()=>console.warn('Indy Heat retail graphics inspector could not be loaded.');
+document.head.appendChild(s);
+})();
