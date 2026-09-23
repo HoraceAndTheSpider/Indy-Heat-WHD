@@ -888,10 +888,10 @@ function hudHandle(p){
   return {x,y,actualX:ax,actualY:ay,clamped:x!==ax||y!==ay};
 }
 function safeHudAnchor(p){
-  return {
-    x:Math.max(12,Math.min(296,Number(p?.lapDisplayX)||0)),
-    y:Math.max(8,Math.min(194,Number(p?.lapDisplayY)||0))
-  };
+  let x=Math.round(Number(p?.lapDisplayX)||0),y=Math.round(Number(p?.lapDisplayY)||0);
+  if(x<0)x=20;else if(x>=TRACK_W)x=TRACK_W-20;
+  if(y<0)y=20;else if(y>=TRACK_H)y=TRACK_H-20;
+  return {x,y};
 }
 function renderHud(){
   if(!ensureHudCanvas())return;
@@ -902,6 +902,8 @@ function renderHud(){
 
   const q=presentation();
   if(!q)return;
+  const safe=safeHudAnchor(q.p);
+  if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY)){writeHud(safe.x,safe.y);return;}
   const p=q.p,S=c.width/TRACK_W;
   const alpha=Math.max(.25,Math.min(1,Number($('opacity')?.value||55)/100));
   ctx.save();
@@ -949,7 +951,8 @@ function renderHud(){
 function writeHud(x,y){
   const P=packageTools();
   if(!P)return;
-  x=Math.round(x);y=Math.round(y);
+  const safe=safeHudAnchor({lapDisplayX:x,lapDisplayY:y});
+  x=safe.x;y=safe.y;
   for(const m of authoringModels()){
     const r=recordForModel(m);
     if(r)P.writePresentation(m.main,r.offset,{lapDisplayX:x,lapDisplayY:y});
@@ -970,51 +973,19 @@ function ensureHudControls(){
       <div class="circuitAuxGrid">
         <label>HUD X <input id="circuitHudX" type="number"></label>
         <label>HUD Y <input id="circuitHudY" type="number"></label>
-      </div>
-      <div class="raceSetupActions">
-        <button id="circuitHudApply" type="button">Apply HUD anchor</button>
-        <button id="circuitHudBring" type="button">Bring into view</button>
-      </div>
-      <div class="muted" data-editor-ui-hud-help="1"></div>`;
+      </div>`;
     const grid=pane.querySelector('.raceSetupGrid');
     pane.insertBefore(controls,grid||pane.firstChild);
   }
-  let actions=controls.querySelector('.raceSetupActions');
-  if(!actions){
-    actions=document.createElement('div');
-    actions.className='raceSetupActions';
-    controls.appendChild(actions);
-  }
-  let bring=$('circuitHudBring');
-  if(!bring){
-    bring=document.createElement('button');
-    bring.id='circuitHudBring';bring.type='button';bring.textContent='Bring into view';
-    actions.appendChild(bring);
-  }
-  let help=controls.querySelector('[data-editor-ui-hud-help]');
-  if(!help){
-    const old=[...controls.querySelectorAll('.muted')].pop();
-    help=old||document.createElement('div');
-    help.classList.add('muted');
-    help.dataset.editorUiHudHelp='1';
-    if(!old)controls.appendChild(help);
-  }
-  help.textContent='Drag the HUD on the circuit, or edit HUD X/Y.';
-
-  const apply=$('circuitHudApply');
-  if(apply&&!apply.dataset.editorUiHudAction){
-    apply.dataset.editorUiHudAction='1';
-    apply.addEventListener('click',()=>writeHud(Number($('circuitHudX')?.value||0),Number($('circuitHudY')?.value||0)));
-  }
-  if(bring&&!bring.dataset.editorUiHudAction){
-    bring.dataset.editorUiHudAction='1';
-    bring.addEventListener('click',()=>{
-      const q=presentation();
-      if(!q)return;
-      const p=safeHudAnchor(q.p);
-      writeHud(p.x,p.y);
-    });
-  }
+  $('circuitHudApply')?.remove();
+  $('circuitHudBring')?.remove();
+  for(const row of controls.querySelectorAll('.raceSetupActions'))if(!row.children.length)row.remove();
+  for(const help of controls.querySelectorAll('[data-editor-ui-hud-help]'))help.remove();
+  for(const note of controls.querySelectorAll('.muted'))if(note.id!=='circuitRaceHudStatus')note.remove();
+  const x=$('circuitHudX'),y=$('circuitHudY');
+  const commit=()=>{if(!x||!y||x.value===''||y.value==='')return;const xv=Number(x.value),yv=Number(y.value);if(Number.isFinite(xv)&&Number.isFinite(yv))writeHud(xv,yv);};
+  for(const input of [x,y])if(input&&!input.dataset.editorUiHudInstant){input.dataset.editorUiHudInstant='1';input.addEventListener('input',commit);input.addEventListener('change',commit);}
+  const q=presentation();if(q){const safe=safeHudAnchor(q.p);if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY))writeHud(safe.x,safe.y);}
   return true;
 }
 function raceCanvasPoint(e){
@@ -1828,10 +1799,12 @@ function cleanRace(){
 
   for(const el of pane.querySelectorAll('.muted')){
     if(textContains(el,'Pit/service and presentation positions are the real race/pit fields'))el.remove();
-    else if(textContains(el,'Exported as the optional 18-byte name.bin package sidecar'))el.textContent='Displayed in Gasoline Alley.';
+    else if(textContains(el,'Exported as the optional 18-byte name.bin package sidecar'))el.remove();
+    else if(textContains(el,'Displayed in Gasoline Alley.'))el.remove();
+    else if(textContains(el,'Drag the HUD on the circuit, or edit HUD X/Y.'))el.remove();
   }
-  const help=pane.querySelector('[data-editor-ui-hud-help]');
-  if(help)help.textContent='Drag the HUD on the circuit, or edit HUD X/Y.';
+  for(const title of pane.querySelectorAll('.toolGroupTitle'))if(String(title.textContent||'').trim()==='Pit slot')title.remove();
+  pane.querySelector('[data-editor-ui-hud-help]')?.remove();
 
   moveDeveloperButton('raceExport','race','Race setup raw exports','Race setup .bin');
   moveDeveloperButton('raceExportAll','race','Race setup raw exports','All race setup .bins');
