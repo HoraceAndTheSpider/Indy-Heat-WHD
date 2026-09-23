@@ -83,6 +83,7 @@ The Wiki contains the canonical detail. In particular, do not restart:
 - driver/face graphics identity: **resources `$10/$11`**;
 - `$05` pit-crew frame-family layout;
 - `$08` male/female PIT-board frame-family layout;
+- the confirmed zero-based female-driver lookup `03,04,05,08,09,13,19,22,28,37,40,43` and live `+$1B` female presentation flag;
 - the Gasoline Alley presentation palette used for `$10/$11`;
 - previously proved MiniMap/name/runtime presentation hooks.
 
@@ -108,6 +109,23 @@ Editor documentation is deliberately separated and limited:
 
 Do not move game-data research into the editor pages merely because the editor consumes it.
 
+### Strict research/editor separation
+
+The reverse-engineering subject pages must contain **game/disassembly/data/runtime findings only**. Do not leak editor implementation detail into them merely because the editor uses the data. In particular, do not put any of the following on `Race Presentation and Graphics Resources.md` or another game-data page unless they are themselves evidence about the original game:
+
+- Brush Manager or IHBR file-format workflow;
+- editor brush filenames or catalogue metadata;
+- drawing/painting tools;
+- editor module ownership;
+- UI controls, buttons, folds or mode behaviour;
+- editor-only convenience transforms;
+- Auto Foreground implementation details;
+- implementation changelog/version prose.
+
+Put those items, sparingly, on `Editor and Track Package Workflow.md` or `Circuit Editor Operations.md`. Conversely, keep binary layouts, disassembly-derived selectors, resource identities, palettes, runtime addresses and original-game graphics mappings on the research pages rather than duplicating them in editor documentation.
+
+`Race Presentation and Graphics Resources.md` is specifically a **disassembly/graphics-resource reference**. Its purpose is to answer questions such as “which resource?”, “which frame?”, “which palette?”, “what binary layout?” and “what original-game selector chooses it?” — not “how does the editor expose it?”.
+
 ## One unresolved-work page only
 
 There must be **one and only one**:
@@ -130,7 +148,10 @@ When an item becomes settled:
 
 1. move/add the result to the appropriate research/data page;
 2. remove the resolved item from `Further Investigation.md`;
-3. preserve useful historical evidence where it explains the current architecture, but label superseded approaches clearly.
+3. update or replace any research image whose annotation has now been confirmed or disproved;
+4. preserve useful historical evidence where it explains the current architecture, but label superseded approaches clearly.
+
+A direct user visual/runtime confirmation is sufficient project evidence to settle a visual identity unless later source/runtime evidence contradicts it. Do not keep a confirmed item artificially open merely because the original game did not give the field a symbolic name.
 
 ## What a good research/data Wiki page contains
 
@@ -179,17 +200,20 @@ Wiki image assets should live under:
 wiki/images/
 ```
 
-Use generated contact sheets, palette references and frame-range diagrams when they reduce the need to re-extract/re-identify data later.
+Use generated contact sheets, palette references and frame-range diagrams when they reduce the need to re-extract/re-identify data later. **When the original graphics can be decoded, prefer an actual correctly coloured decoded contact sheet over a schematic frame-range diagram.** A schematic may supplement the decoded artwork, but should not be the only visual representation of a mapped graphics bank.
 
 For a generated graphics reference:
 
 - use the correct documented palette;
-- label resource IDs and frame/driver indices clearly;
-- distinguish canonical clean renders from annotated/hypothesis overlays;
+- render from the original decoded game data wherever possible, not from editor-derived artwork;
+- label resource IDs and zero-based frame/driver indices clearly;
+- use one authoritative image for a mapping where practical rather than retaining several stale variants;
+- distinguish settled annotations from hypotheses;
 - state any annotation legend in the page;
 - do not silently bake a hypothesis into an image title or label;
+- when the user visually confirms or rejects an annotation, update the canonical image and remove the superseded tentative annotation (for example, do not retain stale `F?` labels after the female-driver table has been confirmed);
 - preserve existing useful generated images instead of repeatedly regenerating them;
-- if a new render supersedes an incorrect one, replace/correct the Wiki reference during the next documentation pass.
+- if a new render supersedes an incorrect one, replace/correct the Wiki reference and remove the stale image during the next documentation pass.
 
 For Indy Heat specifically, do not render `$10/$11` with the race/circuit palette: they use the Gasoline Alley/presentation palette documented on `Race Presentation and Graphics Resources.md`.
 
