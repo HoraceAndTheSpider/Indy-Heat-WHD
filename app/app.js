@@ -727,6 +727,92 @@ function stepWaypointSequence(delta){
   input.value=String(next);
   applyWaypointEdit();
 }
+
+let perRouteSequenceSquash=false;
+let perRouteSequenceCleanCaptureInstalled=false;
+
+function routeLocalSequenceCompression(points){
+  const used=new Set((points||[]).map(p=>Number(p.progress)));
+  if(!used.size)return {map:new Map(),gaps:[],max:null};
+  if(!used.has(0))throw new Error('Per-route squash cannot compact a route which does not contain sequence 0.');
+  const max=Math.max(...used),map=new Map(),gaps=[];let shift=0;
+  for(let value=0;value<=max;value++){
+    if(!used.has(value)){gaps.push(value);shift++;continue;}
+    map.set(value,value-shift);
+  }
+  return {map,gaps,max};
+}
+function updatePerRouteSequenceSquashButton(){
+  const button=$('perRouteSequenceSquash');if(!button)return;
+  button.textContent=`Per-route sequence squash: ${perRouteSequenceSquash?'ON':'OFF'}`;
+  button.classList.toggle('active',perRouteSequenceSquash);
+  button.setAttribute('aria-pressed',String(perRouteSequenceSquash));
+  button.title=perRouteSequenceSquash
+    ?'Experimental: Clean route data will compact unused sequence values independently on Routes A, B and C. Click to return to cross-route-safe cleaning.'
+    :'Default: Clean route data removes a sequence value only when it is unused by Routes A, B and C together. Click to test independent per-route compaction.';
+}
+function runPerRouteSequenceSquashClean(){
+  const A=globalThis.IndyHeatWaypointAuthoring;
+  if(!A?.cleanRouteData){$('editStatus').textContent='ERROR: Waypoint route-clean tools are not ready.';return null;}
+  // First invoke the established cleaner. This creates the detached authoring
+  // model when required, rebuilds physical IDs/links and performs the safe
+  // cross-route compaction before the experimental route-local pass.
+  const initial=A.cleanRouteData();if(!initial)return null;
+  const routes=A.currentRoutes?.();
+  if(!Array.isArray(routes)||!routes.length){$('editStatus').textContent='ERROR: No editable waypoint routes are available.';return null;}
+
+  const routeResults=[];let changedTotal=0;
+  try{
+    // Validate all three routes before changing any sequence value, so a bad
+    // route cannot leave a partially applied experimental squash.
+    const plans=routes.map(set=>({set,plan:routeLocalSequenceCompression(set.points||[])}));
+    for(const {set,plan} of plans){
+      let changed=0;
+      for(const p of set.points||[]){
+        const next=plan.map.get(Number(p.progress));
+        if(next!=null&&next!==Number(p.progress)){p.progress=next;changed++;}
+      }
+      changedTotal+=changed;
+      routeResults.push({route:'ABC'[Number(set.index)]||String(set.index),gaps:plan.gaps.slice(),changed});
+    }
+  }catch(e){
+    $('editStatus').textContent='ERROR: '+e.message;return null;
+  }
+
+  // Run the established cleaner again so the changed sequence values are
+  // encoded back into the virtual waypoint records and all retained logical
+  // links are rebuilt from their target objects.
+  const final=A.cleanRouteData();if(!final)return null;
+  const details=routeResults.map(r=>{
+    const gaps=r.gaps.length?r.gaps.join(', '):'none';
+    return `Route ${r.route}: gaps ${gaps}; ${r.changed} record${r.changed===1?'':'s'} changed`;
+  }).join(' · ');
+  $('editStatus').textContent=`Route data cleaned · experimental per-route sequence squash ON. ${details}. ${changedTotal} sequence record${changedTotal===1?'':'s'} changed in the route-local pass. Duplicates were preserved; physical IDs and resolved links were rebuilt.`;
+  return {mode:'per-route',routes:routeResults,changedSequences:changedTotal,initial,final};
+}
+function interceptPerRouteClean(e){
+  if(!perRouteSequenceSquash)return;
+  const clean=e.target?.closest?.('#cleanWaypointRoutes');if(!clean||clean.disabled)return;
+  e.preventDefault();e.stopImmediatePropagation();runPerRouteSequenceSquashClean();
+}
+function installPerRouteSequenceSquashUi(){
+  const clean=$('cleanWaypointRoutes');if(!clean)return false;
+  if(!$('perRouteSequenceSquash')){
+    const row=document.createElement('div');row.className='wpBtns';row.id='perRouteSequenceSquashRow';
+    const button=document.createElement('button');button.id='perRouteSequenceSquash';button.type='button';button.className='wpActionToggle';button.setAttribute('aria-pressed','false');
+    button.addEventListener('click',()=>{perRouteSequenceSquash=!perRouteSequenceSquash;updatePerRouteSequenceSquashButton();});
+    row.appendChild(button);clean.closest('.wpBtns')?.insertAdjacentElement('afterend',row);updatePerRouteSequenceSquashButton();
+  }
+  if(!perRouteSequenceCleanCaptureInstalled){
+    perRouteSequenceCleanCaptureInstalled=true;document.addEventListener('click',interceptPerRouteClean,true);
+  }
+  return true;
+}
+function queuePerRouteSequenceSquashUi(){
+  if(installPerRouteSequenceSquashUi())return;
+  let tries=0;const timer=setInterval(()=>{if(installPerRouteSequenceSquashUi()||++tries>240)clearInterval(timer);},50);
+}
+
 function installWaypointInstantControls(){
   const input=$('editWpProgress');if(!input)return false;
   if(!$('waypointSequenceStepControls')){
@@ -835,5 +921,5 @@ async function preloadOnlineDisk(){
   }
 }
 
-installCircuitCompareUi();installLinkTargetPicker();installWaypointInstantControls();syncProjectionControls();resizeEditorCanvas();ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+installCircuitCompareUi();installLinkTargetPicker();installWaypointInstantControls();queuePerRouteSequenceSquashUi();syncProjectionControls();resizeEditorCanvas();ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
 preloadOnlineDisk();

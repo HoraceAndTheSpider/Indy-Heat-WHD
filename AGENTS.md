@@ -32,16 +32,20 @@ For a targeted task:
 9. If the user gives several small editor changes serially, complete each as a separate targeted task and keep momentum rather than re-auditing the project every time.
 
 When a targeted editor task names a mode, start with its canonical owner:
-- Foreground / Surface: `app/layer-editor.js`
+- Foreground / Surface base editing: `app/layer-editor.js`
+- Auto Foreground inference: `app/foreground-auto.js`
 - Waypoints: `app/app.js` and `app/waypoint-actions.js`
 - Recovery: `app/recovery-editor.js`
 - Race setup: `app/race-setup.js`
 - Backdrop: `app/track-backdrop.js`
 - MiniMap / Map / package: `app/circuit-package.js`
+- brush raster primitives: `app/brush-tools.js`
+- brush catalogue, IHBR metadata/folder discovery and shared brush placement integration: `app/brush-library.js`
+- Brush Manager UI: `app/brush-manager.js`
 - editor coordination / layout: `app/editor-ui.js`
 - top-level shell/version/script order: `app/index.html`
 
-Only widen beyond those files when the current code proves it is necessary.
+Do **not** use `app/brush-library.js` as a general editor catch-all. Mode-specific UI or analysis belongs with its owning module. Only widen beyond the canonical owner when the current code proves it is necessary.
 
 ## Continuity and source selection
 
@@ -53,17 +57,27 @@ Only widen beyond those files when the current code proves it is necessary.
 ## Editor versioning and file hygiene
 
 - Every HTML5 editor/app change increments the visible/internal editor version.
+- The editor remains a **0.x development product** until the user explicitly declares a release candidate or complete v1 release. After `v0.100`, use `v0.101`, `v0.102`, etc.; do not roll over to `v1.00`.
 - Version increments do **not** justify creating version-suffixed production files.
 - Update canonical production files in place. Add a new production file only when the feature has a genuinely independent responsibility.
 - Do not accumulate `*-fix-vNN.js`, `*-patch-vNN.js` or equivalent corrective layers.
 - Do not reorganise the app during a targeted task unless the user explicitly asks for cleanup.
 
+## Brush architecture
+
+- User-supplied catalogue brushes live as `.ihbrush` files under `app/brushes/`; do not embed their raster payloads in JavaScript.
+- IHBR v1 remains readable. IHBR v2 carries UTF-8 JSON catalogue metadata with the brush raster.
+- Brush metadata may define name/ID, category, target, tags, accepted tools, preferred drawing form, recolourability, fixed placement, optional Foreground placement/mask information and optional Surface placement/default class/data.
+- `app/brush-library.js` owns catalogue/format/folder-loading and placement integration. `app/brush-manager.js` owns the manager page and metadata editing.
+- `app/foreground-auto.js` owns Auto Foreground analysis and must remain independent of the brush catalogue.
+- Special Functions remain a separate procedural-drawing catalogue; do not conflate them with ordinary raster brushes.
+
 ## Editor deliverables
 
-- Deliver **only complete changed existing app files**, at their repository-relative paths, suitable for overwriting the user's local files.
+- Deliver **only complete changed existing app files**, at their repository-relative paths, suitable for overwriting the user's local files, plus genuinely new production modules where required.
 - Do not provide partial snippets, patches or apply scripts as the primary deliverable.
 - Do not package the whole `app/` directory for a small change.
-- A ZIP is optional convenience only. If used, it contains only the complete changed files and preserves repository-relative paths.
+- A ZIP is optional convenience only. If used, it contains only the complete changed/new files and preserves repository-relative paths.
 - Do not create multiple equivalent ZIPs or duplicate URL-encoded filenames.
 - Do not include Node test/helper files unless the user explicitly asks.
 - Do not ask the user to run development tests unless requested. The user normally tests the editor directly in the browser.

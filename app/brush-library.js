@@ -1,16 +1,27 @@
 (function(root){
 'use strict';
 
-/* Shared brush catalogue + Special Functions framework — v0.98.
+/* Shared brush catalogue + Special Functions framework — v0.101.
  *
- * Brush catalogue metadata remains intentionally separate from IHBR v1.
- * Special Functions are a separate procedural-drawing catalogue. In v0.98
- * they are framework/placeholders only: the Backdrop UI can browse and inspect
- * them, but selecting one does not alter canvas drawing or write any layer.
+ * IHBR v2 carries catalogue metadata with the raster; IHBR v1 remains readable.
+ * Brush Manager UI lives in brush-manager.js. Auto Foreground lives in
+ * foreground-auto.js. This file owns the shared catalogue/metadata, folder
+ * discovery, brush-placement integration and Special Functions registry.
+ *
+ * Special Functions remain framework/placeholders in v0.101: the Backdrop UI
+ * can browse and inspect them, but selecting one does not alter canvas drawing
+ * or write any layer.
  */
-const VERSION='0.98';
-const EDITOR_VERSION='0.98';
+const VERSION='0.101';
+const EDITOR_VERSION='0.101';
 const entries=new Map();
+const COMPANION_BASE_URL=(typeof document!=='undefined'&&document.currentScript?.src)?new URL('.',document.currentScript.src).href:null;
+function loadCompanionModule(filename,globalName){
+  if(typeof document==='undefined'||(globalName&&root[globalName]))return false;
+  if(document.querySelector(`script[data-indyheat-companion="${filename}"],script[src*="/${filename}"],script[src$="${filename}"]`))return true;
+  const script=document.createElement('script'),url=new URL(filename,COMPANION_BASE_URL||document.baseURI);url.searchParams.set('v','0101');
+  script.src=url.href;script.dataset.indyheatCompanion=filename;script.defer=true;document.head.appendChild(script);return true;
+}
 
 function clonePixels(pixels){return pixels instanceof Uint8Array?pixels.slice():Uint8Array.from(pixels||[]);}
 function cloneBrush(brush){
@@ -28,7 +39,11 @@ function normalisePlacement(placement){
     foreground=Object.freeze({
       mode:String(q.mode||'brush-mask'),
       value:q.value==null?1:(Number(q.value)?1:0),
-      defaultEnabled:q.defaultEnabled!==false
+      defaultEnabled:q.defaultEnabled!==false,
+      // Optional future/custom footprint payload. The current placement engine
+      // uses the visible brush footprint unless a later specialised handler
+      // consumes this data, but Brush Manager must preserve it losslessly.
+      mask:q.mask==null?null:Object.freeze(jsonClone(q.mask)||{})
     });
   }
   if(p.surface){
@@ -36,7 +51,10 @@ function normalisePlacement(placement){
     surface=Object.freeze({
       mode:String(q.mode||'brush-footprint'),
       class:Number.isInteger(cls)&&cls>=0&&cls<=3?cls:0,
-      defaultEnabled:q.defaultEnabled!==false
+      defaultEnabled:q.defaultEnabled!==false,
+      // Optional per-brush Surface payload retained for future specialised
+      // placement; class remains the default when no payload is consumed.
+      data:q.data==null?null:Object.freeze(jsonClone(q.data)||{})
     });
   }
   if(p.position){
@@ -50,17 +68,34 @@ function normalisePlacement(placement){
   }
   return Object.freeze({foreground,surface,position});
 }
+function jsonClone(value){
+  if(value==null)return value;
+  try{return JSON.parse(JSON.stringify(value));}catch(_e){return null;}
+}
 function register(entry){
-  const id=String(entry?.id||entry?.key||'').trim();if(!id)throw new Error('Brush catalogue ID is required.');
-  const target=normaliseTarget(entry.target),source=String(entry.source||'session').trim()||'session';
-  const brush=cloneBrush(entry.brush||entry);
+  const rawBrush=entry.brush||entry,rawMeta=entry.metadata??rawBrush?.metadata??{};
+  const metadata=(rawMeta&&typeof rawMeta==='object'&&!Array.isArray(rawMeta))?(jsonClone(rawMeta)||{}):{};
+  const id=String(entry?.id||metadata.id||entry?.key||'').trim();if(!id)throw new Error('Brush catalogue ID is required.');
+  const target=normaliseTarget(entry.target||metadata.target||'backdrop'),source=String(entry.source||'session').trim()||'session';
+  const brush=cloneBrush({...rawBrush,metadata});
+  const allowedRaw=entry.allowedTools!==undefined?entry.allowedTools:metadata.allowedTools;
+  const actionsRaw=entry.actions!==undefined?entry.actions:metadata.actions;
+  const placementRaw=entry.placement!==undefined?entry.placement:metadata.placement;
+  const preferredTool=String(entry.preferredTool??metadata.preferredTool??'').trim()||null;
   const item=Object.freeze({
-    id,name:String(entry.name||brush.name||id),target,source,
-    tags:Object.freeze(Array.from(entry.tags||[]).map(String)),
-    allowedTools:entry.allowedTools==null?null:Object.freeze(Array.from(entry.allowedTools).map(String)),
-    actions:Object.freeze(Array.from(entry.actions||[])),
-    placement:normalisePlacement(entry.placement),
-    brush:Object.freeze({...brush,pixels:brush.pixels})
+    id,name:String(entry.name||metadata.name||brush.name||id),
+    category:String(entry.category||metadata.category||'Other').trim()||'Other',
+    target,source,
+    fileName:String(entry.fileName||metadata.fileName||'').trim()||null,
+    sourcePath:String(entry.sourcePath||'').trim()||null,
+    tags:Object.freeze(Array.from(entry.tags??metadata.tags??[]).map(String)),
+    allowedTools:allowedRaw==null?null:Object.freeze(Array.from(allowedRaw).map(String)),
+    preferredTool,
+    recolourable:entry.recolourable!=null?!!entry.recolourable:(metadata.recolourable==null?null:!!metadata.recolourable),
+    actions:Object.freeze(Array.from(actionsRaw||[])),
+    placement:normalisePlacement(placementRaw),
+    metadata:Object.freeze(metadata),
+    brush:Object.freeze({...brush,pixels:brush.pixels,metadata:Object.freeze(metadata)})
   });
   entries.set(id,item);return item;
 }
@@ -71,24 +106,221 @@ function list({target=null,source=null}={}){
   const t=target==null?null:normaliseTarget(target),s=source==null?null:String(source);
   return [...entries.values()].filter(e=>(t==null||e.target===t)&&(s==null||e.source===s));
 }
-function materialise(idOrEntry){const entry=typeof idOrEntry==='string'?get(idOrEntry):idOrEntry;if(!entry)return null;const out=cloneBrush(entry.brush);rememberActiveBrush(out,entry.target);return out;}
+function materialise(idOrEntry){const entry=typeof idOrEntry==='string'?get(idOrEntry):idOrEntry;if(!entry)return null;const out=cloneBrush({...entry.brush,metadata:jsonClone(entry.metadata)||{}});rememberActiveBrush(out,entry.target,entry);return out;}
 function notify(){if(typeof root.dispatchEvent==='function'&&typeof CustomEvent!=='undefined')root.dispatchEvent(new CustomEvent('indyheat-brush-library-changed'));}
 
-function decodeEmbeddedPixels(base64){
-  if(typeof atob==='function'){
-    const raw=atob(base64),out=new Uint8Array(raw.length);
-    for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i)&255;
-    return out;
-  }
-  if(typeof Buffer!=='undefined')return Uint8Array.from(Buffer.from(base64,'base64'));
-  throw new Error('No base64 decoder is available for built-in brush data.');
+
+const IHBR_V2=2,IHBR_METADATA_FLAG=1,IHBR_HEADER_SIZE=20;
+const BUNDLED_BRUSH_FILENAMES=Object.freeze([
+  'LapTower.ihbrush','HUD_Red.ihbrush','HUD_White.ihbrush','HUD_Blue.ihbrush'
+]);
+const brushFolderState={loaded:0,failed:0,lastMessage:'Not scanned yet.',urls:[]};
+let localBrushDirectoryHandle=null;
+
+function utf8Encode(text){
+  if(typeof TextEncoder!=='undefined')return new TextEncoder().encode(String(text));
+  const s=unescape(encodeURIComponent(String(text))),out=new Uint8Array(s.length);for(let i=0;i<s.length;i++)out[i]=s.charCodeAt(i);return out;
 }
-const LAP_TOWER_PIXELS_B64='Hx8fHx8fHx8fHx8eHh4eHh4eHh4eFB8fHx8fHx8fHx8fHx8fHx8fHx4eHh4eHh4eHh4UCh8fHx8fHx8fHx8fHx8fHx8fBAQEBAQEBAQEBAQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHx8fHx8fHx8fBAEBAQEBAQEBAQQKCh8fHx8fHx8fHxQeHh4eHh4eBAEBAQEBAQEBAQQKHh4eHh4eHh4UHx4eHh4eHh4eBAEBAQEBAQEBAQQeHh4eHh4eHhQKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBBQYFAQEGAQEBBQYFAQYGBQEFBgYBBAoKAQEBAQEBBgEGAQEGAQEBBgEGAQYBBgEGAQEBBAoKAQEBAQEBBgYGAQEGAQEBBgYGAQYGBQEFBgUBBAoKAQEBAQEBBgEGAQEGAQEBBgEGAQYBAQEBAQYBBAoKAQEBAQEBBQYFAQEGBgYBBgEGAQYBAQEGBgUBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoKAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBAoUAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBBQf';
+function utf8Decode(bytes){
+  if(typeof TextDecoder!=='undefined')return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+  let s='';for(const b of bytes)s+=String.fromCharCode(b);return decodeURIComponent(escape(s));
+}
+function cleanBrushMetadata(metadata){
+  if(!metadata||typeof metadata!=='object'||Array.isArray(metadata))return {};
+  const out=jsonClone(metadata)||{};
+  out.schema='indyheat.brush';
+  out.schemaVersion=1;
+  return out;
+}
+function installBrushMetadataFormatSupport(){
+  const B=root.IndyHeatBrushTools;if(!B||B.__indyHeatMetadataV2)return !!B;
+  const baseDecode=typeof B.decodeBrushFile==='function'?B.decodeBrushFile.bind(B):null;
+  if(!baseDecode||typeof B.encodeBrushFile!=='function')return false;
+  B.decodeBrushFile=function(bytes){
+    if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes);
+    if(bytes.length<IHBR_HEADER_SIZE)throw new Error('Brush file is shorter than the IHBR header.');
+    const magic=String.fromCharCode(bytes[0],bytes[1],bytes[2],bytes[3]);
+    if(magic!=='IHBR')throw new Error('Not an Indy Heat brush file (IHBR).');
+    const dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),version=dv.getUint16(4,false);
+    if(version===1){const brush=baseDecode(bytes);brush.metadata={};return brush;}
+    if(version!==IHBR_V2)throw new Error(`Unsupported IHBR brush version ${version}.`);
+    const flags=dv.getUint16(6,false);if(flags&~IHBR_METADATA_FLAG)throw new Error(`Unsupported IHBR v2 brush flags $${flags.toString(16).toUpperCase()}.`);
+    const width=dv.getUint16(8,false),height=dv.getUint16(10,false),hotspotX=dv.getUint16(12,false),hotspotY=dv.getUint16(14,false),transparent=bytes[16],paletteSize=bytes[17]||256,metadataLength=dv.getUint16(18,false);
+    if(!width||!height)throw new Error('Brush dimensions must be non-zero.');
+    if(hotspotX>=width||hotspotY>=height)throw new Error('Brush hotspot lies outside the brush.');
+    if(transparent>=paletteSize)throw new Error('Brush transparency index lies outside its palette.');
+    const pixelLength=width*height,expected=IHBR_HEADER_SIZE+pixelLength+metadataLength;
+    if(bytes.length!==expected)throw new Error(`IHBR v2 brush size mismatch: expected ${expected} bytes, got ${bytes.length}.`);
+    const pixels=bytes.slice(IHBR_HEADER_SIZE,IHBR_HEADER_SIZE+pixelLength);let visible=0;
+    for(const v of pixels){if(v>=paletteSize)throw new Error(`Brush pixel index ${v} lies outside its ${paletteSize}-colour palette.`);if(v!==transparent)visible++;}
+    if(!visible)throw new Error('Brush contains no visible pixels.');
+    let metadata={};
+    if(flags&IHBR_METADATA_FLAG){
+      if(!metadataLength)throw new Error('IHBR v2 metadata flag is set but metadata is empty.');
+      try{metadata=JSON.parse(utf8Decode(bytes.slice(IHBR_HEADER_SIZE+pixelLength)));}catch(err){throw new Error(`IHBR v2 metadata JSON is invalid: ${err.message}`);}
+      if(!metadata||typeof metadata!=='object'||Array.isArray(metadata))throw new Error('IHBR v2 metadata must be a JSON object.');
+    }else if(metadataLength)throw new Error('IHBR v2 contains metadata bytes without the metadata flag.');
+    return {key:'loaded_brush',name:String(metadata.name||'Loaded brush'),width,height,hotspotX,hotspotY,transparent,paletteSize,pixels,visiblePixels:visible,fileVersion:version,metadata:cleanBrushMetadata(metadata)};
+  };
+  B.encodeBrushFile=function(brush,{paletteSize=brush?.paletteSize??32,metadata=brush?.metadata??null}={}){
+    if(!brush?.pixels||brush.pixels.length!==brush.width*brush.height)throw new Error('Captured brush is invalid.');
+    const width=Number(brush.width),height=Number(brush.height),hotspotX=Number(brush.hotspotX),hotspotY=Number(brush.hotspotY),transparent=Number(brush.transparent);
+    if(!Number.isInteger(width)||width<1||width>65535||!Number.isInteger(height)||height<1||height>65535)throw new Error('Brush dimensions are outside IHBR v2 range.');
+    if(!Number.isInteger(hotspotX)||hotspotX<0||hotspotX>=width||!Number.isInteger(hotspotY)||hotspotY<0||hotspotY>=height)throw new Error('Brush hotspot is outside the brush.');
+    paletteSize=Number(paletteSize);if(!Number.isInteger(paletteSize)||paletteSize<1||paletteSize>256)throw new Error('Brush palette size must be 1..256.');
+    if(!Number.isInteger(transparent)||transparent<0||transparent>=paletteSize)throw new Error('Brush transparency index is outside its palette.');
+    for(const v of brush.pixels)if(Number(v)<0||Number(v)>=paletteSize)throw new Error(`Brush pixel index ${Number(v)} is outside the ${paletteSize}-colour palette.`);
+    const clean=cleanBrushMetadata(metadata),hasMetadata=Object.keys(clean).length>2||metadata!=null;
+    const metadataBytes=hasMetadata?utf8Encode(JSON.stringify(clean)):new Uint8Array(0);
+    if(metadataBytes.length>65535)throw new Error(`IHBR v2 metadata is too large (${metadataBytes.length} bytes; maximum 65535).`);
+    const out=new Uint8Array(IHBR_HEADER_SIZE+width*height+metadataBytes.length),dv=new DataView(out.buffer);
+    out.set([73,72,66,82],0);dv.setUint16(4,IHBR_V2,false);dv.setUint16(6,hasMetadata?IHBR_METADATA_FLAG:0,false);
+    dv.setUint16(8,width,false);dv.setUint16(10,height,false);dv.setUint16(12,hotspotX,false);dv.setUint16(14,hotspotY,false);
+    out[16]=transparent;out[17]=paletteSize===256?0:paletteSize;dv.setUint16(18,metadataBytes.length,false);
+    out.set(brush.pixels,IHBR_HEADER_SIZE);out.set(metadataBytes,IHBR_HEADER_SIZE+width*height);return out;
+  };
+  B.BRUSH_VERSION=IHBR_V2;B.BRUSH_METADATA_SCHEMA_VERSION=1;B.__indyHeatMetadataV2=true;
+  return true;
+}
+function filenameLabel(filename){
+  return String(filename||'Brush').replace(/\.ihbrush$/i,'').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim();
+}
+function entryMetadata(entry){
+  const m={
+    schema:'indyheat.brush',schemaVersion:1,id:entry.id,name:entry.name,category:entry.category,target:entry.target,
+    tags:[...entry.tags],allowedTools:entry.allowedTools?[...entry.allowedTools]:null,preferredTool:entry.preferredTool||null,
+    recolourable:entry.recolourable,actions:[...entry.actions],placement:{}
+  };
+  if(entry.placement.foreground)m.placement.foreground={...entry.placement.foreground};
+  if(entry.placement.surface)m.placement.surface={...entry.placement.surface};
+  if(entry.placement.position)m.placement.position={...entry.placement.position};
+  if(!Object.keys(m.placement).length)delete m.placement;
+  return m;
+}
+function registerDecodedBrush(brush,filename,source='folder:auto',sourcePath=null){
+  const metadata=cleanBrushMetadata(brush.metadata||{}),name=String(metadata.name||filenameLabel(filename)),id=String(metadata.id||`folder:${String(filename).toLowerCase()}`);
+  const entry=register({
+    id,name,category:metadata.category||'Other',target:metadata.target||'backdrop',source,fileName:filename,sourcePath,
+    tags:metadata.tags||['folder'],allowedTools:metadata.allowedTools,preferredTool:metadata.preferredTool,
+    recolourable:metadata.recolourable,actions:metadata.actions||[],placement:metadata.placement,metadata,
+    brush:{...brush,key:metadata.key||id,name,metadata}
+  });
+  return entry;
+}
+async function loadBrushUrl(url,{source='folder:auto',filename=null}={}){
+  const response=await fetch(url,{cache:'no-store'});if(!response.ok)throw new Error(`${response.status} ${response.statusText}`);
+  const bytes=new Uint8Array(await response.arrayBuffer()),B=root.IndyHeatBrushTools;if(!B?.decodeBrushFile)throw new Error('Brush decoder unavailable.');
+  const brush=B.decodeBrushFile(bytes),name=filename||decodeURIComponent(String(url).split('/').pop().split('?')[0]);
+  return registerDecodedBrush(brush,name,source,String(url));
+}
+async function discoverDirectoryListing(folderUrl){
+  try{
+    const response=await fetch(folderUrl,{cache:'no-store'});if(!response.ok)return [];
+    const type=response.headers.get('content-type')||'';if(!/html|text/i.test(type))return [];
+    const html=await response.text(),doc=new DOMParser().parseFromString(html,'text/html'),seen=new Set(),out=[];
+    for(const a of doc.querySelectorAll('a[href]')){
+      const href=a.getAttribute('href');if(!href||!href.toLowerCase().split(/[?#]/)[0].endsWith('.ihbrush'))continue;
+      const url=new URL(href,folderUrl).href;if(seen.has(url))continue;seen.add(url);out.push(url);
+    }
+    return out;
+  }catch(_e){return [];}
+}
+async function discoverGithubBrushUrls(){
+  if(typeof fetch!=='function')return [];
+  try{
+    const response=await fetch('https://api.github.com/repos/HoraceAndTheSpider/Indy-Heat-WHD/contents/app/brushes?ref=master',{headers:{Accept:'application/vnd.github+json'},cache:'no-store'});
+    if(!response.ok)return [];
+    const data=await response.json();if(!Array.isArray(data))return [];
+    return data.filter(x=>x?.type==='file'&&/\.ihbrush$/i.test(x.name)&&x.download_url).map(x=>x.download_url);
+  }catch(_e){return [];}
+}
+async function refreshFolderBrushes(){
+  if(typeof document==='undefined'||typeof fetch!=='function')return 0;
+  removeSource('folder:auto');
+  const folderUrl=new URL('brushes/',document.baseURI).href,urls=[];
+  for(const url of await discoverDirectoryListing(folderUrl))if(!urls.includes(url))urls.push(url);
+  if(!urls.length&&location.protocol!=='file:')for(const url of await discoverGithubBrushUrls())if(!urls.includes(url))urls.push(url);
+  // Baseline fallbacks guarantee the shipped objects still load when a host
+  // does not expose a directory index and GitHub discovery is unavailable.
+  if(!urls.length&&location.protocol!=='file:')for(const name of BUNDLED_BRUSH_FILENAMES)urls.push(new URL(`brushes/${name}`,document.baseURI).href);
+  let loaded=0,failed=0;
+  for(const url of urls){
+    try{await loadBrushUrl(url,{source:'folder:auto'});loaded++;}catch(_e){failed++;}
+  }
+  brushFolderState.loaded=loaded;brushFolderState.failed=failed;brushFolderState.urls=urls.slice();
+  brushFolderState.lastMessage=location.protocol==='file:'&&loaded===0
+    ?'Direct file mode cannot enumerate sibling folders without browser permission. Use “Scan local brushes folder”.'
+    :`Loaded ${loaded} brush file${loaded===1?'':'s'} from brushes/${failed?` · ${failed} failed`:''}.`;
+  notify();
+  return loaded;
+}
+async function registerLocalBrushFiles(files,source='folder:local'){
+  const B=root.IndyHeatBrushTools;if(!B?.decodeBrushFile)return 0;
+  removeSource(source);let loaded=0,failed=0;
+  for(const file of Array.from(files||[])){
+    if(!/\.ihbrush$/i.test(file.name))continue;
+    try{registerDecodedBrush(B.decodeBrushFile(new Uint8Array(await file.arrayBuffer())),file.name,source,file.webkitRelativePath||file.name);loaded++;}catch(_e){failed++;}
+  }
+  brushFolderState.loaded=loaded;brushFolderState.failed=failed;brushFolderState.lastMessage=`Loaded ${loaded} local brush file${loaded===1?'':'s'}${failed?` · ${failed} failed`:''}.`;
+  notify();return loaded;
+}
+async function scanLocalBrushFolder(){
+  if(typeof root.showDirectoryPicker==='function'){
+    try{
+      const handle=await root.showDirectoryPicker({mode:'readwrite'});localBrushDirectoryHandle=handle;const files=[];
+      for await(const item of handle.values())if(item.kind==='file'&&/\.ihbrush$/i.test(item.name))files.push(await item.getFile());
+      return registerLocalBrushFiles(files,'folder:local');
+    }catch(err){
+      if(err?.name!=='AbortError'){
+        brushFolderState.lastMessage=`Local folder scan failed: ${err.message}`;
+        notify();
+      }
+      return 0;
+    }
+  }
+  brushFolderState.lastMessage='This browser cannot open a writable folder directly; use the Brush Manager folder-file fallback.';
+  notify();
+  return -1;
+}
 
-const HUD_RED_PIXELS_B64='GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHxgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgfHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8YGBgYGBgYGBgYGBgYHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8YHx4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHR0dHR0dHR0dHh4eAQEBAQEBAR4eHh0dHR0dHR0dHR4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHx8eHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4eHx8eAB4dHR0eHgEBAQEBAQEBAQEBAQEeHh0dHR4AHh8fHh4cHBwcAQEBARwBHBwBHAEBAQEcARwcHBwcHBweHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dBgMAHR0eAQEBAQEBAQEBAQEBAQEBAQEeHR0GAwAdHx4cHBwcAQMDAwMBAwEBAwEDAwMDAQMBHBwcHBwcHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR4GHh0eAQEBAQEBAQEBAQEBAQEBAQEBAR4dHgYeHR8eHBwcHAEGAQEBAQYBAQYBBgEBAQEGARwcHBwcHBweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0dHR0eAQEBAQEBAQEBAQEBAQEBAQEBAQEBHh0dHR0fHhwcHBwBBwcHAQEHAQEHAQcHBwEBBwEcHBwcHBwcHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dHR0eAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEeHR0dHx4cHBwcAQMBARwBAwEBAwEDAQEBAQMBAQEcHBwcHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR0dHgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBHh0dHR8eHBwcHAEDARwcHAEDAwEBAwMDAwEDAwMDARwcHBweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0dHgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEeHR0fHhwcHBwcARwcHBwcAQEcHAEBAQEcAQEBARwcHBwcHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dHR4BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBHh0dHx4cHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0cHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR0eAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAR4dHR8eHB8BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEdHBweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0eAQEBAQEBAQEBAQ4BAQEBAQEBAQEBAQEBAQEBHh0fHhwfAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBHRwcHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dHgEBAQEBAQEBAQEODgEBAQEBAQEBAQEBAQEBAR4dHx4cHx8fHx8XHx8fHx8fFx8fHx8fHxcfHx8fHx0cHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR4BAQEBAQEBAQEBDg4OAQEBAQEBAQEBAQEBAQEeHR8eHBwBAQEBARwBHBwBHAEBARwcAQEBHBwcAQEcHBweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0eAQEBAQEBAQEBAQ4OAQEBAQEBAQEBAQEBAQEBHh0fHhwBAwMDAwMBAwEBAwEDAwMBAQMDAwEcAQMDARwcHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dHgEBAQEBAQEBAQEOAQEBAQEBAQEBAQEBAQEBAR4dHx4cHAEBBgEBAQYBAQYBBgEBBgEGAQEGAQYBAQYBHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR4BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEeHR8eHBwcAQcBHAEHAQEHAQcHBwEBBwcHAQEHAQEHARweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0eAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBHh0fHhwcHAEDARwBAwEBAwEDAQMBAQMBAQMBAwEBAwEcHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dHgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAR4dHx4cHBwBAwEcHAEDAwEBAwEBAwEDAwMBHAEDAwEcHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR0eAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAR4dHR8eHBwcHAEcHBwcAQEcHAEcHAEcAQEBHBwcAQEcHBweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0dHgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEeHR0fHhwdHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHRwcHh8fHhwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8dHR0eAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBHR0dHx4cHwEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAR0cHB4fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB4fHR4AHgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBHgAeHR8eHB8BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEdHBweHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx0GAwAeAQEBAQEBAQEBAQEBAQEBAQEBAQEBHgYDAB0fHhwfHx8fHxcfHx8fHx8XHx8fHx8fFx8fHx8fHRwcHh8fHx4cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBweHx8fHgYeHR4eHh4eHh4eHh4eHh4eHh4eHh4eHh0eBh4fHx8eHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHh8fBB8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fBA==';
-const HUD_WHITE_PIXELS_B64='GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAxgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMYGBgYGBgYGBgYGBgYAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMYBwYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBwcHBwcHBwcHBgYGAQEBAQEBAQYGBgcHBwcHBwcHBwYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGAxEGBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYGBwcGBgYHBwcGBgEBAQEBAQEBAQEBAQEGBgcHBwYGBgcHBgYFBQUFAQEBAQUBBQUBBQEBAQEFAQUFBQUFBQUGBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBgMGBwcGAQEBAQEBAQEBAQEBAQEBAQEGBwcGAwYHBwYFBQUFAQMDAwMBAwEBAwEDAwMDAQMBBQUFBQUFBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwYGBgcGAQEBAQEBAQEBAQEBAQEBAQEBAQYHBgYGBwcGBQUFBQEGAQEBAQYBAQYBBgEBAQEGAQUFBQUFBQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcHBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgcHBwcHBgUFBQUBBwcHAQEHAQEHAQcHBwEBBwEFBQUFBQUFBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEGBwcHBwYFBQUFAQMBAQUBAwEBAwEDAQEBAQMBAQEFBQUFBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwcHBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgcHBwcGBQUFBQEDAQUFBQEDAwEBAwMDAwEDAwMDAQUFBQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcHBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEGBwcHBgUFBQUFAQUFBQUFAQEFBQEBAQEFAQEBAQUFBQUFBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBwYBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgcHBwYFBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcFBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQYHBwcGBQcBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEHBQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgcHBgUHAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBwUFBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQYHBwYFBwcHBwcGBwcHBwcHBgcHBwcHBwYHBwcHBwcFBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwYBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEGBwcGBQUBAQEBAQUBBQUBBQEBAQUFAQEBBQUFAQEFBQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgcHBgUBAwMDAwMBAwEBAwEDAwMBAQMDAwEFAQMDAQUFBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQYHBwYFBQEBBgEBAQYBAQYBBgEBBgEGAQEGAQYBAQYBBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwYBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEGBwcGBQUFAQcBBQEHAQEHAQcHBwEBBwcHAQEHAQEHAQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgcHBgUFBQEDAQUBAwEBAwEDAQMBAQMBAQMBAwEBAwEFBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQYHBwYFBQUBAwEFBQEDAwEBAwEBAwEDAwMBBQEDAwEFBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQYHBwcGBQUFBQEFBQUFAQEFBQEFBQEFAQEBBQUFAQEFBQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcHBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEGBwcHBgUHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwUFBgMHBgUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcHBwcGAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEGBwcHBwYFBwEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQcFBQYDBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQYHBwYGBgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgYGBwcGBQcBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEHBQUGAwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcGAwYGAQEBAQEBAQEBAQEBAQEBAQEBAQEBBgYDBgcHBgUHBwcHBwYHBwcHBwcGBwcHBwcHBgcHBwcHBwUFBgMHBwYFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUGBwcHBgYGBwYGBgYGBgYGBgYGBgYGBgYGBgYGBgcGBgYHBwcGBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBgcDBAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBA==';
-const HUD_BLUE_PIXELS_B64='GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAYGBgYGBgYGBgYGBgYEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEA4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODhAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAYDw4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OAQEBAQEBAQ4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OEA8ODgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4ODw8OAA4NDQ0ODgEBAQEBAQEBAQEBAQEODg0NDQ4ADg8PDg4MDAwMAQEBAQwBDAwBDAEBAQEMAQwMDAwMDAwODhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NBgMADQ0OAQEBAQEBAQEBAQEBAQEBAQEODQ0GAwANDw4MDAwMAQMDAwMBAwEBAwEDAwMDAQMBDAwMDAwMDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ4GDg0OAQEBAQEBAQEBAQEBAQEBAQEBAQ4NDgYODQ8ODAwMDAEGAQEBAQYBAQYBBgEBAQEGAQwMDAwMDAwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0NDQ0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBDg0NDQ0PDgwMDAwBBwcHAQEHAQEHAQcHBwEBBwEMDAwMDAwMDhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NDQ0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEODQ0NDw4MDAwMAQMBAQwBAwEBAwEDAQEBAQMBAQEMDAwMDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ0NDgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDg0NDQ8ODAwMDAEDAQwMDAEDAwEBAwMDAwEDAwMDAQwMDAwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0NDgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEODQ0PDgwMDAwMAQwMDAwMAQEMDAEBAQEMAQEBAQwMDAwMDhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NDQ4BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDg0NDw4MDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0MDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ4NDQ8ODA8BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQENDAwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDg0PDgwPAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDQwMDhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NDgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ4NDw4MDw8PDw8XDw8PDw8PFw8PDw8PDxcPDw8PDw0MDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ4BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEODQ8ODAwBAQEBAQwBDAwBDAEBAQwMAQEBDAwMAQEMDAwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDg0PDgwBAwMDAwMBAwEBAwEDAwMBAQMDAwEMAQMDAQwMDhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NDgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ4NDw4MDAEBBgEBAQYBAQYBBgEBBgEGAQEGAQYBAQYBDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ4BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEODQ8ODAwMAQcBDAEHAQEHAQcHBwEBBwcHAQEHAQEHAQwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDg0PDgwMDAEDAQwBAwEBAwEDAQMBAQMBAQMBAwEBAwEMDhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NDgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ4NDw4MDAwBAwEMDAEDAwEBAwEBAwEDAwMBDAEDAwEMDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ4NDQ8ODAwMDAEMDAwMAQEMDAEMDAEMAQEBDAwMAQEMDAwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0NDgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEODQ0PDgwNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQwMDhAPDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8NDQ0OAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEODQ0NDw4MDwEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ0MDA4QDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4PDQ4ADgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBDgAODQ8ODA8BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQENDAwOEA8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw0GAwAOAQEBAQEBAQEBAQEBAQEBAQEBAQEBDgYDAA0PDgwPDw8PDxcPDw8PDw8XDw8PDw8PFw8PDw8PDQwMDhAPDw4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODw8PDgYODQ4ODg4ODg4ODg4ODg4ODg4ODg4ODg0OBg4PDw8ODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg8QBA8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PBA==';
-
+function brushFolderStatus(){
+  return Object.freeze({
+    loaded:brushFolderState.loaded,failed:brushFolderState.failed,lastMessage:brushFolderState.lastMessage,
+    urls:Object.freeze(brushFolderState.urls.slice()),
+    localWritable:!!localBrushDirectoryHandle,
+    supportsDirectoryPicker:typeof root.showDirectoryPicker==='function'
+  });
+}
+function updateEntryMetadata(id,metadata){
+  const entry=get(id);if(!entry)throw new Error(`Unknown brush catalogue entry ${id}.`);
+  const clean=cleanBrushMetadata(metadata),newId=String(clean.id||entry.id).trim()||entry.id;
+  if(newId!==entry.id&&get(newId))throw new Error(`A brush with ID “${newId}” already exists.`);
+  const updatedArgs={
+    id:newId,name:String(clean.name||entry.name),category:String(clean.category||entry.category||'Other'),
+    target:clean.target||entry.target,source:entry.source,fileName:entry.fileName,sourcePath:entry.sourcePath,
+    tags:clean.tags??[...entry.tags],allowedTools:clean.allowedTools!==undefined?clean.allowedTools:entry.allowedTools,
+    preferredTool:clean.preferredTool!==undefined?clean.preferredTool:entry.preferredTool,
+    recolourable:clean.recolourable!==undefined?clean.recolourable:entry.recolourable,
+    actions:clean.actions??[...entry.actions],placement:clean.placement??entry.placement,metadata:clean,
+    brush:{...entry.brush,name:String(clean.name||entry.name),metadata:clean}
+  };
+  if(newId!==entry.id)remove(entry.id);
+  const updated=register(updatedArgs);notify();return updated;
+}
+function encodeEntryFile(idOrEntry){
+  const entry=typeof idOrEntry==='string'?get(idOrEntry):idOrEntry;if(!entry)throw new Error('Brush entry is unavailable.');
+  const B=root.IndyHeatBrushTools;if(!B?.encodeBrushFile)throw new Error('Brush encoder is unavailable.');
+  const metadata=entryMetadata(entry),bytes=B.encodeBrushFile({...entry.brush,metadata},{paletteSize:entry.brush.paletteSize||32,metadata});
+  const filename=entry.fileName||`${entry.id.replace(/[^a-z0-9_-]+/gi,'_')}.ihbrush`;
+  return {entry,metadata,bytes,filename};
+}
+async function writeEntryToLocalFolder(idOrEntry){
+  if(!localBrushDirectoryHandle)throw new Error('Choose a local brushes folder first.');
+  const out=encodeEntryFile(idOrEntry),handle=await localBrushDirectoryHandle.getFileHandle(out.filename,{create:true}),writable=await handle.createWritable();
+  await writable.write(out.bytes);await writable.close();
+  brushFolderState.lastMessage=`Saved ${out.filename} directly to the selected local brushes folder.`;
+  notify();return out.filename;
+}
 
 function refreshBuiltins(){
   let count=0;
@@ -96,73 +328,26 @@ function refreshBuiltins(){
   removeSource('builtin:minimap');
   if(Array.isArray(templates)){
     for(const t of templates)register({
-      id:`builtin:minimap:${t.key}`,name:t.name,target:'minimap',source:'builtin:minimap',tags:['builtin'],
-      allowedTools:null,actions:[],
+      id:`builtin:minimap:${t.key}`,name:t.name,category:'MiniMap templates',target:'minimap',source:'builtin:minimap',tags:['builtin'],
+      allowedTools:null,actions:[],metadata:{schema:'indyheat.brush',schemaVersion:1,id:`builtin:minimap:${t.key}`,name:t.name,category:'MiniMap templates',target:'minimap'},
       brush:{key:t.key,name:t.name,width:t.width,height:t.height,hotspotX:t.hotspotX,hotspotY:t.hotspotY,transparent:t.transparent,paletteSize:P.PRESENTATION_PALETTE_RGB?.length||32,pixels:clonePixels(t.pixels)}
     });
     count+=templates.length;
   }
-
+  // Backdrop objects are deliberately not embedded here. They are IHBR files
+  // under app/brushes/ and are discovered by refreshFolderBrushes().
   removeSource('builtin:backdrop');
-  register({
-    id:'builtin:backdrop:lap-tower',
-    name:'Lap Tower',
-    target:'backdrop',
-    source:'builtin:backdrop',
-    tags:['builtin','structure','simple-placement'],
-    allowedTools:['freehand'],
-    actions:[],
-    placement:{
-      foreground:{mode:'brush-mask',value:0,defaultEnabled:true}
-    },
-    brush:{
-      key:'lap-tower',name:'Lap Tower',width:30,height:61,hotspotX:14,hotspotY:30,
-      transparent:31,paletteSize:32,pixels:decodeEmbeddedPixels(LAP_TOWER_PIXELS_B64)
-    }
-  });
-  count++;
-
-  const fixedHudBrushes=[
-    {
-      id:'builtin:backdrop:hud-red',name:'HUD Red',key:'hud-red',
-      x:8,y:212,pixels:decodeEmbeddedPixels(HUD_RED_PIXELS_B64),
-      width:97,height:28,hotspotX:48,hotspotY:13,
-      transparent:24,paletteSize:32
-    },
-    {
-      id:'builtin:backdrop:hud-white',name:'HUD White',key:'hud-white',
-      x:112,y:212,pixels:decodeEmbeddedPixels(HUD_WHITE_PIXELS_B64),
-      width:97,height:28,hotspotX:48,hotspotY:13,
-      transparent:24,paletteSize:32
-    },
-    {
-      id:'builtin:backdrop:hud-blue',name:'HUD Blue',key:'hud-blue',
-      x:216,y:212,pixels:decodeEmbeddedPixels(HUD_BLUE_PIXELS_B64),
-      width:97,height:28,hotspotX:48,hotspotY:13,
-      transparent:24,paletteSize:32
-    }
-  ];
-  for(const h of fixedHudBrushes){
-    register({
-      id:h.id,name:h.name,target:'backdrop',source:'builtin:backdrop',
-      tags:['builtin','hud','fixed-placement','single-instance'],
-      allowedTools:null,actions:['place-fixed'],
-      placement:{position:{mode:'fixed',x:h.x,y:h.y,anchor:'top-left',singleInstance:true}},
-      brush:{
-        key:h.key,name:h.name,width:h.width,height:h.height,hotspotX:h.hotspotX,hotspotY:h.hotspotY,
-        transparent:h.transparent,paletteSize:h.paletteSize,pixels:h.pixels
-      }
-    });
-    count++;
-  }
   notify();
   return count;
 }
 
 const api={
-  VERSION,register,remove,removeSource,get,list,materialise,refreshBuiltins,placeFixed:placeFixedBackdropEntry
+  VERSION,register,remove,removeSource,get,list,materialise,refreshBuiltins,refreshFolderBrushes,scanLocalBrushFolder,
+  registerLocalBrushFiles,entryMetadata,brushFolderStatus,updateEntryMetadata,encodeEntryFile,writeEntryToLocalFolder,
+  placeFixed:placeFixedBackdropEntry
 };
 root.IndyHeatBrushLibrary=api;
+
 
 /* -------------------------------------------------------------------------
  * Special Functions registry
@@ -400,7 +585,7 @@ const editHistoryBySource=new Map(),redoHistoryBySource=new Map();
 let placementListenersInstalled=false,placementHooksInstalled=false;
 let arbitraryRotationPatched=false,magicCaptureMode=null,brushEnhancementListenersInstalled=false;
 let freeRotateArmed=null,freeRotateGesture=null,freeRotationSyntheticClick=null;
-const activeBrushMirror={backdrop:null,minimap:null};
+const activeBrushMirror={backdrop:null,minimap:null},activeBrushCatalogueEntry={backdrop:null,minimap:null};
 const CIRCUIT_BRUSH_COLOUR_GROUPS=Object.freeze({
   green:Object.freeze([24,25,26,27]),
   grey:Object.freeze([4,5,6,7]),
@@ -536,6 +721,10 @@ function selectPlacementEntry(id){
   placementEntryId=entry?.target==='backdrop'?entry.id:null;
   pendingPlacement=null;
   syncPlacementUi({resetDefaults:true});
+  if(entry?.preferredTool){
+    const button=document.querySelector(`[data-backdrop-draw-tool="${CSS.escape(entry.preferredTool)}"]`);
+    if(button&&!button.disabled)button.click();
+  }
 }
 function clearPlacementEntry(){
   placementEntryId=null;pendingPlacement=null;
@@ -1002,8 +1191,11 @@ function activateTemporaryTransformedBrush(mode,brush,name='Transformed brush'){
 }
 function circuitRecolourStatus(){
   const host=document.getElementById('backdropBrushRecolourDetected');
-  const brush=activeBrushMirror.backdrop;
+  const brush=activeBrushMirror.backdrop,entry=activeBrushCatalogueEntry.backdrop;
   if(!host)return;
+  const buttons=document.querySelectorAll('#backdropBrushRecolour [data-brush-recolour]');
+  if(entry?.recolourable===false){host.textContent='Disabled by Brush Manager';buttons.forEach(b=>b.disabled=true);return;}
+  buttons.forEach(b=>b.disabled=false);
   if(!brush){host.textContent='Detected: —';return;}
   try{
     const a=analyseCircuitBrushColours(brush);
@@ -1050,18 +1242,18 @@ function installCircuitBrushRecolourUi(){
   return true;
 }
 
-/* Future Brush Manager API: attach only after the recolour constants/functions
-   above are initialised. Keeping this below their declarations avoids the
-   startup temporal-dead-zone failure introduced in v0.96. */
+/* Public recolour API for Brush Manager and future catalogue consumers.
+   Attach only after these constants/functions are initialised; this ordering
+   also avoids the v0.96 startup temporal-dead-zone regression. */
 api.circuitColourGroups=CIRCUIT_BRUSH_COLOUR_GROUPS;
 api.analyseCircuitRecolour=analyseCircuitBrushColours;
 api.recolourCircuitBrush=recolourCircuitBrush;
 
-function rememberActiveBrush(brush,target=null){
+function rememberActiveBrush(brush,target=null,entry=null){
   if(!brush?.pixels)return null;
   const mode=target==='minimap'||target==='backdrop'?target:activeBrushMode();
   if(!mode)return null;
-  activeBrushMirror[mode]=cloneBrush(brush);
+  activeBrushMirror[mode]=cloneBrush(brush);activeBrushCatalogueEntry[mode]=entry||null;
   if(mode==='backdrop')queueMicrotask(circuitRecolourStatus);
   return activeBrushMirror[mode];
 }
@@ -1404,6 +1596,7 @@ function configureRotationButtons(mode,transforms,selector){
     },true);
   }
 }
+
 function configureSharedBrushUi(){
   const backdropCapture=document.querySelector('#backdropBrushControls .backdropCaptureGrid')||document.querySelector('#backdropPaintTools .backdropCaptureGrid');
   configureMagicButton('backdrop',backdropCapture);
@@ -1456,8 +1649,8 @@ function installBrushEnhancementListeners(){
       if(magicCaptureMode)setMagicCaptureArmed(magicCaptureMode,false);
       if(freeRotateArmed)cancelFreeRotation();
     }
-    if(target?.matches?.('#backdropBrushClear')){activeBrushMirror.backdrop=null;cancelFreeRotation();queueMicrotask(circuitRecolourStatus);}
-    if(target?.matches?.('#circuitCustomBrushClear')){activeBrushMirror.minimap=null;cancelFreeRotation();}
+    if(target?.matches?.('#backdropBrushClear')){activeBrushMirror.backdrop=null;activeBrushCatalogueEntry.backdrop=null;cancelFreeRotation();queueMicrotask(circuitRecolourStatus);}
+    if(target?.matches?.('#circuitCustomBrushClear')){activeBrushMirror.minimap=null;activeBrushCatalogueEntry.minimap=null;cancelFreeRotation();}
   },true);
   document.getElementById('trackSelect')?.addEventListener('change',()=>{
     if(magicCaptureMode)setMagicCaptureArmed(magicCaptureMode,false);
@@ -1635,6 +1828,7 @@ if(typeof root.addEventListener==='function'){
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 /* Install BrushTools wrappers now, before backdrop-brush-ui.js loads and
    destructures the shared functions. */
+installBrushMetadataFormatSupport();
 installArbitraryRotationSupport();
 installPlacementCommitHooks();
 if(typeof document!=='undefined'){
@@ -1654,7 +1848,7 @@ if(typeof document!=='undefined'){
   }):null;
   raceHudObserver?.observe(document.documentElement,{childList:true,subtree:true});
   installRaceHudInsertAnchorFix();
-  const boot=()=>{syncEditorVersion();refreshBuiltins();installRaceHudInsertAnchorFix();bootSpecialUi();};
+  const boot=()=>{syncEditorVersion();refreshBuiltins();loadCompanionModule('brush-manager.js','IndyHeatBrushManager');loadCompanionModule('foreground-auto.js','IndyHeatForegroundAuto');refreshFolderBrushes();installRaceHudInsertAnchorFix();bootSpecialUi();};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});else setTimeout(boot,0);
 }
 })(typeof globalThis!=='undefined'?globalThis:this);
