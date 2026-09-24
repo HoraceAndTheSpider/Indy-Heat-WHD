@@ -1,9 +1,9 @@
 (function(root){
 'use strict';
 
-/* Indy Heat authentic race-graphics overlay — v0.109. */
+/* Indy Heat authentic race-graphics overlay. */
 
-const VERSION='0.109';
+const VERSION=String(root.INDY_HEAT_EDITOR_VERSION||'');
 const RESOURCE_IDS=Object.freeze([0x38,0x05,0x08,0x0F]);
 const FPS=12;
 const PLAYER_MAPPING=Object.freeze([
@@ -18,11 +18,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatRaceGraphicsInspector=api;
 
 function syncVersion(){
-  root.INDY_HEAT_EDITOR_VERSION=VERSION;
-  if(typeof document==='undefined')return;
-  document.title=document.title.replace(/v\d+\.\d+/i,`v${VERSION}`);
-  const h=document.querySelector('#appIdentity h1')||document.querySelector('header h1');
-  if(h)h.textContent=h.textContent.replace(/v\d+\.\d+/i,`v${VERSION}`);
+  if(typeof root.IndyHeatSyncEditorIdentity==='function')root.IndyHeatSyncEditorIdentity();
 }
 syncVersion();
 if(typeof document==='undefined')return;

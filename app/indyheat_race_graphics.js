@@ -1,13 +1,12 @@
 (function(root){
 'use strict';
 
-// Indy Heat Amiga race/presentation graphics decoder — v0.104.
+// Indy Heat Amiga race/presentation graphics decoder.
 //
 // All artwork is decoded from the loaded retail Disk.1 model.  This module
 // deliberately keeps the established ordinary BOB decoder and adds the
 // separately encoded $38 racing-car bank.  Resource identities and selectors
-// follow the current project Wiki; do not infer semantics from older v0.102
-// labels.
+// follow the current project Wiki; do not infer semantics from older labels.
 
 const RACE_PALETTE_MAIN_OFFSET=0x5534;
 const CAR_RESOURCE_ID=0x38;
@@ -278,13 +277,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatRaceGraphics=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
 
-/* v0.105 companion UI loader. */
+/* Companion UI loader. */
 (function(){
 'use strict';
 if(typeof document==='undefined')return;
 if(document.querySelector('script[data-indyheat-race-graphics-inspector]'))return;
 const s=document.createElement('script');
-s.src='race-graphics-inspector.js?v=0105';
+s.src='race-graphics-inspector.js?v=0110';
 s.dataset.indyheatRaceGraphicsInspector='1';
 s.onerror=()=>console.warn('Indy Heat retail graphics inspector could not be loaded.');
 document.head.appendChild(s);

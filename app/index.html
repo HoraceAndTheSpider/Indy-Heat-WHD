@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor v0.76</title>
+<title>Indy Heat Amiga – Circuit Editor</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
@@ -35,7 +35,7 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 .playlistActions button,#playlistExport{padding:7px 10px}
 #playlistStatus{min-height:34px;white-space:pre-line;margin-top:7px}
 .playlistRuntimeNote{margin:8px 0 12px;padding:9px 10px;border-left:3px solid #5a6474;background:#12151a;line-height:1.4}
-/* v0.73 explicit shared viewport resize handle; v0.71 brush catalogue retained */
+/* Shared viewport resize handle and brush catalogue layout. */
 main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 #viewPrimaryRow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;margin:4px 0 8px}
 #viewPrimaryRow label{margin:0;white-space:nowrap}
@@ -64,10 +64,30 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 
 </head>
 <body>
-<script>globalThis.INDY_HEAT_EDITOR_VERSION="0.79";</script>
+<script>
+(() => {
+  'use strict';
+  const EDITOR_VERSION='0.110';
+  Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
+    configurable:false,
+    enumerable:true,
+    get:()=>EDITOR_VERSION,
+    set:()=>{}
+  });
+  const syncEditorIdentity=()=>{
+    document.title=`Indy Heat Amiga – Circuit Editor v${EDITOR_VERSION}`;
+    const h=document.querySelector('#appIdentity h1')||document.querySelector('header h1');
+    if(h)h.textContent=`Indy Heat Amiga — Circuit Editor v${EDITOR_VERSION}`;
+  };
+  globalThis.IndyHeatSyncEditorIdentity=syncEditorIdentity;
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',syncEditorIdentity,{once:true});
+  else syncEditorIdentity();
+  new MutationObserver(syncEditorIdentity).observe(document.documentElement,{subtree:true,childList:true,characterData:true});
+})();
+</script>
 <header>
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor v0.76</h1>
+    <h1>Indy Heat Amiga — Circuit Editor</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
@@ -85,14 +105,14 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
       The <b>1–20</b> range below applies only to the per-race <b>lap override</b>.
     </div>
 
-    <label class="inlineControl playlistFuture">Championship races
-      <input id="playlistRaceCount" type="range" min="1" max="99" step="1" value="11" disabled
-             title="Current WHDLoad runtime requires exactly 11 championship events">
+    <label class="inlineControl">Championship races
+      <input id="playlistRaceCount" type="range" min="1" max="99" step="1" value="11"
+             title="WHDLoad custom runtime supports 1–99 championship events">
       <output id="playlistRaceCountText" for="playlistRaceCount">11</output>
     </label>
     <div class="playlistRuntimeNote mini muted">
-      The IHPL header already contains an event-count word, but WHDLoad 1.3 test 30 currently requires exactly <b>11</b> races.
-      The control is deliberately visible but disabled so variable championship length can be enabled later without redesigning this editor.
+      IHPL v2 stores the championship event count directly. WHDLoad custom-track mode now accepts <b>1–99</b> races.
+      Changing the control adds or removes race rows; added rows continue the retail championship sequence until edited.
     </div>
 
     <div class="playlistActions">
@@ -296,7 +316,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="indyheat.js"></script>
 <script src="recovery-hook.js"></script>
 <script src="layer-tools.js?v=050"></script>
-<script src="indyheat_race_graphics.js"></script>
+<script src="indyheat_race_graphics.js?v=0110"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js?v=052"></script>
 <script src="waypoint-actions.js?v=069"></script>
@@ -314,7 +334,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="editor-ui.js?v=047"></script>
 
 <script>
-/* v0.67 — consolidate display controls and keep Waypoint edit controls mode-exclusive. */
+/* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
@@ -549,7 +569,8 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 const MAGIC='IHPL';
 const VERSION_V1=1;
 const VERSION_V2=2;
-const RUNTIME_COUNT=11;
+const RUNTIME_MIN_COUNT=1;
+const RUNTIME_MAX_COUNT=99;
 const INHERIT_LAPS=0xFFFF;
 const LAP_MIN=1;
 const LAP_MAX=20;
@@ -569,8 +590,7 @@ function wr16(b,o,v){v=Number(v)&0xffff;b[o]=(v>>>8)&255;b[o+1]=v&255;}
 function ascii4(b,o){return String.fromCharCode(b[o],b[o+1],b[o+2],b[o+3]);}
 
 function normaliseEntries(entries,{forRuntime=false}={}){
-  if(!Array.isArray(entries)||entries.length<1||entries.length>0xffff)throw new Error('Playlist must contain 1..65535 events');
-  if(forRuntime&&entries.length!==RUNTIME_COUNT)throw new Error(`Current WHDLoad runtime requires exactly ${RUNTIME_COUNT} championship events`);
+  if(!Array.isArray(entries)||entries.length<RUNTIME_MIN_COUNT||entries.length>RUNTIME_MAX_COUNT)throw new Error(`Playlist must contain ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT} events`);
   return entries.map((entry,i)=>{
     const circuit=Number(entry.circuit);
     const laps=entry.laps==null||entry.laps===INHERIT_LAPS||entry.laps==='inherit'?'inherit':Number(entry.laps);
@@ -600,6 +620,7 @@ function parse(bytes){
   if(ascii4(bytes,0)!==MAGIC)throw new Error('Playlist signature is not IHPL');
   const version=be16(bytes,4),count=be16(bytes,6);
   if(version!==VERSION_V1&&version!==VERSION_V2)throw new Error(`Unsupported playlist version ${version}`);
+  if(count<RUNTIME_MIN_COUNT||count>RUNTIME_MAX_COUNT)throw new Error(`Playlist event count ${count} is outside ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT}`);
   const expected=8+count*4;
   if(bytes.length!==expected)throw new Error(`Playlist size/count mismatch: header says ${count} events (${expected} bytes), file is ${bytes.length} bytes`);
   const entries=[];
@@ -625,13 +646,19 @@ function parse(bytes){
     }
     entries.push({circuit,laps});
   }
-  return {version,count,entries,runtimeCompatible:count===RUNTIME_COUNT};
+  return {version,count,entries,runtimeCompatible:true};
 }
 
 function defaultEntries(){return RETAIL_CHAMPIONSHIP.map(circuit=>({circuit,laps:'inherit'}));}
+function defaultEntryForIndex(i){return {circuit:RETAIL_CHAMPIONSHIP[i%RETAIL_CHAMPIONSHIP.length],laps:'inherit'};}
+function resizeEntries(count){
+  count=Math.max(RUNTIME_MIN_COUNT,Math.min(RUNTIME_MAX_COUNT,Math.trunc(Number(count)||RETAIL_CHAMPIONSHIP.length)));
+  if(count<entries.length)entries=entries.slice(0,count);
+  while(entries.length<count)entries.push(defaultEntryForIndex(entries.length));
+}
 
 root.IndyHeatPlaylistTools=Object.freeze({
-  MAGIC,VERSION_V1,VERSION_V2,RUNTIME_COUNT,INHERIT_LAPS,LAP_MIN,LAP_MAX,
+  MAGIC,VERSION_V1,VERSION_V2,RUNTIME_MIN_COUNT,RUNTIME_MAX_COUNT,INHERIT_LAPS,LAP_MIN,LAP_MAX,
   RETAIL_CHAMPIONSHIP,defaultEntries,normaliseEntries,encode,parse
 });
 
@@ -712,10 +739,6 @@ function download(bytes,name){
 async function importFile(file){
   try{
     const parsed=parse(new Uint8Array(await file.arrayBuffer()));
-    if(!parsed.runtimeCompatible){
-      setStatus(`IHPL v${parsed.version} is structurally valid and declares ${parsed.count} races, but the current WHDLoad runtime requires exactly ${RUNTIME_COUNT}. Nothing was changed.`,true);
-      return;
-    }
     entries=parsed.entries.map(e=>({...e}));render();
     const note=parsed.version===VERSION_V1?' v1 physical Track IDs were converted to zero-based circuit IDs; export will use v2.':'';
     setStatus(`Imported IHPL v${parsed.version} · ${parsed.count} races.${note}`);
@@ -723,6 +746,8 @@ async function importFile(file){
 }
 $('playlistImport').addEventListener('click',()=>$('playlistInput').click());
 $('playlistInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importFile(f);e.target.value='';});
+$('playlistRaceCount')?.addEventListener('input',e=>{const out=$('playlistRaceCountText');if(out)out.textContent=String(e.target.value);});
+$('playlistRaceCount')?.addEventListener('change',e=>{resizeEntries(Number(e.target.value));render();setStatus(`Championship length set to ${entries.length} race${entries.length===1?'':'s'} · export writes IHPL v2.`);});
 $('playlistReset').addEventListener('click',()=>{entries=defaultEntries();render();setStatus('Reset to the established retail 11-race championship order.');});
 window.addEventListener('indyheat-circuit-library-changed',()=>{render();});
 $('playlistExport').addEventListener('click',()=>{
@@ -736,7 +761,7 @@ $('playlistExport').addEventListener('click',()=>{
     const bytes=encode(current,{forRuntime:true});
     // Re-read our completed output before download, matching the circuit-package export philosophy.
     const verify=parse(bytes);
-    if(verify.version!==VERSION_V2||verify.count!==RUNTIME_COUNT)throw new Error('Playlist self-check failed');
+    if(verify.version!==VERSION_V2||verify.count!==current.length)throw new Error('Playlist self-check failed');
     entries=verify.entries.map(e=>({...e}));
     download(bytes,'indyheat_playlist.bin');
     setStatus(`Exported IHPL v2 · ${verify.count} races · ${bytes.length} bytes.`);
