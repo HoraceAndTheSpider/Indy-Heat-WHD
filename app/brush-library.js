@@ -13,7 +13,6 @@
  * or write any layer.
  */
 const VERSION='0.101';
-const EDITOR_VERSION='0.101';
 const entries=new Map();
 const COMPANION_BASE_URL=(typeof document!=='undefined'&&document.currentScript?.src)?new URL('.',document.currentScript.src).href:null;
 function loadCompanionModule(filename,globalName){
@@ -485,11 +484,7 @@ root.IndyHeatSpecialFunctions=specialApi;
  * Backdrop Special Functions catalogue UI
  * ------------------------------------------------------------------------- */
 function syncEditorVersion(){
-  root.INDY_HEAT_EDITOR_VERSION=EDITOR_VERSION;
-  if(typeof document==='undefined')return;
-  document.title=document.title.replace(/v\d+\.\d+/i,`v${EDITOR_VERSION}`);
-  const h1=document.querySelector('#appIdentity h1');
-  if(h1)h1.textContent=h1.textContent.replace(/v\d+\.\d+/i,`v${EDITOR_VERSION}`);
+  if(typeof root.IndyHeatSyncEditorIdentity==='function')root.IndyHeatSyncEditorIdentity();
 }
 
 function toolDisplayName(value){

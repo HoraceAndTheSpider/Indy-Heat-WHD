@@ -67,7 +67,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.110';
+  const EDITOR_VERSION='0.111';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -75,9 +75,11 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     set:()=>{}
   });
   const syncEditorIdentity=()=>{
-    document.title=`Indy Heat Amiga – Circuit Editor v${EDITOR_VERSION}`;
+    const title=`Indy Heat Amiga – Circuit Editor v${EDITOR_VERSION}`;
+    if(document.title!==title)document.title=title;
     const h=document.querySelector('#appIdentity h1')||document.querySelector('header h1');
-    if(h)h.textContent=`Indy Heat Amiga — Circuit Editor v${EDITOR_VERSION}`;
+    const heading=`Indy Heat Amiga — Circuit Editor v${EDITOR_VERSION}`;
+    if(h&&h.textContent!==heading)h.textContent=heading;
   };
   globalThis.IndyHeatSyncEditorIdentity=syncEditorIdentity;
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',syncEditorIdentity,{once:true});
@@ -327,7 +329,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="circuit-package.js?v=032"></script>
 <script src="circuit-library.js?v=069"></script>
 <script src="brush-tools.js?v=078"></script>
-<script src="brush-library.js?v=077"></script>
+<script src="brush-library.js?v=0111"></script>
 <script src="minimap-brush-ui.js?v=078"></script>
 <script src="backdrop-brush-ui.js?v=078"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
