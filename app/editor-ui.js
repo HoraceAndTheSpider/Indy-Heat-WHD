@@ -19,7 +19,7 @@ if(typeof document==='undefined')return;
 
 const $=id=>document.getElementById(id);
 const TRACK_W=320,TRACK_H=256,TRACK_GAME_H=224,PREVIEW_W=78,PREVIEW_H=51;
-const AUTHORED_LAP_MIN=1,AUTHORED_LAP_MAX=20;
+const AUTHORED_LAP_MIN=2,AUTHORED_LAP_MAX=20;
 const HUD_LAYOUT=Object.freeze({
   currentLapRows:Object.freeze([0,9,18,27]),
   totalLaps:Object.freeze({x:-4,y:43}),
@@ -686,7 +686,7 @@ function installOpacityWatch(){
 }
 
 /* -------------------------------------------------------------------------
- * Lap authoring contract: 1..20.
+ * Lap authoring contract: 2..20.
  * ---------------------------------------------------------------------- */
 function lapStatus(message){
   const race=$('raceSetupStatus');
@@ -703,7 +703,7 @@ function ensureLapContract(){
   if(!e)return false;
   e.min=String(AUTHORED_LAP_MIN);
   e.max=String(AUTHORED_LAP_MAX);
-  e.title='Authored custom range: 1–20. Lap 20 is displayed as F during gameplay.';
+  e.title='Authored custom range: 2–20. Lap 20 is displayed as F during gameplay.';
   if(!e.dataset.editorUiLapGuard){
     e.dataset.editorUiLapGuard='1';
     e.addEventListener('input',()=>{
@@ -717,7 +717,7 @@ function ensureLapContract(){
     lapObserver=new MutationObserver(()=>{
       if(e.min!==String(AUTHORED_LAP_MIN))e.min=String(AUTHORED_LAP_MIN);
       if(e.max!==String(AUTHORED_LAP_MAX))e.max=String(AUTHORED_LAP_MAX);
-      const wanted='Authored custom range: 1–20. Lap 20 is displayed as F during gameplay.';
+      const wanted='Authored custom range: 2–20. Lap 20 is displayed as F during gameplay.';
       if(e.title!==wanted)e.title=wanted;
     });
     lapObserver.observe(e,{attributes:true,attributeFilter:['min','max','title']});
@@ -1363,7 +1363,7 @@ loadOverlayColours();
 root.IndyHeatOverlayColours=overlayColours;
 
 /* -------------------------------------------------------------------------
- * Race lap authoring: slider, 1..20.
+ * Race lap authoring: slider, 2..20.
  *
  * Keep the existing #raceLaps element so all existing authoring/apply guards
  * remain attached. Only its presentation changes from numeric entry to range.
@@ -1372,8 +1372,8 @@ function lapSliderValue(){
   const e=$('raceLaps'),out=$('raceLapsSliderValue');
   if(!e||!out)return false;
   let v=Math.round(Number(e.value));
-  if(!Number.isFinite(v))v=1;
-  v=Math.max(1,Math.min(20,v));
+  if(!Number.isFinite(v))v=AUTHORED_LAP_MIN;
+  v=Math.max(AUTHORED_LAP_MIN,Math.min(AUTHORED_LAP_MAX,v));
   if(String(v)!==e.value)e.value=String(v);
   out.value=String(v);
   out.textContent=String(v);
@@ -1385,10 +1385,10 @@ function installLapSlider(){
   if(!e)return false;
 
   e.type='range';
-  e.min='1';
-  e.max='20';
+  e.min=String(AUTHORED_LAP_MIN);
+  e.max=String(AUTHORED_LAP_MAX);
   e.step='1';
-  e.title='Authored custom range: 1–20. Lap 20 is displayed as F during gameplay.';
+  e.title='Authored custom range: 2–20. Lap 20 is displayed as F during gameplay.';
   e.setAttribute('aria-label','Race laps');
 
   let out=$('raceLapsSliderValue');

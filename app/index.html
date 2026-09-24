@@ -67,7 +67,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.111';
+  const EDITOR_VERSION='0.112';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -104,7 +104,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     <div class="playlistIntro muted">
       Build the <code>indyheat_playlist.bin</code> used by WHDLoad custom-track mode.
       Circuit IDs <b>0–9</b> are the retail circuits; <b>10–99</b> are custom circuit packages.
-      The <b>1–20</b> range below applies only to the per-race <b>lap override</b>.
+      The <b>2–20</b> range below applies only to the per-race <b>lap override</b>.
     </div>
 
     <label class="inlineControl">Championship races
@@ -128,10 +128,10 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
       <span>Race</span>
       <span>Circuit (0–99)</span>
       <span>Name / load state</span>
-      <span>Laps (inherit / 1–20)</span>
+      <span>Laps (inherit / 2–20)</span>
     </div>
     <div id="playlistRows"></div>
-    <div id="playlistStatus" class="mini muted">IHPL v2 · 11 races · circuit 0–99 · laps inherit or 1–20.</div>
+    <div id="playlistStatus" class="mini muted">IHPL v2 · 11 races · circuit 0–99 · laps inherit or 2–20.</div>
   </div>
 </section>
 <main>
@@ -323,7 +323,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="layer-editor.js?v=052"></script>
 <script src="waypoint-actions.js?v=069"></script>
 <script src="recovery-editor.js?v=049"></script>
-<script src="race-setup.js?v=046"></script>
+<script src="race-setup.js?v=0112"></script>
 <script src="race-validation.js?v=057"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=032"></script>
@@ -333,7 +333,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="minimap-brush-ui.js?v=078"></script>
 <script src="backdrop-brush-ui.js?v=078"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
-<script src="editor-ui.js?v=047"></script>
+<script src="editor-ui.js?v=0112"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */
@@ -574,7 +574,7 @@ const VERSION_V2=2;
 const RUNTIME_MIN_COUNT=1;
 const RUNTIME_MAX_COUNT=99;
 const INHERIT_LAPS=0xFFFF;
-const LAP_MIN=1;
+const LAP_MIN=2;
 const LAP_MAX=20;
 const CIRCUIT_MIN=0;
 const CIRCUIT_MAX=99;
@@ -639,11 +639,10 @@ function parse(bytes){
     let laps='inherit';
     if(rawLaps!==INHERIT_LAPS){
       if(version===VERSION_V1){
-        if(rawLaps===0)throw new Error(`Race ${i+1}: v1 lap override 0 cannot be represented safely by the current v2 editor`);
-        laps=Math.min(rawLaps,LAP_MAX);
+        laps=Math.max(LAP_MIN,Math.min(rawLaps,LAP_MAX));
       }else{
-        if(rawLaps<LAP_MIN||rawLaps>LAP_MAX)throw new Error(`Race ${i+1}: v2 laps ${rawLaps} are outside ${LAP_MIN}..${LAP_MAX}`);
-        laps=rawLaps;
+        if(rawLaps>LAP_MAX)throw new Error(`Race ${i+1}: v2 laps ${rawLaps} are outside ${LAP_MIN}..${LAP_MAX}`);
+        laps=Math.max(LAP_MIN,rawLaps);
       }
     }
     entries.push({circuit,laps});

@@ -7,7 +7,7 @@ const PIT_RECORD_SIZE=0x16;
 const PIT_RECORD_COUNT=4;
 const PIT_BLOCK_SIZE=PIT_RECORD_SIZE*PIT_RECORD_COUNT; // $58
 const COMPACT_SIZE=0x68;
-const LAP_MIN=1;
+const LAP_MIN=2;
 const LAP_MAX=20;
 const OFF=Object.freeze({
   laps:0x28,
@@ -116,7 +116,8 @@ function applyCompactBin(main,record,bin){
   if(!(bin instanceof Uint8Array))bin=new Uint8Array(bin);
   if(bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be exactly $68 (${COMPACT_SIZE}) bytes`);
   const setup=parseRaceSetup(main,record),o=setup.recordOffset;
-  main.set(bin.slice(COMPACT_LAYOUT.laps.offset,COMPACT_LAYOUT.laps.offset+2),o+OFF.laps);
+  const importedLaps=be16(bin,COMPACT_LAYOUT.laps.offset);
+  wr16(main,o+OFF.laps,importedLaps<LAP_MIN?LAP_MIN:importedLaps);
   main.set(bin.slice(COMPACT_LAYOUT.flag.offset,COMPACT_LAYOUT.flag.offset+4),o+OFF.flagX);
   main.set(bin.slice(COMPACT_LAYOUT.start.offset,COMPACT_LAYOUT.start.offset+10),o+OFF.startX);
   main.set(bin.slice(COMPACT_LAYOUT.pits.offset,COMPACT_LAYOUT.pits.offset+PIT_BLOCK_SIZE),setup.pitFileOffset);
@@ -294,7 +295,7 @@ function injectUi(){
         <label><input id="raceShowPitCars" type="checkbox"> Cars in pits</label>
       </div>
       <div class="raceSetupGrid">
-        <label>Laps <input id="raceLaps" type="number" min="1" max="20" step="1" title="Authored custom range: 1–20"></label>
+        <label>Laps <input id="raceLaps" type="number" min="2" max="20" step="1" title="Authored custom range: 2–20"></label>
         <label>Start orient <input id="raceStartOrient" type="number" min="-32768" max="32767" step="1"></label>
         <label>Flag X <input id="raceFlagX" type="number" min="-32768" max="32767" step="1"></label>
         <label>Flag Y <input id="raceFlagY" type="number" min="-32768" max="32767" step="1"></label>
@@ -733,7 +734,7 @@ function snapshotLiveRaceSetup(templateIndex){
   if(!R||!model||!record)throw new Error('Live race-setup state is unavailable');
   const setup=R.parseRaceSetup(model.main,record);
   R.writeCommon(model.main,record.offset,{
-    laps:liveIntegerOr('raceLaps',setup.laps,'Lap total',1,99),
+    laps:liveIntegerOr('raceLaps',setup.laps,'Lap total',2,20),
     flagX:liveIntegerOr('raceFlagX',setup.flagX,'Flag X'),
     flagY:liveIntegerOr('raceFlagY',setup.flagY,'Flag Y'),
     startX:liveFixed16Or('raceStartX',setup.startX,'Start X'),
@@ -855,7 +856,7 @@ function installNameExport(){
       const nameBytes=encodeNameBytes(expectedName);
       authoredNames.set(currentNameKey(),nameBytes.slice());
       const expectedLaps=Number($('raceLaps')?.value);
-      if(!Number.isInteger(expectedLaps)||expectedLaps<1||expectedLaps>99)throw new Error('Lap total must be 1–99');
+      if(!Number.isInteger(expectedLaps)||expectedLaps<2||expectedLaps>20)throw new Error('Lap total must be 2–20');
       const expectedMapId=Number($('circuitMapId')?.value);
       const raceSetupBytes=snapshotLiveRaceSetup(templateIndex);
       const built=directPackageFiles(P,circuitIndex,templateIndex,nameBytes,raceSetupBytes);
