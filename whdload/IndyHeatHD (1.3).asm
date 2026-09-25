@@ -13,8 +13,17 @@
 
 
 ;
-; Development 1.3 test 43 retains the test-42 variable-playlist/custom-resource
-; architecture and fixes the native race-start helper at $6364, which otherwise
+; Development 1.3 test 46 retains the test-45/test-44 current-package/runtime support
+; and fixes the actual second-championship restart path. Test 45 reset the $631C initial
+; setup hook, but the game re-enters a completed championship through the $634E->$6364
+; race-address helper instead. When that helper sees the slave parked at/after the
+; playlist sentinel, test 46 resets active_event_index to zero and rebuilds playlist
+; event 0 before returning the active race pointer. Normal within-season progression is
+; unchanged.
+;
+; Test 44 retains the test-43 variable-playlist/custom-resource
+; architecture and consumes the editor v0.114 authored route/pitlane fields.
+; Test 43 already fixed the native race-start helper at $6364, which otherwise
 ; forces A6+$3DD6 back to $5902 (Illinois/event 1) after playlist selection.
 ; The custom-resource replacement path for circuit_10..99 uses one permanent
 ; active custom-circuit
@@ -54,11 +63,14 @@
 ;   a later Load call or written into a retail allocator-owned destination;
 ; - IHWP stored records use the established bytewise-complement encoding and
 ;   are decoded with NOT.W/NOT.B for X, progress, Y and link respectively;
-; - circuit_10..99 resource/template/route/pit installation is mandatory:
+; - circuit_10..99 resource/template/route/settings/pit installation is mandatory:
 ;   failure uses an explicit WHDLoad requester instead of continuing with retail
 ;   template data;
 ; - the three race descriptors are repointed to the active route arena with
-;   authored start/end/count values; template +$0A words remain inherited;
+;   authored start/end/count values, then route_settings.bin writes the three
+;   explicit minimum-previous-sequence lap guards at race+$0A/+$16/+$22;
+; - race_setup.bin is the current exact $70 package layout; its appended words
+;   explicitly write pit pickup centre X/top Y/half-width and Pit approach Y;
 ; - custom routes retain each authored route's independent point-0 and explicit boundary;
 ;   no retail shared-boundary byte alias is required between route A/B or B/C;
 ; - after the ten pristine retail templates are captured into track_template_buffer,
@@ -68,8 +80,8 @@
 ;   runtime-proven custom-first path while avoiding retail resource-pointer transplants;
 ; - regional-map interception remains unchanged from the runtime-proven path;
 ; - preserve the established editor package files: background, foreground,
-;   surface, recovery, preview, waypoints, race_setup, presentation, optional
-;   name.bin and optional template.bin;
+;   surface, recovery, preview, waypoints, route_settings, race_setup,
+;   presentation, optional name.bin and optional template.bin;
 ; - explicit playlist lap override is applied last; for a custom event $FFFF
 ;   retains the package-authored race_setup lap total;
 ; - retain the runtime-proven 0-99 lap compositor and regional-map replacement;
@@ -94,7 +106,8 @@ RACE_RUNTIME_BASE       EQU     $5902           ; main+$4902 plus runtime $1000
 RACE_RECORD_SIZE        EQU     $82
 RACE_RECORD_COUNT       EQU     11
 RACE_SENTINEL           EQU     $5E98
-RACE_SETUP_SIZE         EQU     $68
+RACE_SETUP_LEGACY_SIZE  EQU     $68             ; indyheat_rXX_setup.bin legacy override only
+RACE_SETUP_SIZE         EQU     $70             ; current circuit package layout
 RACE_NAME_SIZE          EQU     $12             ; race+$70..+$81, 17 display bytes + NUL
 CIRCUIT_TEMPLATE_SIZE   EQU     2               ; optional template.bin, big-endian word 0..9
 PIT_LONG_COUNT_MINUS1   EQU     21              ; $58 / 4 = 22 longs -> DBF 21
@@ -141,6 +154,9 @@ CIRCUIT_PRESENTATION_VERSION EQU 2
 CIRCUIT_WAYPOINT_MAGIC EQU      $49485750        ; "IHWP"
 CIRCUIT_WAYPOINT_VERSION EQU    1
 CIRCUIT_WAYPOINT_ROUTES EQU     3
+CIRCUIT_ROUTE_SETTINGS_SIZE EQU  $0C
+CIRCUIT_ROUTE_SETTINGS_MAGIC EQU $49485253       ; "IHRS"
+CIRCUIT_ROUTE_SETTINGS_VERSION EQU 1
 CUSTOM_PIT_SLOT_SIZE    EQU     $58
 
 ; Test-33 dedicated active custom-circuit arena.  The original game owns only
@@ -253,7 +269,7 @@ _memcfg
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 43"
+	dc.b	"1.3 test 46"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -638,12 +654,37 @@ custom_preview_postdecrunch
 custom_active_race_address
 	; Retail helper $6364 originally returned hard-coded $5902. In CUSTOM2 mode
 	; return the slave-selected native retail slot or custom staging record.
+	;
+	; The first championship passes through $631C, but after a completed season the
+	; game starts the next championship via the sole $6364 caller at $634E. At that
+	; point custom_event_advance has deliberately left active_event_index equal to
+	; playlist_event_count and released the active custom-resource state. Detect that
+	; finished-season sentinel here, rebuild event zero, then return its fresh pointer.
+	; Do not reset while index < count: that is normal Race 1 -> Race N progression.
+	movem.l	d0-d1/a1,-(a7)
+	moveq	#0,d0
+	move.w	active_event_index(pc),d0
+	moveq	#0,d1
+	move.w	playlist_event_count(pc),d1
+	cmp.w	d1,d0
+	blo.b	.current_event
+	lea	active_event_index(pc),a1
+	clr.w	(a1)
+	bsr.w	activate_custom_event
+.current_event
+	movem.l	(a7)+,d0-d1/a1
 	movea.l	active_race_ptr(pc),a0
 	rts
 
 custom_event_init
-	; Event zero was selected at boot. Use the exact native retail slot (or the
-	; $5902 custom staging record) chosen by activate_custom_event.
+	; Initial championship setup path. Test 45 made this reset explicit; retain it
+	; for first-start/reinitialisation robustness. Subsequent completed-season restarts
+	; are handled by custom_active_race_address above because $631C is not revisited.
+	move.l	a0,-(a7)
+	lea	active_event_index(pc),a0
+	clr.w	(a0)
+	move.l	(a7)+,a0
+	bsr.w	activate_custom_event
 	move.l	active_race_ptr(pc),$3DD6(a6)
 	rts
 
@@ -1062,7 +1103,7 @@ load_race_setups
 	move.l	a0,a5
 	move.l	_resload(pc),a2
 	jsr	resload_GetFileSize(a2)
-	cmp.l	#RACE_SETUP_SIZE,d0
+	cmp.l	#RACE_SETUP_LEGACY_SIZE,d0
 	bne.b	.skip_race
 
 	move.l	a5,a0
@@ -1119,6 +1160,8 @@ race_setup_r11	dc.b	"indyheat_r11_setup.bin",0
 
 race_setup_buffer
 	ds.b	RACE_SETUP_SIZE
+route_settings_buffer
+	ds.b	CIRCUIT_ROUTE_SETTINGS_SIZE
 	even
 
 ;---------------------------------------------------------------------------
@@ -1132,6 +1175,7 @@ race_setup_buffer
 ;             /recovery.bin
 ;             /preview.bin
 ;             /waypoints.bin
+;             /route_settings.bin
 ;             /race_setup.bin
 ;             /presentation.bin
 ;             /name.bin          optional $12 Gasoline Alley circuit name
@@ -1143,9 +1187,10 @@ race_setup_buffer
 ; stock-package pass deliberately skips them.
 ;
 ; Boot-time sidecars:
-;   race_setup.bin    exact $68 legacy compact layout
-;   presentation.bin  IHPR v2 / $14
-;   waypoints.bin     IHWP v1, three route payloads
+;   race_setup.bin       exact $70 current compact layout
+;   route_settings.bin   IHRS v1 / $0C, three route lap-guard values
+;   presentation.bin     IHPR v2 / $14
+;   waypoints.bin        IHWP v1, three route payloads
 ;   name.bin          optional exact $12 copy of race+$70..+$81
 ;   template.bin      optional exact $02 structural retail template index
 ;
@@ -1191,6 +1236,11 @@ apply_circuit_packages
 	move.w	d5,d0
 	move.w	d7,d1
 	bsr.w	apply_circuit_presentation
+
+	; route_settings.bin is optional only on the stock-package bridge: with no
+	; package sidecar the untouched retail descriptor guards remain authoritative.
+	move.w	d5,d0
+	bsr.w	load_circuit_route_settings
 
 	btst	d5,d4
 	bne.b	.advance
@@ -1341,6 +1391,7 @@ apply_circuit_setup
 .stock_setup_src
 	lea	race_setup_buffer(pc),a0
 .parse_setup
+	movea.l	a0,a6			; preserve $70 setup base for appended pitlane fields
 	moveq	#0,d0
 	move.w	(a0),d0
 	beq.w	.done
@@ -1363,6 +1414,13 @@ apply_circuit_setup
 	move.l	(a0)+,(a1)+
 	dbf	d6,.copy_pits
 .skip_pits
+
+	; v0.114 current package appends four explicit race-level pitlane fields.
+	lea	$68(a6),a0
+	move.w	(a0)+,$2C(a3)		; pit pickup centre X
+	move.w	(a0)+,$2E(a3)		; pit pickup top Y
+	move.w	(a0)+,$30(a3)		; pit pickup half-width
+	move.w	(a0)+,$60(a3)		; Pit approach Y
 
 	; Gasoline Alley renders race+$70..+$81.  Custom-library name.bin uses its
 	; own high-Chip slot; stock package compatibility retains the local buffer.
@@ -1588,6 +1646,7 @@ circuit_leaf_surface		dc.b	"surface.bin",0
 circuit_leaf_recovery		dc.b	"recovery.bin",0
 circuit_leaf_preview		dc.b	"preview.bin",0
 circuit_leaf_waypoints		dc.b	"waypoints.bin",0
+circuit_leaf_route_settings	dc.b	"route_settings.bin",0
 circuit_leaf_race_setup	dc.b	"race_setup.bin",0
 circuit_leaf_presentation	dc.b	"presentation.bin",0
 circuit_leaf_name		dc.b	"name.bin",0
@@ -2205,6 +2264,13 @@ activate_custom_event
 	tst.l	d0
 	beq.w	.route_failed
 
+	; Current custom packages explicitly author all three descriptor lap guards.
+	; Missing/invalid route_settings.bin is a package failure, not inheritance.
+	move.w	d6,d0
+	bsr.w	load_circuit_route_settings
+	tst.l	d0
+	beq.w	.route_failed
+
 	move.w	d6,d0
 	bsr.w	load_active_custom_pits
 	tst.l	d0
@@ -2523,10 +2589,74 @@ abort_custom_event
 custom_fail_memory_msg	dc.b	"Custom track mode needs default memory; remove MemConfig=1",0
 custom_fail_template_msg	dc.b	"Custom circuit template/waypoints invalid",0
 custom_fail_assets_msg	dc.b	"Custom circuit graphical asset load failed",0
-custom_fail_routes_msg	dc.b	"Custom circuit route relocation failed",0
+custom_fail_routes_msg	dc.b	"Custom circuit route/settings data failed",0
 custom_fail_pits_msg	dc.b	"Custom circuit pit data failed",0
 custom_fail_playlist_msg	dc.b	"Custom playlist missing or invalid",0
 	even
+
+
+; IN: D0.w circuit index, A3 active race record
+; OUT: D0.l = 1 exact IHRS v1 sidecar loaded/applied, 0 missing/invalid
+;
+; The editor exposes semantic values 0..63.  The game stores each guard doubled
+; in the first byte of the descriptor tail, because the lap-wrap helper ASR.B #1
+; before comparing previous route progress.  The adjacent tail bytes are currently
+; unconsumed and are explicitly cleared so custom circuit data does not inherit them.
+load_circuit_route_settings
+	movem.l	d1-d7/a0-a6,-(a7)
+	lea	circuit_leaf_route_settings(pc),a1
+	bsr.w	build_circuit_path
+	move.l	a0,a5
+
+	move.l	_resload(pc),a2
+	jsr	resload_GetFileSize(a2)
+	cmp.l	#CIRCUIT_ROUTE_SETTINGS_SIZE,d0
+	bne.w	.failed
+
+	move.l	a5,a0
+	lea	route_settings_buffer(pc),a1
+	move.l	_resload(pc),a2
+	jsr	resload_LoadFile(a2)
+
+	lea	route_settings_buffer(pc),a0
+	cmp.l	#CIRCUIT_ROUTE_SETTINGS_MAGIC,(a0)
+	bne.w	.failed
+	cmp.w	#CIRCUIT_ROUTE_SETTINGS_VERSION,4(a0)
+	bne.w	.failed
+	cmp.w	#CIRCUIT_ROUTE_SETTINGS_SIZE,6(a0)
+	bne.w	.failed
+
+	moveq	#0,d1
+	move.b	8(a0),d1
+	cmp.w	#63,d1
+	bhi.w	.failed
+	lsl.w	#1,d1
+	move.b	d1,$0A(a3)
+	clr.b	$0B(a3)
+
+	moveq	#0,d1
+	move.b	9(a0),d1
+	cmp.w	#63,d1
+	bhi.w	.failed
+	lsl.w	#1,d1
+	move.b	d1,$16(a3)
+	clr.b	$17(a3)
+
+	moveq	#0,d1
+	move.b	10(a0),d1
+	cmp.w	#63,d1
+	bhi.w	.failed
+	lsl.w	#1,d1
+	move.b	d1,$22(a3)
+	clr.b	$23(a3)
+
+	moveq	#1,d0
+	bra.b	.return
+.failed
+	moveq	#0,d0
+.return
+	movem.l	(a7)+,d1-d7/a0-a6
+	rts
 
 
 ; IN: D0.w custom circuit index 10..99, A3 active race record
@@ -2569,7 +2699,8 @@ load_active_custom_pits
 ; This routine decodes all three route payloads downward in the same arena while
 ; preserving each route's own point-0 and explicit boundary, validates every
 ; relative link against the decoded runtime record set, then atomically commits
-; start/end/count fields.  Template +$0A words remain inherited.
+; start/end/count fields.  route_settings.bin is applied immediately afterwards
+; for circuit_10..99 so descriptor lap guards are authored explicitly.
 load_active_custom_routes
 	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d7

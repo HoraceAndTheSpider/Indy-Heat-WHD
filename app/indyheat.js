@@ -415,7 +415,7 @@ function parseRaceRecords(main, base=0x4902, count=11, size=0x82){
     const descriptors=[];
     for(let d=0;d<3;d++){
       const p=o+d*12;
-      descriptors.push({start:be32(main,p),end:be32(main,p+4),count:be16(main,p+8),wordA:s16(be16(main,p+10))});
+      descriptors.push({start:be32(main,p),end:be32(main,p+4),count:be16(main,p+8),lapGuardRaw:main[p+10],lapGuardMin:s8(main[p+10])>>1,tailByte:main[p+11],wordA:s16(be16(main,p+10))});
     }
     // Name occupies the final 18-byte display field in this retail build. '<' and '@' are alignment/fill glyphs.
     let name='';
@@ -470,7 +470,7 @@ function parseWaypointDescriptors(main, record){
       };
     }
     sets.push({
-      index:d,start:desc.start,end:desc.end,count:desc.count,wordA:desc.wordA,fileOffset,points,boundaryPoint,
+      index:d,start:desc.start,end:desc.end,count:desc.count,lapGuardRaw:desc.lapGuardRaw,lapGuardMin:desc.lapGuardMin,tailByte:desc.tailByte,wordA:desc.wordA,fileOffset,points,boundaryPoint,
       descriptorBytes:desc.end-desc.start,nearestScanCountCandidate:desc.count+1
     });
   }

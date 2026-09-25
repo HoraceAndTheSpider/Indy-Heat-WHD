@@ -4,9 +4,11 @@
 /*
  * Indy Heat circuit package / regional-presentation bridge.
  *
- * This deliberately does NOT change the runtime-proven $68 race-setup file.
- * Authoring metadata owns regional map selection and the existing race-record
- * marker fields; runtime sidecars are generated from the authoring package.
+ * race_setup.bin is now an authored $70-byte package file. The appended eight
+ * bytes carry the proved race-level Pitlane controls at race+$2C/+2E/+30/+60.
+ * Legacy $68 packages remain editor-importable and are upgraded on export; the
+ * current WHDLoad runtime will be updated separately rather than carrying dual
+ * runtime-format checks.
  */
 
 const FORMAT='Indy Heat Amiga circuit package';
@@ -46,7 +48,8 @@ const TRACK_BACKGROUND_SIZE=0xC800;
 const TRACK_FOREGROUND_SIZES=Object.freeze([0x2800,0x2804]);
 const TRACK_SURFACE_SIZE=0x1180;
 const TRACK_RECOVERY_SIZE=0x0460;
-const RACE_SETUP_SIZE=0x68;
+const LEGACY_RACE_SETUP_SIZE=0x68;
+const RACE_SETUP_SIZE=0x70;
 const RESOURCE_ENTRY_SIZE=22;
 const RUNTIME_MAIN_BASE=0x1000;
 const REGIONAL_MAP_SCREEN_X=240;
@@ -54,6 +57,12 @@ const REGIONAL_MAP_SCREEN_Y=1;
 const WAYPOINT_MAGIC='IHWP';
 const WAYPOINT_VERSION=1;
 const WAYPOINT_ROUTE_COUNT=3;
+const ROUTE_SETTINGS_MAGIC='IHRS';
+const ROUTE_SETTINGS_VERSION=1;
+const ROUTE_SETTINGS_SIZE=0x0C;
+const ROUTE_LAP_GUARD_MIN=0;
+const ROUTE_LAP_GUARD_MAX=63;
+const ROUTE_DESCRIPTOR_GUARD_OFFSETS=Object.freeze([0x0A,0x16,0x22]);
 const CIRCUIT_INDEX_MIN=0;
 const CIRCUIT_INDEX_MAX=99;
 const HUD_LAYOUT=Object.freeze({
@@ -380,6 +389,38 @@ function decodeWaypointsBin(bytes){
   if(pos!==bytes.length)throw new Error('waypoints.bin has trailing bytes');
   return routes;
 }
+function routeLapGuardValue(v,label='Minimum previous sequence'){
+  return clampInt(v,ROUTE_LAP_GUARD_MIN,ROUTE_LAP_GUARD_MAX,label);
+}
+function encodeRouteSettingsBin(guards=[0,0,0]){
+  if(!Array.isArray(guards)||guards.length!==WAYPOINT_ROUTE_COUNT)throw new Error('Three route lap settings are required');
+  const out=new Uint8Array(ROUTE_SETTINGS_SIZE);out.set(utf8(ROUTE_SETTINGS_MAGIC),0);wr16(out,4,ROUTE_SETTINGS_VERSION);wr16(out,6,ROUTE_SETTINGS_SIZE);
+  for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++)out[8+i]=routeLapGuardValue(guards[i],`Route ${'ABC'[i]} minimum previous sequence`);
+  return out;
+}
+function decodeRouteSettingsBin(bytes){
+  if(bytes==null)return {version:ROUTE_SETTINGS_VERSION,lapGuards:[0,0,0],explicit:false};
+  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes);
+  if(bytes.length!==ROUTE_SETTINGS_SIZE||String.fromCharCode(...bytes.slice(0,4))!==ROUTE_SETTINGS_MAGIC)throw new Error('Invalid route_settings.bin');
+  if(be16(bytes,4)!==ROUTE_SETTINGS_VERSION||be16(bytes,6)!==ROUTE_SETTINGS_SIZE)throw new Error('Unsupported route_settings.bin version/size');
+  const lapGuards=[];for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++)lapGuards.push(routeLapGuardValue(bytes[8+i],`Route ${'ABC'[i]} minimum previous sequence`));
+  return {version:ROUTE_SETTINGS_VERSION,lapGuards,explicit:true};
+}
+function readRouteLapGuards(main,recordOffset){
+  if(!main||recordOffset==null)throw new Error('Race record is required for route lap settings');
+  return ROUTE_DESCRIPTOR_GUARD_OFFSETS.map((rel,i)=>{
+    const raw=main[recordOffset+rel];
+    if(raw&0x80)return 0; // retail/custom authoring uses non-negative semantic thresholds only
+    return Math.min(ROUTE_LAP_GUARD_MAX,raw>>1);
+  });
+}
+function writeRouteLapGuards(main,recordOffset,guards){
+  if(!Array.isArray(guards)||guards.length!==WAYPOINT_ROUTE_COUNT)throw new Error('Three route lap settings are required');
+  for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++){
+    const v=routeLapGuardValue(guards[i],`Route ${'ABC'[i]} minimum previous sequence`);main[recordOffset+ROUTE_DESCRIPTOR_GUARD_OFFSETS[i]]=(v<<1)&0x7e;
+  }
+  return readRouteLapGuards(main,recordOffset);
+}
 
 // Playlist v1 remains exactly the proven retail-template contract.
 const PLAYLIST_V1=Object.freeze({magic:'IHPL',version:1,eventCount:11,entrySize:4,size:0x34,trackIdMin:1,trackIdMax:10,inheritLaps:0xffff});
@@ -479,14 +520,15 @@ function parseCircuitZip(bytes){
   for(const name of entries.keys()){const m=/^(circuit_(\d{2}))\/(.+)$/.exec(name);if(!m)throw new Error(`Circuit ZIP entry must be rooted at circuit_xx/: ${name}`);roots.add(m[1]);}
   if(roots.size!==1)throw new Error('Circuit ZIP must contain exactly one circuit_xx/ root folder');
   const folder=[...roots][0],m=/^circuit_(\d{2})$/.exec(folder);if(!m)throw new Error('Circuit folder must be circuit_00 through circuit_99');
-  const circuitIndex=clampInt(Number(m[1]),CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,'Circuit number'),get=name=>{const key=`${folder}/${name}`,v=entries.get(key);if(!v)throw new Error(`Circuit ZIP is missing ${key}`);return v;};
-  const resources={background:get('background.bin'),foreground:get('foreground.bin'),surface:get('surface.bin'),recovery:get('recovery.bin')},previewBin=get('preview.bin'),waypointsBin=get('waypoints.bin'),raceSetupBin=get('race_setup.bin'),presentationBin=get('presentation.bin');
+  const circuitIndex=clampInt(Number(m[1]),CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,'Circuit number'),get=name=>{const key=`${folder}/${name}`,v=entries.get(key);if(!v)throw new Error(`Circuit ZIP is missing ${key}`);return v;},getOptional=name=>entries.get(`${folder}/${name}`)||null;
+  const resources={background:get('background.bin'),foreground:get('foreground.bin'),surface:get('surface.bin'),recovery:get('recovery.bin')},previewBin=get('preview.bin'),waypointsBin=get('waypoints.bin'),raceSetupBin=get('race_setup.bin'),presentationBin=get('presentation.bin'),routeSettingsBin=getOptional('route_settings.bin');
   if(resources.background.length!==TRACK_BACKGROUND_SIZE)throw new Error(`background.bin must be exactly ${hex(TRACK_BACKGROUND_SIZE)} bytes`);
   if(!TRACK_FOREGROUND_SIZES.includes(resources.foreground.length))throw new Error('foreground.bin must be exactly $2800 or $2804 bytes');
   if(resources.surface.length!==TRACK_SURFACE_SIZE)throw new Error(`surface.bin must be exactly ${hex(TRACK_SURFACE_SIZE)} bytes`);
   if(resources.recovery.length!==TRACK_RECOVERY_SIZE)throw new Error(`recovery.bin must be exactly ${hex(TRACK_RECOVERY_SIZE)} bytes`);
-  validatePreviewBob(previewBin);const waypointRoutes=decodeWaypointsBin(waypointsBin);if(raceSetupBin.length!==RACE_SETUP_SIZE)throw new Error(`race_setup.bin must be exactly ${hex(RACE_SETUP_SIZE)} bytes`);const presentation=decodePresentationBin(presentationBin);
-  return {circuitIndex,folder,resources,previewBin,waypointsBin,raceSetupBin,presentationBin,presentation,waypointRoutes,routeCounts:waypointRoutes.map(r=>r.points.length)};
+  validatePreviewBob(previewBin);const waypointRoutes=decodeWaypointsBin(waypointsBin);if(raceSetupBin.length!==LEGACY_RACE_SETUP_SIZE&&raceSetupBin.length!==RACE_SETUP_SIZE)throw new Error(`race_setup.bin must be ${hex(LEGACY_RACE_SETUP_SIZE)} or ${hex(RACE_SETUP_SIZE)} bytes`);const presentation=decodePresentationBin(presentationBin),routeSettings=decodeRouteSettingsBin(routeSettingsBin);
+  const legacyRaceSetup=raceSetupBin.length===LEGACY_RACE_SETUP_SIZE;
+  return {circuitIndex,folder,resources,previewBin,waypointsBin,raceSetupBin,legacyRaceSetup,presentationBin,presentation,routeSettingsBin,routeSettings,routeLapGuards:routeSettings.lapGuards.slice(),waypointRoutes,routeCounts:waypointRoutes.map(r=>r.points.length)};
 }
 function inferTemplateIndex(circuitIndex,routeCounts,retailRouteCounts){
   clampInt(circuitIndex,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,'Circuit number');
@@ -498,7 +540,7 @@ function inferTemplateIndex(circuitIndex,routeCounts,retailRouteCounts){
   return matches[0];
 }
 
-function makePackageFiles({circuitIndex,resources={},previewBin=null,waypointsBin=null,raceSetupBin=null,presentationBin=null}={}){
+function makePackageFiles({circuitIndex,resources={},previewBin=null,waypointsBin=null,raceSetupBin=null,presentationBin=null,routeSettingsBin=null}={}){
   circuitIndex=clampInt(circuitIndex,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,'Circuit number');
   const folder=`${circuitFolder(circuitIndex)}/`,files=[];
   const map=[['background','background.bin'],['foreground','foreground.bin'],['surface','surface.bin'],['recovery','recovery.bin']];
@@ -507,15 +549,16 @@ function makePackageFiles({circuitIndex,resources={},previewBin=null,waypointsBi
   if(waypointsBin)files.push({name:folder+'waypoints.bin',data:waypointsBin});
   if(raceSetupBin)files.push({name:folder+'race_setup.bin',data:raceSetupBin});
   if(presentationBin)files.push({name:folder+'presentation.bin',data:presentationBin});
+  if(routeSettingsBin)files.push({name:folder+'route_settings.bin',data:routeSettingsBin});
   return files;
 }
 
-const api={VERSION,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
+const api={VERSION,LEGACY_RACE_SETUP_SIZE,RACE_SETUP_SIZE,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
   PREVIEW_WIDTH,PREVIEW_HEIGHT,PREVIEW_ORIGIN_X,PREVIEW_ORIGIN_Y,PREVIEW_TRANSPARENT,PREVIEW_PLANES,PREVIEW_SIZE,MINIMAP_TEMPLATE_TRANSPARENT,MINIMAP_TEMPLATES,REGIONAL_MAP_SCREEN_X,REGIONAL_MAP_SCREEN_Y,
-  PRESENTATION_MAGIC,PRESENTATION_VERSION,PRESENTATION_SIZE,WAYPOINT_MAGIC,WAYPOINT_VERSION,WAYPOINT_ROUTE_COUNT,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,
+  PRESENTATION_MAGIC,PRESENTATION_VERSION,PRESENTATION_SIZE,WAYPOINT_MAGIC,WAYPOINT_VERSION,WAYPOINT_ROUTE_COUNT,ROUTE_SETTINGS_MAGIC,ROUTE_SETTINGS_VERSION,ROUTE_SETTINGS_SIZE,ROUTE_LAP_GUARD_MIN,ROUTE_LAP_GUARD_MAX,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,
   PRESENTATION_PALETTE_WORDS,PRESENTATION_PALETTE_RGB,PLAYLIST_V1,PLAYLIST_V2,HUD_LAYOUT,HUD_DIGITS,GAME_HUD_DIGITS,HUD_CAR_COLOURS,
   be16,be32,s16,wr16,wr32,hex,mapById,circuitFolder,stockTrackIdForCircuit,circuitIndexForStockTrackId,
-  readPresentation,writePresentation,validateMapBob,decodeMapBob,mapBobToRgba,embeddedRegionalMapBytes,retailMapBobFromModel,validatePreviewBob,decodePreviewBob,encodePreviewPixels,previewBobToRgba,previewPixelsFromBackdrop,migratePreviewTransparency,transformMiniMapTemplate,stampMiniMapTemplate,resolvePreviewResource,encodePresentationBin,decodePresentationBin,encodeWaypointsBin,decodeWaypointsBin,
+  readPresentation,writePresentation,validateMapBob,decodeMapBob,mapBobToRgba,embeddedRegionalMapBytes,retailMapBobFromModel,validatePreviewBob,decodePreviewBob,encodePreviewPixels,previewBobToRgba,previewPixelsFromBackdrop,migratePreviewTransparency,transformMiniMapTemplate,stampMiniMapTemplate,resolvePreviewResource,encodePresentationBin,decodePresentationBin,encodeWaypointsBin,decodeWaypointsBin,encodeRouteSettingsBin,decodeRouteSettingsBin,readRouteLapGuards,writeRouteLapGuards,
   validatePlaylistV1,encodePlaylistV2,decodePlaylistV2,crc32,zipStore,readZipStore,parseCircuitZip,inferTemplateIndex,makePackageFiles};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatCircuitPackage=api;
@@ -803,15 +846,25 @@ function previewFromBackdrop(){
 function refreshUi(){
   ensureLapContract();const r=currentRecord(),C=currentCapture();if(!r||!C?.model)return;const p=readPresentation(C.model.main,r.offset),id=currentMapId();
   $('circuitMapId')&&($('circuitMapId').value=String(id));$('circuitMarkerX')&&($('circuitMarkerX').value=String(p.markerX));$('circuitMarkerY')&&($('circuitMarkerY').value=String(p.markerY));$('circuitMarkerFrame')&&($('circuitMarkerFrame').value=String(Math.max(0,Math.min(3,p.markerFrame))));$('circuitNumber')&&($('circuitNumber').value=String(currentCircuitIndex()));$('circuitHudX')&&($('circuitHudX').value=String(p.lapDisplayX));$('circuitHudY')&&($('circuitHudY').value=String(p.lapDisplayY));
+  const routeLapGuards=readRouteLapGuards(C.model.main,r.offset);for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++){const e=$(`routeLapGuard${i}`);if(e)e.value=String(routeLapGuards[i]);}
   const folder=circuitFolder(currentCircuitIndex()),stock=stockTrackIdForCircuit(currentCircuitIndex()),logical=logicalRetailIndex(),source=customSelected()?`-custom- using retail template ${sourceTrackIndex()}`:packageSlots.has(selectionKey())?`Retail slot ${logical} overlay using template ${sourceTrackIndex()}`:`Retail source ${sourceTrackIndex()+1}`;status(`${source} → ${folder}${stock?` · direct stock slot ${stock}`:' · custom library circuit'}\nMap ${mapById(id).name} · arrow (${p.markerX},${p.markerY}) frame ${p.markerFrame} · HUD (${p.lapDisplayX},${p.lapDisplayY}) · total laps ${p.laps}.`);drawArrowChoiceButtons();renderPreviewPalette();syncPreviewToolButtons();renderAux();renderRaceHudOverlay();
 }
 function applyMapFields(){const r=currentRecord(),C=currentCapture();if(!r||!C?.model)return;try{setCurrentMapId(Number($('circuitMapId').value));writePresentation(C.model.main,r.offset,{markerX:Number($('circuitMarkerX').value),markerY:Number($('circuitMarkerY').value),markerFrame:Number($('circuitMarkerFrame').value)});refreshUi();}catch(e){status(`ERROR: ${e.message}`);}}
 function applyHudFields(){try{writeHudAnchorAll(Number($('circuitHudX').value),Number($('circuitHudY').value));refreshUi();}catch(e){status(`ERROR: ${e.message}`);}}
+function applyRouteLapGuardFields(){
+  try{
+    const guards=[];for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++)guards.push(routeLapGuardValue(Number($(`routeLapGuard${i}`)?.value),`Route ${'ABC'[i]} minimum previous sequence`));
+    for(const model of allAuthoringModels()){const r=recordForTrackIndex(sourceTrackIndex(),model);if(r)writeRouteLapGuards(model.main,r.offset,guards);}
+    const note=$('routeLapGuardStatus');if(note)note.textContent=`Saved A/B/C ${guards.join('/')} · exported explicitly in route_settings.bin. Current WHDLoad runtime support is pending.`;
+    refreshUi();
+  }catch(e){const note=$('routeLapGuardStatus');if(note)note.textContent=`ERROR: ${e.message}`;status(`ERROR: ${e.message}`);}
+}
 function packageFromTrack(index,key,circuitIndexOverride=null){
   const RST=root.IndyHeatRaceSetupTools,T=root.IndyHeatTools,pm=primaryModel(),rm=resourceModel(),wm=waypointModel();if(!pm||!rm||!wm||!RST||!T)throw new Error('Circuit data is not ready');
   const pr=recordForTrackIndex(index,pm),rr=recordForTrackIndex(index,rm),wr=recordForTrackIndex(index,wm);if(!pr||!rr||!wr)throw new Error('Circuit record is unavailable in one of the editor models');
   const p=readPresentation(pm.main,pr.offset);clampInt(p.laps,LAP_MIN,LAP_MAX,'Lap total');const base=rr.baseResourceId,q=resolvePreviewResource(pm,pr);
-  return {circuitIndex:circuitIndexOverride??(circuitNumbers.get(key)??index),resources:{background:rm.getResource(base).data.slice(),foreground:rm.getResource(base+1).data.slice(),surface:rm.getResource(base+2).data.slice(),recovery:rm.getResource(base+3).data.slice()},previewBin:q.resource.data.slice(),waypointsBin:encodeWaypointsBin(wr,wm.main),raceSetupBin:RST.makeCompactBin(pm.main,pr),presentationBin:encodePresentationBin({mapId:mapIds.get(key)??0,presentation:p})};
+  const routeLapGuards=readRouteLapGuards(pm.main,pr.offset);
+  return {circuitIndex:circuitIndexOverride??(circuitNumbers.get(key)??index),resources:{background:rm.getResource(base).data.slice(),foreground:rm.getResource(base+1).data.slice(),surface:rm.getResource(base+2).data.slice(),recovery:rm.getResource(base+3).data.slice()},previewBin:q.resource.data.slice(),waypointsBin:encodeWaypointsBin(wr,wm.main),raceSetupBin:RST.makeCompactBin(pm.main,pr),presentationBin:encodePresentationBin({mapId:mapIds.get(key)??0,presentation:p}),routeSettingsBin:encodeRouteSettingsBin(routeLapGuards),routeLapGuards};
 }
 function currentPackage(){return packageFromTrack(sourceTrackIndex(),selectionKey(),currentCircuitIndex());}
 function retailRouteCounts(){const T=root.IndyHeatTools,wm=waypointModel();if(!T||!wm)return [];return (T.TRACK_BASE_IDS||[]).map((_,i)=>{const r=recordForTrackIndex(i,wm);return (r?.waypointDescriptors||[]).map(q=>q.points.length);});}
@@ -831,7 +884,7 @@ function applyPackageToTrack(pkg,index,key,{resetPreviewBaseline=false}={}){
     const r=recordForTrackIndex(index,model);if(!r)throw new Error('Retail template record is unavailable in an editor model');const base=r.baseResourceId,target=[model.getResource(base),model.getResource(base+1),model.getResource(base+2),model.getResource(base+3)],src=[pkg.resources.background,pkg.resources.foreground,pkg.resources.surface,pkg.resources.recovery];
     for(let i=0;i<4;i++){if(target[i].data.length!==src[i].length)throw new Error(`Imported ${['background','foreground','surface','recovery'][i]}.bin size ${hex(src[i].length)} does not match template resource size ${hex(target[i].data.length)}`);target[i].data.set(src[i]);}
     const q=resolvePreviewResource(model,r);if(q.resource.data.length!==pkg.previewBin.length)throw new Error('preview.bin size does not match the inferred retail template');q.resource.data.set(pkg.previewBin);if(model===primaryModel())primaryPreview=q;
-    writeWaypointPackageToRecord(model,r,pkg.waypointsBin);RST.applyCompactBin(model.main,r,pkg.raceSetupBin);writePresentation(model.main,r.offset,pr);
+    writeWaypointPackageToRecord(model,r,pkg.waypointsBin);RST.applyCompactBin(model.main,r,pkg.raceSetupBin);writePresentation(model.main,r.offset,pr);writeRouteLapGuards(model.main,r.offset,pkg.routeLapGuards||[0,0,0]);
   }
   mapIds.set(key,pr.mapId);circuitNumbers.set(key,pkg.circuitIndex);if(resetPreviewBaseline&&primaryPreview){const pkey=`${key}:${primaryPreview.resourceId}`;previewOriginals.set(pkey,pkg.previewBin.slice());previewUndo.delete(pkey);}markerGraphics=null;return recordForTrackIndex(index,primaryModel());
 }
@@ -870,10 +923,10 @@ function prepareSlot(pkg,key,option,hostIndex){
 function selectOption(option){const sel=$('trackSelect');if(!sel||!option)throw new Error('Track selector option is unavailable');selectionTransition=true;sel.selectedIndex=[...sel.options].indexOf(option);selectionTransition=false;sel.dispatchEvent(new Event('change',{bubbles:true}));}
 function installStockPackage(pkg){
   deactivateActivePackage();const target=pkg.circuitIndex,hostIndex=inferTemplateIndex(pkg.circuitIndex,pkg.routeCounts,retailRouteCounts()),key=retailKey(target),option=optionForRetailIndex(target);if(!option)throw new Error(`Retail selector option ${target} is unavailable`);
-  if(option.dataset.indyheatOriginalValue==null){option.dataset.indyheatOriginalValue=option.value;option.dataset.indyheatOriginalText=option.textContent;option.dataset.indyheatRetailIndex=String(target);}option.value=String(hostIndex);option.textContent=`${option.dataset.indyheatOriginalText} · imported ${pkg.folder}`;prepareSlot(pkg,key,option,hostIndex);selectOption(option);status(`Imported ${pkg.folder}. It overlays retail selector slot ${target}; editor template ${hostIndex} was inferred from the waypoint shape.`);
+  if(option.dataset.indyheatOriginalValue==null){option.dataset.indyheatOriginalValue=option.value;option.dataset.indyheatOriginalText=option.textContent;option.dataset.indyheatRetailIndex=String(target);}option.value=String(hostIndex);option.textContent=`${option.dataset.indyheatOriginalText} · imported ${pkg.folder}`;prepareSlot(pkg,key,option,hostIndex);selectOption(option);status(`Imported ${pkg.folder}. It overlays retail selector slot ${target}; editor template ${hostIndex} was inferred from the waypoint shape.${pkg.legacyRaceSetup?' Legacy $68 race_setup.bin loaded; Pitlane controls were seeded from that template and will be written explicitly on export.':''}`);
 }
 function installCustomPackage(pkg){
-  deactivateActivePackage();removeCustomOption();const hostIndex=inferTemplateIndex(pkg.circuitIndex,pkg.routeCounts,retailRouteCounts()),sel=$('trackSelect'),option=document.createElement('option');option.value=String(hostIndex);option.dataset.indyheatCustom='1';option.textContent=`-custom- · ${pkg.folder}`;sel.appendChild(option);prepareSlot(pkg,'custom',option,hostIndex);selectOption(option);status(`Imported ${pkg.folder} as -custom-. Switch to any retail circuit for reference, then back to -custom- to continue editing.`);
+  deactivateActivePackage();removeCustomOption();const hostIndex=inferTemplateIndex(pkg.circuitIndex,pkg.routeCounts,retailRouteCounts()),sel=$('trackSelect'),option=document.createElement('option');option.value=String(hostIndex);option.dataset.indyheatCustom='1';option.textContent=`-custom- · ${pkg.folder}`;sel.appendChild(option);prepareSlot(pkg,'custom',option,hostIndex);selectOption(option);status(`Imported ${pkg.folder} as -custom-.${pkg.legacyRaceSetup?' Legacy $68 race_setup.bin loaded; Pitlane controls were seeded from the inferred retail template and will be written explicitly on export.':''} Switch to any retail circuit for reference, then back to -custom- to continue editing.`);
 }
 async function importCircuitZip(file){
   if(!file)return;try{const pkg=parseCircuitZip(new Uint8Array(await file.arrayBuffer()));if(pkg.circuitIndex<10)installStockPackage(pkg);else installCustomPackage(pkg);refreshUi();}catch(e){status(`ERROR: ${e.message}`);}
@@ -928,7 +981,7 @@ function injectUi(){
   buttons.insertAdjacentElement('afterend',pane);
   const stack=viewerStack();if(getComputedStyle(stack).position==='static')stack.style.position='relative';const cv=document.createElement('canvas');cv.id='circuitAuxCanvas';cv.hidden=true;stack.appendChild(cv);
   mapBtn.addEventListener('click',()=>activateAux('map'));miniBtn.addEventListener('click',()=>activateAux('mini'));buttons.addEventListener('click',e=>{if(e.target!==mapBtn&&e.target!==miniBtn&&e.target.closest('button'))deactivateAux();},true);
-  $('circuitNumber').addEventListener('change',e=>{try{setCurrentCircuitIndex(Number(e.target.value));refreshUi();}catch(err){status(`ERROR: ${err.message}`);}});$('circuitMapId').addEventListener('change',e=>{setCurrentMapId(Number(e.target.value));refreshUi();});$('circuitMapApply').addEventListener('click',applyMapFields);$('circuitPackageImport').addEventListener('click',()=>$('circuitPackageInput').click());$('circuitPackageInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importCircuitZip(f);e.target.value='';});$('circuitPackageZip').addEventListener('click',exportZip);
+  $('circuitNumber').addEventListener('change',e=>{try{setCurrentCircuitIndex(Number(e.target.value));refreshUi();}catch(err){status(`ERROR: ${err.message}`);}});$('circuitMapId').addEventListener('change',e=>{setCurrentMapId(Number(e.target.value));refreshUi();});$('circuitMapApply').addEventListener('click',applyMapFields);$('circuitPackageImport').addEventListener('click',()=>$('circuitPackageInput').click());$('circuitPackageInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importCircuitZip(f);e.target.value='';});$('circuitPackageZip').addEventListener('click',exportZip);$('applyRouteLapGuards')?.addEventListener('click',applyRouteLapGuardFields);
   $('trackSelect')?.addEventListener('change',packageSelectionCapture,true);
   document.querySelectorAll('[data-preview-tool]').forEach(b=>b.addEventListener('click',()=>{previewTool=b.dataset.previewTool;previewTemplateHover=null;previewPaintHover=null;syncPreviewToolButtons();renderPreviewMode();}));document.querySelectorAll('[data-preview-template]').forEach(b=>b.addEventListener('click',()=>{previewTemplateKey=b.dataset.previewTemplate;previewTool='template';previewPaintHover=null;syncPreviewToolButtons();renderPreviewMode();}));document.querySelectorAll('[data-template-rotation]').forEach(b=>b.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateRotation=Number(b.dataset.templateRotation)||0;syncPreviewToolButtons();renderPreviewMode();}));$('circuitTemplateFlipH')?.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateFlipH=!previewTemplateFlipH;syncPreviewToolButtons();renderPreviewMode();});$('circuitTemplateFlipV')?.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateFlipV=!previewTemplateFlipV;syncPreviewToolButtons();renderPreviewMode();});syncPreviewToolButtons();$('circuitPreviewBrush').addEventListener('input',e=>{previewBrush=Number(e.target.value);$('circuitPreviewBrushText').textContent=String(previewBrush);});$('circuitPreviewUndo').addEventListener('click',previewUndoOnce);$('circuitPreviewRevert').addEventListener('click',previewRevert);$('circuitPreviewBlank').addEventListener('click',previewBlank);$('circuitPreviewFromBackdrop').addEventListener('click',previewFromBackdrop);
   cv.addEventListener('pointerdown',e=>{if(auxMode==='map'&&e.button===0){dragMarker=true;cv.setPointerCapture?.(e.pointerId);mapDrag(e);}else if(auxMode==='mini'&&(e.button===0||e.button===2))beginPreview(e);});cv.addEventListener('pointermove',e=>{mapDrag(e);movePreview(e);});cv.addEventListener('pointerup',e=>{if(auxMode==='map'){dragMarker=false;refreshUi();}endPreview(e);});cv.addEventListener('pointercancel',e=>{dragMarker=false;previewTemplateHover=null;previewPaintHover=null;endPreview(e);});cv.addEventListener('pointerleave',()=>{if(auxMode==='mini'&&!previewGesture&&(previewTemplateHover||previewPaintHover)){previewTemplateHover=null;previewPaintHover=null;renderPreviewMode();}});cv.addEventListener('contextmenu',e=>{if(auxMode==='mini')e.preventDefault();});

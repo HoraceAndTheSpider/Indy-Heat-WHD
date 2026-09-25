@@ -1,4 +1,53 @@
+## v0.118 — Waypoint structural controls restored
+
+- Restored the Waypoint mode structural controls (Add waypoint, Delete waypoint, Clean route data and Flip all waypoints L/R) to the visible main Waypoint panel.
+- Fixed the control-insertion anchor so the tools no longer get placed inside the collapsed Lap counting section when additional button rows are present.
+- Editor version advanced to v0.118.
+
+## v0.117 — Pit approach drag clarity
+
+- Made the complete **Pit approach Y / service X** guide line draggable, not only one selected pit intersection.
+- Added small neutral grab circles at both ends of the shared Pit approach Y line so its editable control is visually unambiguous.
+- Replaced the four player-coloured cursor icons on the approach line with short coloured service-X ticks. The ticks retain the real in-game relationship — each car uses its own service X together with the shared Pit approach Y — without implying four separate draggable approach controls.
+- Horizontal pointer movement while dragging the shared approach line no longer edits service X; service X remains edited via the corresponding pit service position.
+- Editor version advanced to v0.117.
+
+## v0.116 — HUD field regression fix
+
+- Fixed repeated HUD X / HUD Y controls appearing in Race mode after UI refreshes.
+- Race mode now keeps exactly one HUD X and one HUD Y field and seeds both from the active race presentation values.
+- No other Race / Pitlane UI behaviour changed.
+- Editor version advanced to v0.116.
+
 # Changelog
+
+## v0.115 — Race / Pitlane UI refinement
+
+- Shortened the edit-mode button to **Race**.
+- Removed the duplicated Race-pane viewer checkboxes and the developer-facing Pitlane activation explanation.
+- Added dedicated left-panel Pits view toggles for the pit pickup zone, Pit approach/service-X geometry, pit service positions, pit crews, PIT boards and cars in pits.
+- Added the pit pickup rectangle and shared Pit approach/service-X guide geometry to the authentic race overlay.
+- Moved HUD X / HUD Y directly below the Laps and Grid X direction controls.
+- Reworded the pit-side toggle as **Lower Side Pit Crew / Upper Side Pit Crew**.
+- Pit-car preview heading now uses the nearest Route C segment rather than the nearest waypoint's following segment, avoiding spurious angled pit-car previews near a route bend.
+- Editor version advanced to v0.115.
+
+## v0.114 — Pitlane activation authoring
+
+- Finished the narrow pit-entry investigation. The race-level Pitlane authoring set is `race+$2C` pickup centre X, `+$2E` pickup top Y, `+$30` pickup half-width and `+$60` Pit approach Y; the pickup band height is a fixed 30 screen pixels.
+- Confirmed `race+$60` has no second displacement-based consumer in the decompressed game code, so **Pit approach Y** is now the permanent label.
+- Documented the non-authorable runtime gates: the pit-routing state must be active; final commitment uses the car's pit-entry timer/state, requires the vertical pickup flag, normally requires forward speed below `$0100`, and requires the integer car/service-X separation to be less than 3. These are engine rules rather than extra race-record fields.
+- Added a **Race / Pitlane** overlay showing the screen-space pickup rectangle, draggable pickup origin/width handles and the selected pit's projected approach target. Added numeric controls for all four race-level Pitlane values.
+- Expanded authored `race_setup.bin` from `$68` to `$70` bytes by appending the four Pitlane words. Older `$68` circuit ZIPs remain editor-importable; their missing Pitlane words are seeded from the inferred retail template and the next export writes an explicit `$70` file. No dual-format WHDLoad runtime support is added here; the following dedicated runtime task will consume the new format.
+- Editor version advanced to v0.114.
+
+## v0.113 — route lap-count guard authoring
+
+- Resolved the final route-descriptor control at `race+$0A/+16/+22`: each route uses the first byte of the descriptor tail as the minimum previous sequence required before a return to sequence `0..3` can count as a lap.
+- Added Route A/B/C **Minimum previous sequence for lap** controls to Waypoint mode. `0` preserves the original retail behaviour; authoring range is `0..63`. The core race/waypoint parser now exposes the raw guard byte, effective minimum and remaining tail byte explicitly instead of leaving the descriptor tail as only an unnamed word.
+- Added explicit `route_settings.bin` package persistence (`IHRS` v1, 12 bytes) so custom authoring stores these three settings rather than deriving them from a retail host template. Existing packages without the sidecar import as explicit `0/0/0`.
+- Kept `waypoints.bin` at IHWP v1 so existing working custom-route runtime compatibility is not broken. The current WHDLoad slave does not yet consume `route_settings.bin`; runtime application belongs to the later no-inheritance custom-track pass.
+- Editor version advanced to v0.113.
 
 ## v0.52 — AI Turbo marker route-visibility fix
 

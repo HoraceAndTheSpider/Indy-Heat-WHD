@@ -413,9 +413,12 @@ function syncActionButtons(){
   for(const id of ['addWaypointMode','deleteWaypointMode','cleanWaypointRoutes','flipWaypointsLR']){const b=document.getElementById(id);if(b)b.disabled=!ready;}
 }
 
+function mainWaypointButtonRow(){
+  return document.getElementById('applyWaypoint')?.closest('.wpBtns')||null;
+}
 function installActionControls(){
   if(document.getElementById('addWaypointMode'))return;
-  const anchor=document.querySelector('.editorSection .wpBtns');if(!anchor)return;
+  const anchor=mainWaypointButtonRow();if(!anchor)return;
   if(!document.getElementById('waypointActionStyle')){
     const style=document.createElement('style');style.id='waypointActionStyle';style.textContent='.wpActionToggle.active{outline:2px solid currentColor;outline-offset:-2px}.wpActionToggle[aria-pressed="true"]{font-weight:700}';document.head.appendChild(style);
   }
@@ -461,7 +464,7 @@ function flipAllWaypointsLR(){
 
 function installFlipControl(){
   if(document.getElementById('flipWaypointsLR'))return;
-  const anchor=document.querySelector('.editorSection .wpBtns');if(!anchor)return;
+  const anchor=document.getElementById('cleanWaypointRoutes')?.closest('.wpBtns')||mainWaypointButtonRow();if(!anchor)return;
   const row=document.createElement('div');row.className='wpBtns';const button=document.createElement('button');button.id='flipWaypointsLR';button.type='button';button.textContent='Flip all waypoints L/R';button.title='Mirror every waypoint on Routes A, B and C across the 320-pixel game screen (screen X = 320 - X).';row.appendChild(button);anchor.insertAdjacentElement('afterend',row);
   button.addEventListener('click',flipAllWaypointsLR);syncActionButtons();
 }

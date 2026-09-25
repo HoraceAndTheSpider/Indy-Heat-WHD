@@ -67,7 +67,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.112';
+  const EDITOR_VERSION='0.118';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -208,6 +208,16 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
           <label>Link delta <input id="editWpDelta" type="number" min="-32768" max="32767" step="6" disabled></label>
         </div>
       </details>
+      <details class="smallDetails" id="routeLapSettings"><summary>Lap counting</summary>
+        <div class="mini muted">When a route returns to sequence 0–3, this sets how far around that route the car must previously have progressed before the transition can count as a lap. 0 preserves the original game behaviour.</div>
+        <div class="editGrid compactAdvanced">
+          <label>Route A minimum previous sequence <input id="routeLapGuard0" type="number" min="0" max="63" step="1" value="0"></label>
+          <label>Route B minimum previous sequence <input id="routeLapGuard1" type="number" min="0" max="63" step="1" value="0"></label>
+          <label>Route C minimum previous sequence <input id="routeLapGuard2" type="number" min="0" max="63" step="1" value="0"></label>
+        </div>
+        <div class="wpBtns"><button id="applyRouteLapGuards" type="button">Apply lap settings</button></div>
+        <div id="routeLapGuardStatus" class="mini statusLine"></div>
+      </details>
       <div class="wpBtns"><button id="applyWaypoint" type="button" disabled>Apply fields</button><button id="revertWaypoint" type="button" disabled>Revert selected</button></div>
       <div id="editStatus" class="mini statusLine"></div>
       <div id="editCount" class="mini">0 modified waypoints</div>
@@ -237,7 +247,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
         <p><b>Foreground / Surface:</b> choose a drawing tool, paint value and brush. Curve uses three clicks; Free-form closes near its start point. Right-click uses the secondary paint action.</p>
         <p><b>Recovery:</b> rotate arrows with left/right mouse; Grab group supports multi-cell selection.</p>
         <p><b>Fixed viewport:</b> enable the shared viewport, then drag its bottom-right corner to resize it. The chosen size is retained while switching between the circuit, Backdrop, MiniMap and GeoMap views; use the trackpad or scrollbars to move around larger zoomed content.</p>
-        <p><b>Race:</b> drag visible race/pit anchors or edit their fields. Grid X direction is checked against Route A waypoint 3; pit-side and pit-crew placement checks use retail-derived rules. MiniMap and Backdrop use the shared drawing tools (Pencil, Line, shapes, Curve, Free-form and Fill) with pre-made, captured or loaded brushes, including multi-edge and traced captures. Backdrop paints in the verified 32-colour race palette and retains IFF import/remapping; GeoMap has its own edit mode.</p>
+        <p><b>Race:</b> edit the start/grid, HUD, pitlane geometry, pit/service positions and presentation anchors. Drag visible edit anchors or use the Race fields. MiniMap and Backdrop use the shared drawing tools (Pencil, Line, shapes, Curve, Free-form and Fill) with pre-made, captured or loaded brushes, including multi-edge and traced captures. Backdrop paints in the verified 32-colour race palette and retains IFF import/remapping; GeoMap has its own edit mode.</p>
         <p>Full editor and package documentation: <a href="https://github.com/HoraceAndTheSpider/Indy-Heat-WHD/wiki/Editor-and-Track-Package-Workflow" target="_blank" rel="noopener">Editor and Track Package Workflow</a>.</p>
       </div>
     </details>
@@ -315,25 +325,25 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     </details>
   </div>
 </main>
-<script src="indyheat.js"></script>
+<script src="indyheat.js?v=0114"></script>
 <script src="recovery-hook.js"></script>
 <script src="layer-tools.js?v=050"></script>
-<script src="indyheat_race_graphics.js?v=0110"></script>
+<script src="indyheat_race_graphics.js?v=0115"></script>
 <script src="app.js"></script>
 <script src="layer-editor.js?v=052"></script>
-<script src="waypoint-actions.js?v=069"></script>
+<script src="waypoint-actions.js?v=070"></script>
 <script src="recovery-editor.js?v=049"></script>
-<script src="race-setup.js?v=0112"></script>
-<script src="race-validation.js?v=057"></script>
+<script src="race-setup.js?v=0115"></script>
+<script src="race-validation.js?v=058"></script>
 <script src="track-backdrop.js"></script>
-<script src="circuit-package.js?v=032"></script>
+<script src="circuit-package.js?v=0114"></script>
 <script src="circuit-library.js?v=069"></script>
 <script src="brush-tools.js?v=078"></script>
 <script src="brush-library.js?v=0111"></script>
 <script src="minimap-brush-ui.js?v=078"></script>
 <script src="backdrop-brush-ui.js?v=078"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
-<script src="editor-ui.js?v=0112"></script>
+<script src="editor-ui.js?v=0115"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */

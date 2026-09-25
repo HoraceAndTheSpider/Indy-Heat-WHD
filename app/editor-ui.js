@@ -68,7 +68,10 @@ const MODE_ORDER=Object.freeze([
   'layerEditMap'
 ]);
 
-const PIT_TOGGLES=Object.freeze(['circuitShowPits','circuitShowBoards','circuitShowPitCars']);
+const PIT_TOGGLES=Object.freeze([
+  'circuitShowPitlaneZone','circuitShowPitApproach','circuitShowPits',
+  'circuitShowPitCrew','circuitShowBoards','circuitShowPitCars'
+]);
 const RACE_TOGGLES=Object.freeze([
   'circuitShowStart','circuitShowGridCars','circuitShowFlag',
   'circuitShowCurrentLaps','circuitShowTotalLaps','circuitShowTimer'
@@ -581,7 +584,10 @@ function restoreLeftFoldContainers(){
     viewSection.appendChild(pits);
   }
   const ph=pits.querySelector('.circuitViewToggleBody')||pits.querySelector('div');
-  makeFoldMirrorToggle(ph,'circuitShowPits','Pit/service + crew','raceShowPits');
+  makeFoldMirrorToggle(ph,'circuitShowPitlaneZone','Pit pickup zone','raceShowPitlaneZone');
+  makeFoldMirrorToggle(ph,'circuitShowPitApproach','Pit approach Y / service X','raceShowPitApproach');
+  makeFoldMirrorToggle(ph,'circuitShowPits','Pit service positions','raceShowPits');
+  makeFoldMirrorToggle(ph,'circuitShowPitCrew','Pit crews','raceShowPitCrew');
   makeFoldMirrorToggle(ph,'circuitShowBoards','PIT boards','raceShowBoards');
   makeFoldMirrorToggle(ph,'circuitShowPitCars','Cars in pits','raceShowPitCars');
 
@@ -962,32 +968,56 @@ function writeHud(x,y){
   renderHud();
 }
 function ensureHudControls(){
-  const pane=$('raceSetupPane');
-  if(!pane)return false;
-  let controls=$('circuitRaceHudControls');
-  if(!controls){
-    controls=document.createElement('div');
-    controls.id='circuitRaceHudControls';
-    controls.className='toolGroup';
-    controls.innerHTML=`<div class="toolGroupTitle">Race HUD / lap tower</div>
-      <div class="circuitAuxGrid">
-        <label>HUD X <input id="circuitHudX" type="number"></label>
-        <label>HUD Y <input id="circuitHudY" type="number"></label>
-      </div>`;
-    const grid=pane.querySelector('.raceSetupGrid');
-    pane.insertBefore(controls,grid||pane.firstChild);
+  const pane=$('raceSetupPane'),grid=$('raceLaps')?.closest('.raceSetupGrid');
+  if(!pane||!grid)return false;
+
+  // v0.116: HUD coordinates are ordinary Race setup fields. Keep exactly one
+  // pair directly below the Laps / Grid X direction row. Earlier v0.115 refresh
+  // passes could leave duplicate IDs in the DOM, so rebuild only when the pair
+  // is missing, duplicated or attached to the wrong container.
+  $('circuitRaceHudControls')?.remove();
+
+  let xs=[...document.querySelectorAll('#circuitHudX')];
+  let ys=[...document.querySelectorAll('#circuitHudY')];
+  let x=xs[0]||null,y=ys[0]||null;
+  const invalid=xs.length!==1||ys.length!==1||!x||!y||x.closest('.raceSetupGrid')!==grid||y.closest('.raceSetupGrid')!==grid;
+  if(invalid){
+    const labels=new Set([...xs,...ys].map(input=>input.closest('label')).filter(Boolean));
+    for(const label of labels)label.remove();
+    for(const input of [...xs,...ys])if(input.isConnected&&!input.closest('label'))input.remove();
+
+    const xLabel=document.createElement('label');
+    xLabel.dataset.editorUiHudField='x';
+    xLabel.innerHTML='HUD X <input id="circuitHudX" type="number">';
+    grid.appendChild(xLabel);
+    const yLabel=document.createElement('label');
+    yLabel.dataset.editorUiHudField='y';
+    yLabel.innerHTML='HUD Y <input id="circuitHudY" type="number">';
+    grid.appendChild(yLabel);
+    x=$('circuitHudX');y=$('circuitHudY');
   }
-  $('circuitHudApply')?.remove();
-  $('circuitHudBring')?.remove();
-  for(const row of controls.querySelectorAll('.raceSetupActions'))if(!row.children.length)row.remove();
-  for(const help of controls.querySelectorAll('[data-editor-ui-hud-help]'))help.remove();
-  for(const note of controls.querySelectorAll('.muted'))if(note.id!=='circuitRaceHudStatus')note.remove();
-  const x=$('circuitHudX'),y=$('circuitHudY');
+
+  const xLabel=x?.closest('label'),yLabel=y?.closest('label');
+  const orientLabel=$('raceStartOrient')?.closest('label');
+  if(orientLabel&&xLabel&&yLabel){
+    const anchor=orientLabel.nextSibling;
+    grid.insertBefore(xLabel,anchor);
+    grid.insertBefore(yLabel,anchor);
+  }
+
   const commit=()=>{if(!x||!y||x.value===''||y.value==='')return;const xv=Number(x.value),yv=Number(y.value);if(Number.isFinite(xv)&&Number.isFinite(yv))writeHud(xv,yv);};
   for(const input of [x,y])if(input&&!input.dataset.editorUiHudInstant){input.dataset.editorUiHudInstant='1';input.addEventListener('input',commit);input.addEventListener('change',commit);}
-  const q=presentation();if(q){const safe=safeHudAnchor(q.p);if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY))writeHud(safe.x,safe.y);}
+
+  const q=presentation();
+  if(q){
+    const safe=safeHudAnchor(q.p);
+    if(x)x.value=String(safe.x);
+    if(y)y.value=String(safe.y);
+    if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY))writeHud(safe.x,safe.y);
+  }
   return true;
 }
+
 function raceCanvasPoint(e){
   const c=$('view');
   if(!c)return null;
@@ -1798,7 +1828,7 @@ function cleanRace(){
   if(!pane)return false;
 
   for(const el of pane.querySelectorAll('.muted')){
-    if(textContains(el,'Pit/service and presentation positions are the real race/pit fields'))el.remove();
+    if(textContains(el,'Pit/service and presentation positions are the real race/pit fields')||textContains(el,'The pickup zone is screen-space'))el.remove();
     else if(textContains(el,'Exported as the optional 18-byte name.bin package sidecar'))el.remove();
     else if(textContains(el,'Displayed in Gasoline Alley.'))el.remove();
     else if(textContains(el,'Drag the HUD on the circuit, or edit HUD X/Y.'))el.remove();

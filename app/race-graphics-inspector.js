@@ -95,12 +95,60 @@ function pitCrewFrame(pit,playerIndex){const side=Number(pit?.slotWord)===1?'nor
 function pitBoardFrame(playerIndex){return graphics.pitBoardFrameIndex(playerIndex,checked('raceGraphicsPitBoardFemale',false)?'female':'male',pitsFrame%8);}
 function carFrame(heading16,screenY){return graphics.carNormalFrameFromHeading(heading16,screenY);}
 
+function drawPitlaneGeometry(ctx,R,s,S,state){
+  const showZone=checked('raceShowPitlaneZone')||checked('circuitShowPitlaneZone');
+  const showApproach=checked('raceShowPitApproach')||checked('circuitShowPitApproach');
+  if(!showZone&&!showApproach)return;
+
+  if(showZone){
+    const x=Number(s.pitPickupX),y=Number(s.pitPickupY),hw=Math.max(0,Number(s.pitPickupHalfWidth)||0),h=30;
+    ctx.save();ctx.lineWidth=Math.max(1,.7*S);ctx.strokeStyle='rgba(255,216,74,.96)';ctx.fillStyle='rgba(255,216,74,.12)';ctx.setLineDash([4*S,3*S]);
+    ctx.fillRect((x-hw)*S,y*S,hw*2*S,h*S);ctx.strokeRect((x-hw)*S,y*S,hw*2*S,h*S);ctx.setLineDash([]);
+    cursor(ctx,x,y,S);cursor(ctx,x+hw,y+h/2,S);
+    if(state.labels){label(ctx,'PIT PICKUP ZONE',(x-hw+3)*S,(y+3)*S,S);label(ctx,'WIDTH',(x+hw+4)*S,(y+h/2)*S,S);}
+    ctx.restore();
+  }
+
+  if(showApproach){
+    const rows=[];
+    for(const pit of s.pits){
+      if(!pitPlayerVisible(pit.index))continue;
+      const approachX=(Number(pit.serviceX)|0)>>16;
+      const q=R.projectFixedXZ(approachX<<16,(Number(s.pitApproachY)|0)<<16);
+      const stop=R.projectFixedXZ(pit.serviceX,pit.serviceY);
+      if(q)rows.push({pit,q,stop,p:playerInfo(pit.index)});
+    }
+    if(rows.length){
+      const minX=Math.min(...rows.map(r=>r.q.x)),maxX=Math.max(...rows.map(r=>r.q.x)),y=rows[0].q.y,x1=minX-8,x2=maxX+8;
+      ctx.save();ctx.lineWidth=Math.max(1,.65*S);ctx.strokeStyle='rgba(109,211,255,.95)';ctx.setLineDash([5*S,3*S]);ctx.beginPath();ctx.moveTo(x1*S,y*S);ctx.lineTo(x2*S,y*S);ctx.stroke();ctx.setLineDash([]);
+
+      // The shared approach Y is the editable line.  Small neutral circles at
+      // each end make its drag handles unambiguous; the line itself is also a
+      // hit target in race-setup.js.
+      ctx.fillStyle='rgba(0,0,0,.72)';ctx.strokeStyle='rgba(109,211,255,.98)';ctx.lineWidth=Math.max(1.2,.6*S);
+      for(const hx of [x1,x2]){ctx.beginPath();ctx.arc(hx*S,y*S,2.5*S,0,Math.PI*2);ctx.fill();ctx.stroke();}
+
+      for(const r of rows){
+        if(r.stop){ctx.strokeStyle=r.p.css;ctx.globalAlpha*=.55;ctx.beginPath();ctx.moveTo(r.q.x*S,r.q.y*S);ctx.lineTo(r.stop.x*S,r.stop.y*S);ctx.stroke();ctx.globalAlpha/= .55;}
+        // Each coloured tick is meaningful game data: this player's service X
+        // intersecting the shared Pit approach Y.  It is deliberately not drawn
+        // as a cursor/handle, because service X is edited at the service point.
+        ctx.strokeStyle=r.p.css;ctx.lineWidth=Math.max(1.2,.7*S);ctx.beginPath();ctx.moveTo(r.q.x*S,(r.q.y-3)*S);ctx.lineTo(r.q.x*S,(r.q.y+3)*S);ctx.stroke();
+        if(state.labels)label(ctx,`${r.p.player} X`,(r.q.x+3)*S,(r.q.y+3)*S,S,r.p.css);
+      }
+      if(state.labels)label(ctx,'PIT APPROACH Y',x1*S,(y-12)*S,S,'#6dd3ff');
+      ctx.restore();
+    }
+  }
+}
+
 function drawOverlay(){
   suppressLegacyRaceVisuals();const c=syncOverlay();if(!c)return;const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
   if(!overlaysVisible()||!ensureGraphics())return;
   const {R}=deps(),s=currentSetup(),record=currentRecord();if(!R||!s)return;
   const S=c.width/320,alpha=Math.max(.25,Math.min(1,Number($('opacity')?.value||55)/100));ctx.globalAlpha=alpha;
   const pits=sectionState('Pits'),race=sectionState('Race');
+  drawPitlaneGeometry(ctx,R,s,S,pits);
 
   if(checked('raceShowStart')||checked('circuitShowStart')){
     const q=R.projectFixedXZ(s.startX,s.startY);if(q)drawCursorLabel(ctx,race,q.x,q.y,S,'START GRID');
@@ -118,6 +166,7 @@ function drawOverlay(){
     if(!pitPlayerVisible(pit.index))continue;
     const p=playerInfo(pit.index);
     const showPits=checked('raceShowPits')||checked('circuitShowPits');
+    const showCrew=checked('raceShowPitCrew')||checked('circuitShowPitCrew');
     const showPitCars=checked('raceShowPitCars')||checked('circuitShowPitCars');
     let serviceQ=(showPits||showPitCars)?R.projectFixedXZ(pit.serviceX,pit.serviceY):null;
 
@@ -128,12 +177,13 @@ function drawOverlay(){
       sprite(ctx,0x38,carFrame(heading,serviceQ.y),serviceQ.x,serviceQ.y,S,pit.index);
     }
 
-    if(showPits){
-      if(serviceQ)drawCursorLabel(ctx,pits,serviceQ.x,serviceQ.y,S,`${p.player} STOP`,p.css);
-      if(pit.screenX>=0&&pit.screenX<320&&pit.screenY>=0&&pit.screenY<256){
-        if(pits.graphics)sprite(ctx,0x05,pitCrewFrame(pit,pit.index),pit.screenX,pit.screenY,S,pit.index);
-        drawCursorLabel(ctx,pits,pit.screenX,pit.screenY,S,`${p.player} CREW`,p.css);
-      }
+    if(showPits&&serviceQ){
+      cursor(ctx,serviceQ.x,serviceQ.y,S,p.css);
+      if(pits.labels)drawLabelOnly(ctx,pits,serviceQ.x,serviceQ.y,S,`${p.player} STOP`,p.css);
+    }
+    if(showCrew&&pit.screenX>=0&&pit.screenX<320&&pit.screenY>=0&&pit.screenY<256){
+      if(pits.graphics)sprite(ctx,0x05,pitCrewFrame(pit,pit.index),pit.screenX,pit.screenY,S,pit.index);
+      drawCursorLabel(ctx,pits,pit.screenX,pit.screenY,S,`${p.player} CREW`,p.css);
     }
     if(showPitCars&&serviceQ)drawCursorLabel(ctx,pits,serviceQ.x,serviceQ.y,S,`${p.player} CAR`,p.css);
 
@@ -195,7 +245,7 @@ function decoratePitSlots(){
 }
 function syncPitSideButton(){
   const input=$('raceSlotWord'),button=$('racePitSideToggle');if(!input||!button)return;
-  const side=Number(input.value)===1?1:0;button.dataset.side=String(side);button.textContent=`Side ${side}`;button.setAttribute('aria-pressed',side===1?'true':'false');
+  const side=Number(input.value)===1?1:0;button.dataset.side=String(side);button.textContent=side===1?'Upper Side Pit Crew':'Lower Side Pit Crew';button.setAttribute('aria-pressed',side===1?'true':'false');
 }
 function installPitSideToggle(){
   const input=$('raceSlotWord');if(!input)return false;
@@ -225,7 +275,7 @@ function injectViewControls(){
 
 function installListeners(){
   if(document.documentElement.dataset.raceGraphicsOverlay108)return;document.documentElement.dataset.raceGraphicsOverlay108='1';
-  const watched=new Set(['raceShowStart','raceShowPits','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars','circuitShowStart','circuitShowPits','circuitShowBoards','circuitShowFlag','circuitShowGridCars','circuitShowPitCars']);
+  const watched=new Set(['raceShowStart','raceShowPitlaneZone','raceShowPitApproach','raceShowPits','raceShowPitCrew','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars','circuitShowStart','circuitShowPitlaneZone','circuitShowPitApproach','circuitShowPits','circuitShowPitCrew','circuitShowBoards','circuitShowFlag','circuitShowGridCars','circuitShowPitCars']);
   const pitFields=new Set(['racePitSlot','raceServiceX','raceServiceY','raceBoardX','raceBoardY','raceScreenX','raceScreenY','raceSlotWord']);
   document.addEventListener('change',e=>{
     const id=e.target?.id;if(watched.has(id)){setTimeout(drawOverlay,0);return;}

@@ -1,7 +1,7 @@
 (function(root){
 'use strict';
 
-// v0.57 race-data validation helpers.
+// v0.58 race-data validation helpers.
 // Retail-derived/proved behaviours:
 // - race+$6A uses 0 for a +X start and $8000 (-32768) for a -X start.
 // - pit+$14 is a 0/1 presentation variant; on clear two-row retail pit layouts
@@ -220,12 +220,12 @@ function installUi(){
 
   renameLabel('raceServiceX','Pit box X (16.16)');renameLabel('raceServiceY','Pit box Y (16.16)');
   renameLabel('raceScreenX','Pit crew screen X');renameLabel('raceScreenY','Pit crew screen Y');
-  renameLabel('raceSlotWord','Pit side (0/1)');side.min='0';side.max='1';side.step='1';side.title='Code-proven 0/1 pit presentation variant at pit+$14.';
+  renameLabel('raceSlotWord','Pit crew side');side.min='0';side.max='1';side.step='1';side.title='Pit crew side: 0 = lower-side crew; 1 = upper-side crew.';
   const pitIssue=document.createElement('div');pitIssue.id='racePitSideValidation';pitIssue.className='raceValidationLine';pitIssue.hidden=true;pitGrid.appendChild(pitIssue);
   const crewIssue=document.createElement('div');crewIssue.id='raceCrewValidation';crewIssue.className='raceValidationLine';crewIssue.hidden=true;pitGrid.appendChild(crewIssue);
 
   const actions=document.createElement('div');actions.className='raceSetupActions';
-  const fix=document.createElement('button');fix.id='raceFixPitSides';fix.type='button';fix.textContent='Correct pit sides';fix.title='When the four pit boxes form two clear rows, set upper-row pits to side 1 and lower-row pits to side 0, matching all comparable retail circuits.';
+  const fix=document.createElement('button');fix.id='raceFixPitSides';fix.type='button';fix.textContent='Correct pit sides';fix.title='When the four pit boxes form two clear rows, set upper-row pits to the upper-side crew and lower-row pits to the lower-side crew.';
   const align=document.createElement('button');align.id='raceAlignCrew';align.type='button';align.textContent='Align crew to pit box';align.title='Set the selected pit crew to the retail-derived preferred anchor: 2 px left of the projected pit box; side 0 uses the same Y and side 1 uses +1 px Y.';
   actions.append(fix,align);pitGrid.insertAdjacentElement('afterend',actions);fix.addEventListener('click',fixPitSides);align.addEventListener('click',alignCrewToPitBox);
 
@@ -276,7 +276,7 @@ setInterval(()=>{
 },400);
 
 root.IndyHeatRaceValidation={
-  version:'0.57',update:updateAll,startDirectionState,inferPitSides,crewState,
+  version:'0.58',update:updateAll,startDirectionState,inferPitSides,crewState,
   retailCrewRule:{xOffset:-2,yOffsetSide0:0,yOffsetSide1:1,warningDistance:CREW_WARN_DISTANCE}
 };
 })(typeof globalThis!=='undefined'?globalThis:this);

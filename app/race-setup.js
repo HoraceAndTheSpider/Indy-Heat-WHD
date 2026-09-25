@@ -6,14 +6,19 @@ const RACE_RECORD_SIZE=0x82;
 const PIT_RECORD_SIZE=0x16;
 const PIT_RECORD_COUNT=4;
 const PIT_BLOCK_SIZE=PIT_RECORD_SIZE*PIT_RECORD_COUNT; // $58
-const COMPACT_SIZE=0x68;
+const LEGACY_COMPACT_SIZE=0x68;
+const COMPACT_SIZE=0x70;
 const LAP_MIN=2;
 const LAP_MAX=20;
 const OFF=Object.freeze({
   laps:0x28,
+  pitPickupX:0x2C,
+  pitPickupY:0x2E,
+  pitPickupHalfWidth:0x30,
   pitPointer:0x32,
   flagX:0x5C,
   flagY:0x5E,
+  pitApproachY:0x60,
   startX:0x62,
   startY:0x66,
   startOrient:0x6A
@@ -31,7 +36,8 @@ const COMPACT_LAYOUT=Object.freeze({
   laps:{offset:0x00,length:2,source:'race+$28.w'},
   flag:{offset:0x02,length:4,source:'race+$5C.w/+$5E.w'},
   start:{offset:0x06,length:10,source:'race+$62.l/+$66.l/+$6A.w'},
-  pits:{offset:0x10,length:PIT_BLOCK_SIZE,source:'four raw $16-byte pit records via race+$32.l'}
+  pits:{offset:0x10,length:PIT_BLOCK_SIZE,source:'four raw $16-byte pit records via race+$32.l'},
+  pitlane:{offset:0x68,length:8,source:'race+$2C/+2E/+30/+60 pitlane controls'}
 });
 
 // Four start-grid local offsets written by the race setup code into each car's
@@ -78,6 +84,8 @@ function parseRaceSetup(main,record){
   return {
     recordIndex:record.index,recordOffset:o,name:record.name||'',baseResourceId:record.baseResourceId??null,
     laps:be16(main,o+OFF.laps),
+    pitPickupX:s16(be16(main,o+OFF.pitPickupX)),pitPickupY:s16(be16(main,o+OFF.pitPickupY)),
+    pitPickupHalfWidth:be16(main,o+OFF.pitPickupHalfWidth),pitApproachY:s16(be16(main,o+OFF.pitApproachY)),
     flagX:s16(be16(main,o+OFF.flagX)),flagY:s16(be16(main,o+OFF.flagY)),
     startX:s32(be32(main,o+OFF.startX)),startY:s32(be32(main,o+OFF.startY)),
     startOrient:s16(be16(main,o+OFF.startOrient)),
@@ -87,6 +95,10 @@ function parseRaceSetup(main,record){
 
 function writeCommon(main,recordOffset,values={}){
   if(values.laps!=null)wr16(main,recordOffset+OFF.laps,clampInt(values.laps,LAP_MIN,LAP_MAX,'Lap count'));
+  if(values.pitPickupX!=null)wr16(main,recordOffset+OFF.pitPickupX,clampInt(values.pitPickupX,-32768,32767,'Pit pickup centre X')&0xffff);
+  if(values.pitPickupY!=null)wr16(main,recordOffset+OFF.pitPickupY,clampInt(values.pitPickupY,-32768,32767,'Pit pickup top Y')&0xffff);
+  if(values.pitPickupHalfWidth!=null)wr16(main,recordOffset+OFF.pitPickupHalfWidth,clampInt(values.pitPickupHalfWidth,0,32767,'Pit pickup half-width'));
+  if(values.pitApproachY!=null)wr16(main,recordOffset+OFF.pitApproachY,clampInt(values.pitApproachY,-32768,32767,'Pit approach Y')&0xffff);
   if(values.flagX!=null)wr16(main,recordOffset+OFF.flagX,clampInt(values.flagX,-32768,32767,'Flag X')&0xffff);
   if(values.flagY!=null)wr16(main,recordOffset+OFF.flagY,clampInt(values.flagY,-32768,32767,'Flag Y')&0xffff);
   if(values.startX!=null)wr32(main,recordOffset+OFF.startX,Number(values.startX)>>>0);
@@ -110,17 +122,27 @@ function makeCompactBin(main,record){
   out.set(main.slice(o+OFF.flagX,o+OFF.flagX+4),COMPACT_LAYOUT.flag.offset);
   out.set(main.slice(o+OFF.startX,o+OFF.startX+10),COMPACT_LAYOUT.start.offset);
   out.set(main.slice(setup.pitFileOffset,setup.pitFileOffset+PIT_BLOCK_SIZE),COMPACT_LAYOUT.pits.offset);
+  wr16(out,COMPACT_LAYOUT.pitlane.offset+0,setup.pitPickupX&0xffff);
+  wr16(out,COMPACT_LAYOUT.pitlane.offset+2,setup.pitPickupY&0xffff);
+  wr16(out,COMPACT_LAYOUT.pitlane.offset+4,setup.pitPickupHalfWidth);
+  wr16(out,COMPACT_LAYOUT.pitlane.offset+6,setup.pitApproachY&0xffff);
   return out;
 }
 function applyCompactBin(main,record,bin){
   if(!(bin instanceof Uint8Array))bin=new Uint8Array(bin);
-  if(bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be exactly $68 (${COMPACT_SIZE}) bytes`);
+  if(bin.length!==LEGACY_COMPACT_SIZE&&bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be $68 (${LEGACY_COMPACT_SIZE}) or $70 (${COMPACT_SIZE}) bytes`);
   const setup=parseRaceSetup(main,record),o=setup.recordOffset;
   const importedLaps=be16(bin,COMPACT_LAYOUT.laps.offset);
   wr16(main,o+OFF.laps,importedLaps<LAP_MIN?LAP_MIN:importedLaps);
   main.set(bin.slice(COMPACT_LAYOUT.flag.offset,COMPACT_LAYOUT.flag.offset+4),o+OFF.flagX);
   main.set(bin.slice(COMPACT_LAYOUT.start.offset,COMPACT_LAYOUT.start.offset+10),o+OFF.startX);
   main.set(bin.slice(COMPACT_LAYOUT.pits.offset,COMPACT_LAYOUT.pits.offset+PIT_BLOCK_SIZE),setup.pitFileOffset);
+  if(bin.length>=COMPACT_SIZE){
+    wr16(main,o+OFF.pitPickupX,be16(bin,COMPACT_LAYOUT.pitlane.offset+0));
+    wr16(main,o+OFF.pitPickupY,be16(bin,COMPACT_LAYOUT.pitlane.offset+2));
+    wr16(main,o+OFF.pitPickupHalfWidth,be16(bin,COMPACT_LAYOUT.pitlane.offset+4));
+    wr16(main,o+OFF.pitApproachY,be16(bin,COMPACT_LAYOUT.pitlane.offset+6));
+  }
   return parseRaceSetup(main,record);
 }
 function setupFilename(record){return `indyheat_r${String(Number(record.index)).padStart(2,'0')}_setup.bin`;}
@@ -215,14 +237,18 @@ function angle16FromWorldVector(dx,dy){
 }
 function pitHeadingFromRoute(record,pit){
   const points=record?.waypointDescriptors?.[2]?.points;if(!Array.isArray(points)||points.length<2||!pit)return null;
-  const px=fixedToNumber(pit.serviceX),py=fixedToNumber(pit.serviceY);let best=0,bd=Infinity;
-  for(let i=0;i<points.length;i++){const q=points[i],dx=Number(q.x)-px,dy=Number(q.y)-py,d=dx*dx+dy*dy;if(d<bd){bd=d;best=i;}}
-  const a=points[best],b=points[(best+1)%points.length];let dx=Number(b.x)-Number(a.x),dy=Number(b.y)-Number(a.y);
-  if(dx===0&&dy===0){const prev=points[(best+points.length-1)%points.length];dx=Number(a.x)-Number(prev.x);dy=Number(a.y)-Number(prev.y);}
-  return angle16FromWorldVector(dx,dy);
+  const px=fixedToNumber(pit.serviceX),py=fixedToNumber(pit.serviceY);let best=null;
+  for(let i=0;i<points.length;i++){
+    const a=points[i],b=points[(i+1)%points.length],ax=Number(a.x),ay=Number(a.y),bx=Number(b.x),by=Number(b.y);
+    const dx=bx-ax,dy=by-ay,len2=dx*dx+dy*dy;if(!Number.isFinite(len2)||len2<=0)continue;
+    const t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/len2));
+    const qx=ax+t*dx,qy=ay+t*dy,ex=px-qx,ey=py-qy,d2=ex*ex+ey*ey;
+    if(!best||d2<best.d2)best={dx,dy,d2};
+  }
+  return best?angle16FromWorldVector(best.dx,best.dy):null;
 }
 
-const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
+const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
   be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
   writeCommon,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
   mergeProjectedFixed,projectFixed22_6,inverseFixedXZ,
@@ -273,7 +299,7 @@ function injectUi(){
     .raceSetupGrid label{display:grid;gap:3px;margin:0;color:#b9c0cc;font-size:11px}
     .raceSetupGrid input,.raceSetupGrid select{min-width:0;width:100%;box-sizing:border-box}
     .raceSetupWide{grid-column:1/-1}
-    .raceSetupChecks{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:7px 0 10px}
+    .raceSetupChecks{display:none}
     .raceSetupChecks label{margin:0;font-size:11px}
     .raceSetupActions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:7px 0}
     .raceSetupActions button{font-size:11px;padding:6px}
@@ -285,10 +311,12 @@ function injectUi(){
   const mode=document.createElement('button');mode.id='layerEditRaceSetup';mode.type='button';mode.textContent='Race';buttons.appendChild(mode);
   const pane=document.createElement('div');pane.id='raceSetupPane';pane.hidden=true;pane.innerHTML=`
     <div class="toolGroup"><div class="toolGroupTitle">Race setup</div>
-      <div class="muted" style="font-size:11px;line-height:1.35">Pit/service and presentation positions are the real race/pit fields. Car starts use the shared per-track grid origin/orientation; the four individual start slots are reconstructed from the game setup constants. Car graphics remain a visual preview only unless a proved active-car renderer is available.</div>
-      <div class="raceSetupChecks">
+      <div class="raceSetupChecks" aria-hidden="true">
         <label><input id="raceShowStart" type="checkbox" checked> Start grid</label>
-        <label><input id="raceShowPits" type="checkbox" checked> Pit targets</label>
+        <label><input id="raceShowPitlaneZone" type="checkbox" checked> Pit pickup zone</label>
+        <label><input id="raceShowPitApproach" type="checkbox" checked> Pit approach</label>
+        <label><input id="raceShowPits" type="checkbox" checked> Pit service positions</label>
+        <label><input id="raceShowPitCrew" type="checkbox" checked> Pit crews</label>
         <label><input id="raceShowBoards" type="checkbox" checked> PIT boards</label>
         <label><input id="raceShowFlag" type="checkbox" checked> Flag man</label>
         <label><input id="raceShowGridCars" type="checkbox"> Cars on grid</label>
@@ -301,6 +329,13 @@ function injectUi(){
         <label>Flag Y <input id="raceFlagY" type="number" min="-32768" max="32767" step="1"></label>
         <label>Grid X (16.16) <input id="raceStartX" type="number" step="0.0001"></label>
         <label>Grid Y (16.16) <input id="raceStartY" type="number" step="0.0001"></label>
+      </div>
+      <div class="toolGroupTitle">Pitlane</div>
+      <div class="raceSetupGrid">
+        <label>Pickup centre X <input id="racePitPickupX" type="number" min="-32768" max="32767" step="1"></label>
+        <label>Pickup top Y <input id="racePitPickupY" type="number" min="-32768" max="32767" step="1"></label>
+        <label>Pickup half-width <input id="racePitPickupHalfWidth" type="number" min="0" max="32767" step="1"></label>
+        <label>Pit approach Y <input id="racePitApproachY" type="number" min="-32768" max="32767" step="1"></label>
       </div>
       <div class="toolGroupTitle">Pit slot</div>
       <div class="raceSetupGrid">
@@ -323,12 +358,12 @@ function injectUi(){
   mode.addEventListener('click',activate);
   ['layerModeWaypoints','layerEditSurface','layerEditMask','layerEditRecovery','layerEditBackdrop'].forEach(id=>$(id)?.addEventListener('click',()=>{if(active)deactivate();}));
   $('racePitSlot').addEventListener('change',e=>{currentPit=Number(e.target.value)||0;refreshPanel();draw();});
-  ['raceShowStart','raceShowPits','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars'].forEach(id=>$(id).addEventListener('change',draw));
+  ['raceShowStart','raceShowPitlaneZone','raceShowPitApproach','raceShowPits','raceShowPitCrew','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars'].forEach(id=>$(id)?.addEventListener('change',draw));
   $('raceApply').addEventListener('click',applyPanel);
   $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);refreshPanel();draw();setStatus('Selected circuit race setup restored to the loaded Disk.1 data.');});
-  $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($68).\nLayout: laps 2 · flag 4 · start 10 · pits 88.`);});
-  $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $68 WHDLoad override.`);});
-  $('raceExportMain').addEventListener('click',()=>{if(C.model)downloadBytes(C.model.main,'indyheat_main_modified_v012.bin');});
+  $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($70).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8.`);});
+  $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $70 authored race setup.`);});
+  $('raceExportMain').addEventListener('click',()=>{if(C.model)downloadBytes(C.model.main,'indyheat_main_modified_v0115.bin');});
   cv.addEventListener('pointerdown',pointerDown);cv.addEventListener('pointermove',pointerMove);cv.addEventListener('pointerup',pointerUp);cv.addEventListener('pointercancel',pointerUp);cv.addEventListener('contextmenu',e=>{if(active)e.preventDefault();});
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{currentPit=0;refreshPanel();draw();},0));
   $('editorScale')?.addEventListener('change',()=>setTimeout(draw,0));$('opacity')?.addEventListener('input',draw);
@@ -350,17 +385,17 @@ function deactivate(){active=false;drag=null;$('layerEditRaceSetup')?.classList.
 
 function refreshPanel(){
   const s=currentSetup();if(!s){setStatus('Race setup data is not available for this circuit yet.');return;}
-  $('raceLaps').value=s.laps;$('raceFlagX').value=s.flagX;$('raceFlagY').value=s.flagY;$('raceStartX').value=fixedText(s.startX);$('raceStartY').value=fixedText(s.startY);$('raceStartOrient').value=s.startOrient;
+  $('raceLaps').value=s.laps;$('racePitPickupX').value=s.pitPickupX;$('racePitPickupY').value=s.pitPickupY;$('racePitPickupHalfWidth').value=s.pitPickupHalfWidth;$('racePitApproachY').value=s.pitApproachY;$('raceFlagX').value=s.flagX;$('raceFlagY').value=s.flagY;$('raceStartX').value=fixedText(s.startX);$('raceStartY').value=fixedText(s.startY);$('raceStartOrient').value=s.startOrient;
   currentPit=Math.max(0,Math.min(3,currentPit));$('racePitSlot').value=String(currentPit);const p=s.pits[currentPit];
   $('raceServiceX').value=fixedText(p.serviceX);$('raceServiceY').value=fixedText(p.serviceY);$('raceBoardX').value=fixedText(p.boardX);$('raceBoardY').value=fixedText(p.boardY);$('raceScreenX').value=p.screenX;$('raceScreenY').value=p.screenY;$('raceSlotWord').value=p.slotWord;
   const r=currentRecord(),d=dirty();
-  setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}\n${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($68). Drag visible anchors or edit fields.`);
+  setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}\n${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($70). Drag visible anchors or edit fields.`);
   $('raceRevert').disabled=!d;
 }
 function applyPanel(){
   const r=currentRecord(),s=currentSetup();if(!r||!s||!C.model)return;
   try{
-    writeCommon(C.model.main,r.offset,{laps:Number($('raceLaps').value),flagX:Number($('raceFlagX').value),flagY:Number($('raceFlagY').value),startX:numberToFixed($('raceStartX').value),startY:numberToFixed($('raceStartY').value),startOrient:Number($('raceStartOrient').value)});
+    writeCommon(C.model.main,r.offset,{laps:Number($('raceLaps').value),pitPickupX:Number($('racePitPickupX').value),pitPickupY:Number($('racePitPickupY').value),pitPickupHalfWidth:Number($('racePitPickupHalfWidth').value),pitApproachY:Number($('racePitApproachY').value),flagX:Number($('raceFlagX').value),flagY:Number($('raceFlagY').value),startX:numberToFixed($('raceStartX').value),startY:numberToFixed($('raceStartY').value),startOrient:Number($('raceStartOrient').value)});
     writePit(C.model.main,s.pitFileOffset,currentPit,{serviceX:numberToFixed($('raceServiceX').value),serviceY:numberToFixed($('raceServiceY').value),boardX:numberToFixed($('raceBoardX').value),boardY:numberToFixed($('raceBoardY').value),screenX:Number($('raceScreenX').value),screenY:Number($('raceScreenY').value),slotWord:Number($('raceSlotWord').value)});
     refreshPanel();draw();setStatus(`${s.name} race/pit fields updated.${dirty()?' · Modified':''}`);
   }catch(e){setStatus(`ERROR: ${e.message}`);}
@@ -387,16 +422,47 @@ function drawCarFootprint(ctx,x,y,S,heading16,text){
   ctx.fillStyle='rgba(20,20,20,.72)';ctx.strokeStyle='rgba(255,255,255,.96)';ctx.lineWidth=Math.max(1,0.55*S);ctx.beginPath();ctx.moveTo(6*S,0);ctx.lineTo(3.5*S,-3*S);ctx.lineTo(-5*S,-3*S);ctx.lineTo(-6*S,-2*S);ctx.lineTo(-6*S,2*S);ctx.lineTo(-5*S,3*S);ctx.lineTo(3.5*S,3*S);ctx.closePath();ctx.fill();ctx.stroke();
   ctx.strokeStyle='#ffd84a';ctx.beginPath();ctx.moveTo(2*S,0);ctx.lineTo(5*S,0);ctx.moveTo(4*S,-1*S);ctx.lineTo(5*S,0);ctx.lineTo(4*S,1*S);ctx.stroke();ctx.restore();label(ctx,text,(x+5)*S,(y-7)*S,S);
 }
+function drawPitlaneOverlay(ctx,s,S){
+  const showZone=$('raceShowPitlaneZone')?.checked,showApproach=$('raceShowPitApproach')?.checked;
+  if(!showZone&&!showApproach)return;
+  const x=s.pitPickupX,y=s.pitPickupY,hw=Math.max(0,s.pitPickupHalfWidth),h=30;
+  ctx.save();
+  if(showZone){
+    ctx.strokeStyle='rgba(255,216,74,.96)';ctx.fillStyle='rgba(255,216,74,.10)';ctx.lineWidth=Math.max(1,.65*S);ctx.setLineDash([4*S,3*S]);
+    ctx.fillRect((x-hw)*S,y*S,(hw*2)*S,h*S);ctx.strokeRect((x-hw)*S,y*S,(hw*2)*S,h*S);ctx.setLineDash([]);
+    anchor(ctx,x,y,S,'PIT PICKUP','pitPickup',null,true);
+    anchor(ctx,x+hw,y+h/2,S,'WIDTH','pitWidth',null,true);
+  }
+  if(showApproach){
+    const points=[];
+    for(const pit of s.pits){
+      const approachX=s16((Number(pit.serviceX)>>>16)&0xffff),approachRawY=s.pitApproachY<<16;
+      const q=projectFixedXZ(approachX<<16,approachRawY);
+      if(q)points.push(q);
+    }
+    if(points.length){
+      const x1=Math.min(...points.map(q=>q.x))-8,x2=Math.max(...points.map(q=>q.x))+8,y=points[0].y;
+      // The visible race-graphics overlay owns the presentation.  This hidden
+      // canvas owns only editing hit targets: the entire line plus both ends.
+      hitTargets.push({kind:'approachLine',x1,y1:y,x2,y2:y});
+      hitTargets.push({kind:'approachLine',x:x1,y});
+      hitTargets.push({kind:'approachLine',x:x2,y});
+    }
+  }
+  ctx.restore();
+}
 function draw(){
   const c=overlayCanvas(),v=viewCanvas();if(!c||!v)return;syncSize();const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);hitTargets=[];
   if(!active&&root.IndyHeatRaceOverlayOverride!==true)return;
   const s=currentSetup();if(!s)return;const S=c.width/320,alpha=Math.max(.25,Math.min(1,Number($('opacity')?.value||55)/100));ctx.globalAlpha=alpha;
+  drawPitlaneOverlay(ctx,s,S);
   if($('raceShowStart')?.checked){const q=projectFixedXZ(s.startX,s.startY);if(q)anchor(ctx,q.x,q.y,S,'START GRID','start');}
   if($('raceShowGridCars')?.checked){for(const car of gridCarPositions(s)){const q=projectFixedXZ(car.x,car.y);if(q)drawCarFootprint(ctx,q.x,q.y,S,car.heading16,`C${car.index+1}`);}}
   const record=currentRecord();
   for(const p of s.pits){
     let serviceQ=null;
-    if($('raceShowPits')?.checked){serviceQ=projectFixedXZ(p.serviceX,p.serviceY);if(serviceQ)anchor(ctx,serviceQ.x,serviceQ.y,S,`P${p.index+1} STOP`,'service',p.index);if(p.screenX>=0&&p.screenX<320&&p.screenY>=0&&p.screenY<256)drawSprite(ctx,0x05,0,p.screenX,p.screenY,S,`P${p.index+1} CREW`,'screen',p.index);}
+    if($('raceShowPits')?.checked){serviceQ=projectFixedXZ(p.serviceX,p.serviceY);if(serviceQ)anchor(ctx,serviceQ.x,serviceQ.y,S,`P${p.index+1} STOP`,'service',p.index);}
+    if($('raceShowPitCrew')?.checked&&p.screenX>=0&&p.screenX<320&&p.screenY>=0&&p.screenY<256)drawSprite(ctx,0x05,0,p.screenX,p.screenY,S,`P${p.index+1} CREW`,'screen',p.index);
     if($('raceShowPitCars')?.checked){serviceQ=serviceQ||projectFixedXZ(p.serviceX,p.serviceY);if(serviceQ){const h=pitHeadingFromRoute(record,p);drawCarFootprint(ctx,serviceQ.x,serviceQ.y,S,h==null?(s.startOrient&0xffff):h,`P${p.index+1} CAR`);}}
     if($('raceShowBoards')?.checked){const q=projectFixedXZ(p.boardX,p.boardY);if(q)drawSprite(ctx,0x08,0,q.x,q.y,S,`P${p.index+1} PIT`,'board',p.index);}
   }
@@ -406,12 +472,42 @@ function draw(){
   ctx.globalAlpha=1;
 }
 function eventXY(e){const c=overlayCanvas(),r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*320/r.width,y:(e.clientY-r.top)*256/r.height};}
-function nearestTarget(x,y){let best=null,bd=14*14;for(const t of hitTargets){const dx=t.x-x,dy=t.y-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=t;}}return best;}
-function pointerDown(e){if(!active||e.button!==0)return;const p=eventXY(e),t=nearestTarget(p.x,p.y);if(!t)return;e.preventDefault();e.stopPropagation();drag={...t,pointerId:e.pointerId};overlayCanvas().setPointerCapture?.(e.pointerId);overlayCanvas().classList.add('dragging');if(t.index!=null){currentPit=t.index;$('racePitSlot').value=String(currentPit);}refreshPanel();}
+function segmentDistanceSq(px,py,x1,y1,x2,y2){
+  const vx=x2-x1,vy=y2-y1,wx=px-x1,wy=py-y1,l2=vx*vx+vy*vy;
+  if(l2<=0)return wx*wx+wy*wy;
+  const u=Math.max(0,Math.min(1,(wx*vx+wy*vy)/l2)),dx=px-(x1+u*vx),dy=py-(y1+u*vy);
+  return dx*dx+dy*dy;
+}
+function nearestTarget(x,y){
+  let best=null,bd=14*14;
+  // Point handles retain the normal generous hit radius.
+  for(const t of hitTargets){
+    if(!Number.isFinite(t.x)||!Number.isFinite(t.y))continue;
+    const dx=t.x-x,dy=t.y-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=t;}
+  }
+  // Approach line is also directly draggable anywhere along its visible span.
+  for(const t of hitTargets){
+    if(!Number.isFinite(t.x1)||!Number.isFinite(t.y1)||!Number.isFinite(t.x2)||!Number.isFinite(t.y2))continue;
+    const d=segmentDistanceSq(x,y,t.x1,t.y1,t.x2,t.y2);if(d<8*8&&d<bd){bd=d;best=t;}
+  }
+  return best;
+}
+function pointerDown(e){if(!active||e.button!==0)return;const p=eventXY(e),t=nearestTarget(p.x,p.y);if(!t)return;e.preventDefault();e.stopPropagation();drag={...t,clickX:p.x,pointerId:e.pointerId};overlayCanvas().setPointerCapture?.(e.pointerId);overlayCanvas().classList.add('dragging');if(t.index!=null){currentPit=t.index;$('racePitSlot').value=String(currentPit);}refreshPanel();}
 function writeDrag(t,x,y){
   const r=currentRecord(),s=currentSetup();if(!r||!s||!C.model)return;
   if(t.kind==='flag'){writeCommon(C.model.main,r.offset,{flagX:Math.round(x),flagY:Math.round(y)});return;}
   if(t.kind==='screen'){writePit(C.model.main,s.pitFileOffset,t.index,{screenX:Math.round(x),screenY:Math.round(y)});return;}
+  if(t.kind==='pitPickup'){writeCommon(C.model.main,r.offset,{pitPickupX:Math.round(x),pitPickupY:Math.round(y)});return;}
+  if(t.kind==='pitWidth'){writeCommon(C.model.main,r.offset,{pitPickupHalfWidth:Math.max(0,Math.round(Math.abs(x-s.pitPickupX)))});return;}
+  if(t.kind==='approachLine'){
+    const pit=s.pits[currentPit]||s.pits[0];if(!pit)return;
+    // Pit approach Y is shared by all four pits.  Use the X at which the drag
+    // began only as an inverse-projection reference; horizontal pointer motion
+    // does not edit any service-X value here.
+    const xRaw=s16((Number(pit.serviceX)>>>16)&0xffff)<<16,preferY=s.pitApproachY<<16;
+    const inv=inverseFixedXZ(Number.isFinite(t.clickX)?t.clickX:x,y,xRaw,preferY);if(!inv)return;
+    writeCommon(C.model.main,r.offset,{pitApproachY:s16((Number(inv.zRaw)>>>16)&0xffff)});return;
+  }
 
   if(t.kind==='start'){
     const inv=inverseFixedXZ(x,y,s.startX,s.startY);if(!inv)return;
@@ -451,8 +547,9 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
  *   and '@' as invisible alignment/fill glyphs around the readable name.
  *
  * Package compatibility:
- *   race_setup.bin deliberately remains the proven $68 format.
- *   The editor adds an optional ninth package sidecar, name.bin, containing the
+ *   race_setup.bin is authored as the current $70 format; older $68 package
+ *   files remain importable and are upgraded on the next export.
+ *   The editor adds an optional package sidecar, name.bin, containing the
  *   exact 18 raw bytes. Older editor builds ignore the extra ZIP member.
  *   Name authoring is kept as package metadata instead of mutating the shared
  *   retail template record, so switching imported packages cannot leak a name
@@ -735,6 +832,10 @@ function snapshotLiveRaceSetup(templateIndex){
   const setup=R.parseRaceSetup(model.main,record);
   R.writeCommon(model.main,record.offset,{
     laps:liveIntegerOr('raceLaps',setup.laps,'Lap total',2,20),
+    pitPickupX:liveIntegerOr('racePitPickupX',setup.pitPickupX,'Pit pickup centre X'),
+    pitPickupY:liveIntegerOr('racePitPickupY',setup.pitPickupY,'Pit pickup top Y'),
+    pitPickupHalfWidth:liveIntegerOr('racePitPickupHalfWidth',setup.pitPickupHalfWidth,'Pit pickup half-width',0,32767),
+    pitApproachY:liveIntegerOr('racePitApproachY',setup.pitApproachY,'Pit approach Y'),
     flagX:liveIntegerOr('raceFlagX',setup.flagX,'Flag X'),
     flagY:liveIntegerOr('raceFlagY',setup.flagY,'Flag Y'),
     startX:liveFixed16Or('raceStartX',setup.startX,'Start X'),
@@ -813,7 +914,8 @@ function directPackageFiles(P,circuitIndex,templateIndex,nameBytes,raceSetupByte
     previewBin:preview.resource.data.slice(),
     waypointsBin:wp.bytes,
     raceSetupBin:raceSetupBytes,
-    presentationBin
+    presentationBin,
+    routeSettingsBin:P.encodeRouteSettingsBin(P.readRouteLapGuards(pm.main,pr.offset))
   });
   const folder=P.circuitFolder(circuitIndex);
   files.push({name:`${folder}/name.bin`,data:nameBytes.slice()});

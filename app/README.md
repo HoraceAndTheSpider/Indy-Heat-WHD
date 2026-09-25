@@ -96,14 +96,15 @@ The custom package workflow continues to use the established package files where
 - `recovery.bin`
 - `preview.bin`
 - `waypoints.bin`
-- `race_setup.bin`
+- `route_settings.bin` — explicit Route A/B/C minimum-previous-sequence lap guards (`IHRS` v1); current WHDLoad consumption is pending.
+- `race_setup.bin` — current export is `$70` bytes. The original `$68` content is retained at the front; the appended eight bytes explicitly store Pitlane pickup centre X, pickup top Y, pickup half-width and Pit approach Y. Older `$68` ZIPs still import and are upgraded on export.
 - `name.bin` — optional 18-byte Gasoline Alley circuit-name sidecar (17 display bytes + NUL); older packages without it remain valid.
 - `template.bin` — two-byte big-endian retail template index (`0..9`) emitted by v0.32+ exports for unambiguous WHDLoad custom-route hosting.
 - `presentation.bin`
 
 MiniMap templates are embedded in the application; no separate template artwork files are required in this directory.
 
-Circuit ZIP export in v0.32+ is a single direct serialisation path. At **Export circuit ZIP** it reads the live race/name/map/HUD controls, the current editable MiniMap buffer and the selected circuit resources, then builds and verifies one package. Clean retail clones choose waypoint data matching the selected retail route shape (for example Indianapolis 68/70/54). No separate **Apply fields** click is required. Signed presentation and pit coordinates may be negative; if a control has not been initialised, export preserves the selected circuit's existing value rather than treating the missing control as zero/NaN.
+Circuit ZIP export in v0.32+ is a single direct serialisation path. At **Export circuit ZIP** it reads the live race/name/map/HUD controls, the current editable MiniMap buffer and the selected circuit resources, then builds and verifies one package. Clean retail clones choose waypoint data matching the selected retail route shape (for example Indianapolis 68/70/54). No separate **Apply fields** click is required. Signed presentation and pit coordinates may be negative; the Race / Pitlane editor also visualises the 30-pixel pit pickup band and the selected pit approach target. The fixed final-commit rules (low speed below `$0100` unless a runtime override is active, and service-X distance below 3) are engine behaviour rather than package fields. If a control has not been initialised, export preserves the selected circuit's existing value rather than treating the missing control as zero/NaN.
 
 ## Development history
 
