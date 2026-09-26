@@ -23,7 +23,7 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 #playlistRaceCount{width:180px;vertical-align:middle}
 #playlistRaceCountText{display:inline-block;min-width:24px;margin-left:7px;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c2c8d2}
 #playlistRows{display:grid;gap:5px;margin:8px 0 12px}
-.playlistHead,.playlistRow{display:grid;grid-template-columns:48px minmax(250px,1.35fr) minmax(180px,1fr) 150px;gap:7px;align-items:center}
+.playlistHead,.playlistRow{display:grid;grid-template-columns:48px minmax(220px,1.25fr) minmax(170px,1fr) 150px 130px;gap:7px;align-items:center}
 .playlistHead{font-size:11px;color:#8f97a3;padding:0 7px}
 .playlistRow{padding:7px;border:1px solid #30343d;border-radius:5px;background:#14171c}
 .playlistRace{text-align:center;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#b9c0cc}
@@ -31,10 +31,15 @@ body:not(.playlistMode) #playlistWorkspace{display:none!important}
 .playlistCircuitName{font-size:12px;color:#c2c8d2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .playlistCircuitName.notLoaded{color:#8f97a3;font-style:italic}
 .playlistLapSelect{width:100%}
+.playlistCpuMode{width:100%}
+.playlistCpuChoices{grid-column:1/-1;margin-top:2px;padding-top:6px;border-top:1px solid #282d35}
+.playlistCpuChoices[hidden]{display:none}
+.playlistCpuGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.playlistCpuRow{display:grid;grid-template-columns:54px minmax(0,1fr) 30px;gap:6px;align-items:center;margin:0;color:#9fa7b4;font-size:11px}
+.playlistCpuRow input[type=range]{width:100%;min-width:0;margin:0}.playlistCpuRow output{text-align:right;font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#d6dbe3}
 .playlistActions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
 .playlistActions button,#playlistExport{padding:7px 10px}
 #playlistStatus{min-height:34px;white-space:pre-line;margin-top:7px}
-.playlistRuntimeNote{margin:8px 0 12px;padding:9px 10px;border-left:3px solid #5a6474;background:#12151a;line-height:1.4}
 /* Shared viewport resize handle and brush catalogue layout. */
 main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 #viewPrimaryRow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;margin:4px 0 8px}
@@ -57,8 +62,9 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   #appIdentity{gap:8px}
   .playlistHead{display:none}
   .playlistRow{grid-template-columns:56px minmax(0,1fr);gap:6px}
-  .playlistRace{grid-row:1/3}
-  .playlistCircuit,.playlistCircuitName,.playlistLapSelect{grid-column:2}
+  .playlistRace{grid-row:1/5}
+  .playlistCircuit,.playlistCircuitName,.playlistLapSelect,.playlistCpuMode{grid-column:2}
+  .playlistCpuChoices{grid-column:1/-1}
 }
 </style>
 
@@ -67,7 +73,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.118';
+  const EDITOR_VERSION='0.122';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -92,7 +98,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     <h1>Indy Heat Amiga — Circuit Editor</h1>
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
-      <button id="showPlaylistEditor" type="button" aria-pressed="false">Playlist Editor</button>
+      <button id="showPlaylistEditor" type="button" aria-pressed="false" title="Create a custom indyheat_playlist.bin including retail and custom circuits">Playlist Editor</button>
     </nav>
   </div>
   <label class="filebtn">Open Disk.1 / ADF<input id="fileInput" type="file" accept=".adf,.ADF,.1,application/octet-stream"></label>
@@ -101,21 +107,12 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <section id="playlistWorkspace" aria-label="Championship playlist editor">
   <div class="playlistCard">
     <h2>Championship Playlist</h2>
-    <div class="playlistIntro muted">
-      Build the <code>indyheat_playlist.bin</code> used by WHDLoad custom-track mode.
-      Circuit IDs <b>0–9</b> are the retail circuits; <b>10–99</b> are custom circuit packages.
-      The <b>2–20</b> range below applies only to the per-race <b>lap override</b>.
-    </div>
 
     <label class="inlineControl">Championship races
       <input id="playlistRaceCount" type="range" min="1" max="99" step="1" value="11"
              title="WHDLoad custom runtime supports 1–99 championship events">
       <output id="playlistRaceCountText" for="playlistRaceCount">11</output>
     </label>
-    <div class="playlistRuntimeNote mini muted">
-      IHPL v2 stores the championship event count directly. WHDLoad custom-track mode now accepts <b>1–99</b> races.
-      Changing the control adds or removes race rows; added rows continue the retail championship sequence until edited.
-    </div>
 
     <div class="playlistActions">
       <button id="playlistImport" type="button">Import playlist .bin</button>
@@ -126,12 +123,13 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 
     <div class="playlistHead">
       <span>Race</span>
-      <span>Circuit (0–99)</span>
+      <span>Circuit</span>
       <span>Name / load state</span>
-      <span>Laps (inherit / 2–20)</span>
+      <span>Laps</span>
+      <span>CPU Choices</span>
     </div>
     <div id="playlistRows"></div>
-    <div id="playlistStatus" class="mini muted">IHPL v2 · 11 races · circuit 0–99 · laps inherit or 2–20.</div>
+    <div id="playlistStatus" class="mini muted"></div>
   </div>
 </section>
 <main>
@@ -333,7 +331,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="layer-editor.js?v=052"></script>
 <script src="waypoint-actions.js?v=070"></script>
 <script src="recovery-editor.js?v=049"></script>
-<script src="race-setup.js?v=0115"></script>
+<script src="race-setup.js?v=0122"></script>
+<script src="cpu-choices.js?v=0122"></script>
 <script src="race-validation.js?v=058"></script>
 <script src="track-backdrop.js"></script>
 <script src="circuit-package.js?v=0114"></script>
@@ -343,7 +342,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="minimap-brush-ui.js?v=078"></script>
 <script src="backdrop-brush-ui.js?v=078"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
-<script src="editor-ui.js?v=0115"></script>
+<script src="editor-ui.js?v=0122"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */
@@ -579,89 +578,199 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 'use strict';
 
 const MAGIC='IHPL';
-const VERSION_V1=1;
-const VERSION_V2=2;
+const LEGACY_VERSION_V1=1;
+const LEGACY_VERSION_V2=2;
+const LEGACY_VERSION_V3=3;
 const RUNTIME_MIN_COUNT=1;
 const RUNTIME_MAX_COUNT=99;
-const INHERIT_LAPS=0xFFFF;
 const LAP_MIN=2;
 const LAP_MAX=20;
 const CIRCUIT_MIN=0;
 const CIRCUIT_MAX=99;
+const CPU_FIELDS=Object.freeze([
+  Object.freeze({key:'turbos',label:'Turbos'}),
+  Object.freeze({key:'brakes',label:'Brakes'}),
+  Object.freeze({key:'tyres',label:'Tyres'}),
+  Object.freeze({key:'crew',label:'Crew'}),
+  Object.freeze({key:'mpg',label:'MPG'}),
+  Object.freeze({key:'engine',label:'Engine'})
+]);
 const RETAIL_NAMES=Object.freeze([
   'Illinois','New Jersey','West Canada','South California','East Canada',
   'Indianapolis','Michigan','Colorado','North California','Kentucky'
 ]);
 const RETAIL_CHAMPIONSHIP=Object.freeze([0,5,1,2,3,4,6,7,8,9,5]);
+const RETAIL_CPU=Object.freeze([
+  Object.freeze([100,60,78,80,90,150]),
+  Object.freeze([100,60,78,80,90,150]),
+  Object.freeze([80,50,75,40,60,150]),
+  Object.freeze([80,50,68,40,70,150]),
+  Object.freeze([70,50,65,40,80,150]),
+  Object.freeze([70,50,68,40,80,150]),
+  Object.freeze([80,50,68,40,70,150]),
+  Object.freeze([0,100,110,80,120,150]),
+  Object.freeze([0,100,110,80,120,150]),
+  Object.freeze([70,50,65,40,80,150])
+]);
 
-function be16(b,o){
-  if(!b||o<0||o+2>b.length)throw new Error('Playlist word outside file');
-  return ((b[o]<<8)|b[o+1])>>>0;
-}
-function wr16(b,o,v){v=Number(v)&0xffff;b[o]=(v>>>8)&255;b[o+1]=v&255;}
+function be16(b,o){if(!b||o<0||o+2>b.length)throw new Error('Playlist word outside file');return ((b[o]<<8)|b[o+1])>>>0;}
 function ascii4(b,o){return String.fromCharCode(b[o],b[o+1],b[o+2],b[o+3]);}
-
-function normaliseEntries(entries,{forRuntime=false}={}){
-  if(!Array.isArray(entries)||entries.length<RUNTIME_MIN_COUNT||entries.length>RUNTIME_MAX_COUNT)throw new Error(`Playlist must contain ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT} events`);
-  return entries.map((entry,i)=>{
-    const circuit=Number(entry.circuit);
-    const laps=entry.laps==null||entry.laps===INHERIT_LAPS||entry.laps==='inherit'?'inherit':Number(entry.laps);
-    if(!Number.isInteger(circuit)||circuit<CIRCUIT_MIN||circuit>CIRCUIT_MAX)throw new Error(`Race ${i+1}: circuit must be ${CIRCUIT_MIN}..${CIRCUIT_MAX}`);
-    if(laps!=='inherit'&&(!Number.isInteger(laps)||laps<LAP_MIN||laps>LAP_MAX))throw new Error(`Race ${i+1}: laps must be inherit or ${LAP_MIN}..${LAP_MAX}`);
-    return {circuit,laps};
-  });
+function cpuObject(values){
+  const out={};CPU_FIELDS.forEach((f,i)=>out[f.key]=Number(values[i])||0);return out;
 }
+function cpuArray(values){
+  return CPU_FIELDS.map(f=>Number(values?.[f.key]));
+}
+function customLibraryMap(){
+  const list=globalThis.IndyHeatCustomCircuitLibrary?.loadedCircuits?.()||[];
+  return new Map(list.map(q=>[Number(q.circuitIndex),q]));
+}
+function circuitCpuValues(circuit){
+  circuit=Number(circuit);
+  const exact=globalThis.IndyHeatCpuChoices?.valuesForCircuit?.(circuit);
+  if(exact)return {...exact};
 
-function encode(entries,{forRuntime=true}={}){
-  const list=normaliseEntries(entries,{forRuntime});
-  const out=new Uint8Array(8+list.length*4);
-  out.set([0x49,0x48,0x50,0x4c],0);
-  wr16(out,4,VERSION_V2);
-  wr16(out,6,list.length);
-  list.forEach((entry,i)=>{
-    const o=8+i*4;
-    wr16(out,o,entry.circuit);
-    wr16(out,o+2,entry.laps==='inherit'?INHERIT_LAPS:entry.laps);
+  const custom=customLibraryMap().get(circuit);
+  if(custom){
+    const hosted=globalThis.IndyHeatCpuChoices?.valuesForCircuit?.(Number(custom.hostIndex));
+    if(hosted)return {...hosted};
+    if(Number.isInteger(Number(custom.hostIndex))&&RETAIL_CPU[Number(custom.hostIndex)])
+      return cpuObject(RETAIL_CPU[Number(custom.hostIndex)]);
+  }
+  if(RETAIL_CPU[circuit])return cpuObject(RETAIL_CPU[circuit]);
+  return cpuObject([100,60,78,80,90,150]);
+}
+function validateCpu(values,raceIndex){
+  const out={};
+  CPU_FIELDS.forEach(f=>{
+    const n=Number(values?.[f.key]);
+    if(!Number.isInteger(n)||n<0||n>255)throw new Error(`Race ${raceIndex+1}: ${f.label} must be 0..255`);
+    out[f.key]=n;
   });
   return out;
 }
+function normaliseEntries(entries){
+  if(!Array.isArray(entries)||entries.length<RUNTIME_MIN_COUNT||entries.length>RUNTIME_MAX_COUNT)
+    throw new Error(`Playlist must contain ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT} events`);
+  return entries.map((entry,i)=>{
+    const circuit=Number(entry.circuit);
+    if(!Number.isInteger(circuit)||circuit<CIRCUIT_MIN||circuit>CIRCUIT_MAX)
+      throw new Error(`Race ${i+1}: circuit must be ${CIRCUIT_MIN}..${CIRCUIT_MAX}`);
+    const laps=entry.laps==null||entry.laps==='inherit'||Number(entry.laps)===0?'inherit':Number(entry.laps);
+    if(laps!=='inherit'&&(!Number.isInteger(laps)||laps<LAP_MIN||laps>LAP_MAX))
+      throw new Error(`Race ${i+1}: laps must be inherit or ${LAP_MIN}..${LAP_MAX}`);
+    const cpuMode=entry.cpuMode==='playlist'?'playlist':'circuit';
+    const cpuChoices=cpuMode==='playlist'?validateCpu(entry.cpuChoices,i):circuitCpuValues(circuit);
+    return {circuit,laps,cpuMode,cpuChoices};
+  });
+}
 
-function parse(bytes){
-  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes||[]);
-  if(bytes.length<8)throw new Error('Playlist is shorter than the 8-byte IHPL header');
-  if(ascii4(bytes,0)!==MAGIC)throw new Error('Playlist signature is not IHPL');
+/*
+ * Current development IHPL layout:
+ *   "IHPL" + count.b
+ *   each event: circuitFlags.b, laps.b, then optional six CPU bytes
+ *   circuitFlags bit 7 = playlist CPU values present; bits 0..6 = circuit 0..99
+ *   laps 0 = circuit value, otherwise 2..20
+ */
+function encode(entries){
+  const list=normaliseEntries(entries);
+  let size=5;
+  for(const entry of list)size+=2+(entry.cpuMode==='playlist'?6:0);
+  const out=new Uint8Array(size);
+  out.set([0x49,0x48,0x50,0x4c],0);
+  out[4]=list.length;
+  let p=5;
+  for(const entry of list){
+    out[p++]=(entry.circuit&0x7f)|(entry.cpuMode==='playlist'?0x80:0);
+    out[p++]=entry.laps==='inherit'?0:entry.laps;
+    if(entry.cpuMode==='playlist'){
+      for(const f of CPU_FIELDS)out[p++]=entry.cpuChoices[f.key];
+    }
+  }
+  return out;
+}
+function parseCurrent(bytes){
+  const count=bytes[4];
+  if(count<RUNTIME_MIN_COUNT||count>RUNTIME_MAX_COUNT)
+    throw new Error(`Playlist event count ${count} is outside ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT}`);
+  const entries=[];let p=5;
+  for(let i=0;i<count;i++){
+    if(p+2>bytes.length)throw new Error(`Playlist ends before race ${i+1}`);
+    const flags=bytes[p++],circuit=flags&0x7f,cpuMode=(flags&0x80)?'playlist':'circuit',rawLaps=bytes[p++];
+    if(circuit>CIRCUIT_MAX)throw new Error(`Race ${i+1}: circuit ${circuit} is outside 0..99`);
+    let laps='inherit';
+    if(rawLaps!==0){
+      if(rawLaps<LAP_MIN||rawLaps>LAP_MAX)throw new Error(`Race ${i+1}: laps ${rawLaps} are outside ${LAP_MIN}..${LAP_MAX}`);
+      laps=rawLaps;
+    }
+    let cpuChoices=circuitCpuValues(circuit);
+    if(cpuMode==='playlist'){
+      if(p+6>bytes.length)throw new Error(`Playlist ends inside race ${i+1} CPU Choices`);
+      const raw=[];for(let j=0;j<6;j++)raw.push(bytes[p++]);
+      cpuChoices=cpuObject(raw);
+    }
+    entries.push({circuit,laps,cpuMode,cpuChoices});
+  }
+  if(p!==bytes.length)throw new Error(`Playlist has ${bytes.length-p} trailing byte${bytes.length-p===1?'':'s'}`);
+  return {count,entries,format:'current'};
+}
+function parseLegacy(bytes){
+  if(bytes.length<8)throw new Error('Legacy playlist is shorter than its header');
   const version=be16(bytes,4),count=be16(bytes,6);
-  if(version!==VERSION_V1&&version!==VERSION_V2)throw new Error(`Unsupported playlist version ${version}`);
-  if(count<RUNTIME_MIN_COUNT||count>RUNTIME_MAX_COUNT)throw new Error(`Playlist event count ${count} is outside ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT}`);
-  const expected=8+count*4;
-  if(bytes.length!==expected)throw new Error(`Playlist size/count mismatch: header says ${count} events (${expected} bytes), file is ${bytes.length} bytes`);
+  if(version!==LEGACY_VERSION_V1&&version!==LEGACY_VERSION_V2&&version!==LEGACY_VERSION_V3)
+    throw new Error(`Unsupported legacy playlist version ${version}`);
+  if(count<RUNTIME_MIN_COUNT||count>RUNTIME_MAX_COUNT)
+    throw new Error(`Playlist event count ${count} is outside ${RUNTIME_MIN_COUNT}..${RUNTIME_MAX_COUNT}`);
+  const entrySize=version===LEGACY_VERSION_V3?18:4,expected=8+count*entrySize;
+  if(bytes.length!==expected)throw new Error(`Legacy playlist size/count mismatch`);
   const entries=[];
   for(let i=0;i<count;i++){
-    const o=8+i*4,rawCircuit=be16(bytes,o),rawLaps=be16(bytes,o+2);
+    const o=8+i*entrySize,rawCircuit=be16(bytes,o),rawLaps=be16(bytes,o+2);
     let circuit;
-    if(version===VERSION_V1){
-      if(rawCircuit<1||rawCircuit>10)throw new Error(`Race ${i+1}: v1 physical Track ID ${rawCircuit} is outside 1..10`);
+    if(version===LEGACY_VERSION_V1){
+      if(rawCircuit<1||rawCircuit>10)throw new Error(`Race ${i+1}: legacy Track ID ${rawCircuit} is outside 1..10`);
       circuit=rawCircuit-1;
     }else{
-      if(rawCircuit>CIRCUIT_MAX)throw new Error(`Race ${i+1}: v2 circuit ${rawCircuit} is outside 0..99`);
+      if(rawCircuit>CIRCUIT_MAX)throw new Error(`Race ${i+1}: legacy circuit ${rawCircuit} is outside 0..99`);
       circuit=rawCircuit;
     }
     let laps='inherit';
-    if(rawLaps!==INHERIT_LAPS){
-      if(version===VERSION_V1){
-        laps=Math.max(LAP_MIN,Math.min(rawLaps,LAP_MAX));
-      }else{
-        if(rawLaps>LAP_MAX)throw new Error(`Race ${i+1}: v2 laps ${rawLaps} are outside ${LAP_MIN}..${LAP_MAX}`);
-        laps=Math.max(LAP_MIN,rawLaps);
+    if(rawLaps!==0xFFFF){
+      const n=version===LEGACY_VERSION_V1?Math.max(LAP_MIN,Math.min(rawLaps,LAP_MAX)):rawLaps;
+      if(n<LAP_MIN||n>LAP_MAX)throw new Error(`Race ${i+1}: legacy laps ${rawLaps} are outside ${LAP_MIN}..${LAP_MAX}`);
+      laps=n;
+    }
+    const inherited=circuitCpuValues(circuit);
+    let cpuMode='circuit',cpuChoices={...inherited};
+    if(version===LEGACY_VERSION_V3){
+      const mask=be16(bytes,o+4);
+      if(mask&~0x003F)throw new Error(`Race ${i+1}: legacy CPU mask is invalid`);
+      if(mask){
+        cpuMode='playlist';
+        CPU_FIELDS.forEach((f,j)=>{
+          if(mask&(1<<j)){
+            const n=be16(bytes,o+6+j*2);
+            if(n>255)throw new Error(`Race ${i+1}: legacy ${f.label} value ${n} exceeds 255`);
+            cpuChoices[f.key]=n;
+          }
+        });
       }
     }
-    entries.push({circuit,laps});
+    entries.push({circuit,laps,cpuMode,cpuChoices});
   }
-  return {version,count,entries,runtimeCompatible:true};
+  return {count,entries,format:'legacy'};
 }
-
-function defaultEntries(){return RETAIL_CHAMPIONSHIP.map(circuit=>({circuit,laps:'inherit'}));}
-function defaultEntryForIndex(i){return {circuit:RETAIL_CHAMPIONSHIP[i%RETAIL_CHAMPIONSHIP.length],laps:'inherit'};}
+function parse(bytes){
+  if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes||[]);
+  if(bytes.length<5)throw new Error('Playlist is shorter than the IHPL header');
+  if(ascii4(bytes,0)!==MAGIC)throw new Error('Playlist signature is not IHPL');
+  return bytes[4]===0?parseLegacy(bytes):parseCurrent(bytes);
+}
+function defaultEntryForIndex(i){
+  const circuit=RETAIL_CHAMPIONSHIP[i%RETAIL_CHAMPIONSHIP.length];
+  return {circuit,laps:'inherit',cpuMode:'circuit',cpuChoices:circuitCpuValues(circuit)};
+}
+function defaultEntries(){return RETAIL_CHAMPIONSHIP.map((_,i)=>defaultEntryForIndex(i));}
 function resizeEntries(count){
   count=Math.max(RUNTIME_MIN_COUNT,Math.min(RUNTIME_MAX_COUNT,Math.trunc(Number(count)||RETAIL_CHAMPIONSHIP.length)));
   if(count<entries.length)entries=entries.slice(0,count);
@@ -669,15 +778,12 @@ function resizeEntries(count){
 }
 
 root.IndyHeatPlaylistTools=Object.freeze({
-  MAGIC,VERSION_V1,VERSION_V2,RUNTIME_MIN_COUNT,RUNTIME_MAX_COUNT,INHERIT_LAPS,LAP_MIN,LAP_MAX,
-  RETAIL_CHAMPIONSHIP,defaultEntries,normaliseEntries,encode,parse
+  MAGIC,RUNTIME_MIN_COUNT,RUNTIME_MAX_COUNT,LAP_MIN,LAP_MAX,CPU_FIELDS,RETAIL_CHAMPIONSHIP,
+  defaultEntries,normaliseEntries,encode,parse
 });
 
 if(typeof document==='undefined')return;
-const $=id=>document.getElementById(id);
-const rows=$('playlistRows');
-if(!rows)return;
-
+const $=id=>document.getElementById(id),rows=$('playlistRows');if(!rows)return;
 function setEditorMode(mode){
   const playlist=mode==='playlist';
   document.body.classList.toggle('playlistMode',playlist);
@@ -692,10 +798,6 @@ $('showPlaylistEditor')?.addEventListener('click',()=>setEditorMode('playlist'))
 
 let entries=defaultEntries();
 
-function customLibraryMap(){
-  const list=globalThis.IndyHeatCustomCircuitLibrary?.loadedCircuits?.()||[];
-  return new Map(list.map(q=>[Number(q.circuitIndex),q]));
-}
 function circuitDescriptor(n,library=customLibraryMap()){
   n=Number(n);
   if(n<RETAIL_NAMES.length)return {name:RETAIL_NAMES[n],loaded:true,label:`${n} – ${RETAIL_NAMES[n]}`};
@@ -705,80 +807,104 @@ function circuitDescriptor(n,library=customLibraryMap()){
 }
 function circuitOptions(value){
   const library=customLibraryMap();let html='';
-  for(let n=CIRCUIT_MIN;n<=CIRCUIT_MAX;n++){
-    const q=circuitDescriptor(n,library);
-    html+=`<option value="${n}"${Number(value)===n?' selected':''}>${q.label}</option>`;
-  }
+  for(let n=CIRCUIT_MIN;n<=CIRCUIT_MAX;n++){const q=circuitDescriptor(n,library);html+=`<option value="${n}"${Number(value)===n?' selected':''}>${q.label}</option>`;}
   return html;
 }
 function lapOptions(value){
   let html=`<option value="inherit"${value==='inherit'?' selected':''}>Inherit circuit laps</option>`;
-  for(let n=LAP_MIN;n<=LAP_MAX;n++)html+=`<option value="${n}"${Number(value)===n?' selected':''}>${n} lap${n===1?'':'s'}</option>`;
+  for(let n=LAP_MIN;n<=LAP_MAX;n++)html+=`<option value="${n}"${Number(value)===n?' selected':''}>${n} laps</option>`;
   return html;
 }
-function setStatus(text,bad=false){
-  const e=$('playlistStatus');if(!e)return;
-  e.textContent=text;e.classList.toggle('bad',!!bad);
-}
+function setStatus(text,bad=false){const e=$('playlistStatus');if(!e)return;e.textContent=text;e.classList.toggle('bad',!!bad);}
 function render(){
   rows.innerHTML='';
   const raceCount=$('playlistRaceCount'),raceCountText=$('playlistRaceCountText');
   if(raceCount)raceCount.value=String(entries.length);
   if(raceCountText)raceCountText.textContent=String(entries.length);
   const library=customLibraryMap();
+
   entries.forEach((entry,i)=>{
-    const q=circuitDescriptor(entry.circuit,library);
-    const row=document.createElement('div');row.className='playlistRow';row.dataset.index=String(i);
+    entry=normaliseEntries([entry])[0];entries[i]=entry;
+    const q=circuitDescriptor(entry.circuit,library),row=document.createElement('div');
+    row.className='playlistRow';row.dataset.index=String(i);
+    const cpuInputs=CPU_FIELDS.map(field=>`<label class="playlistCpuRow" title="${field.label} CPU choice weight"><span>${field.label}</span><input class="playlistCpuInput" data-key="${field.key}" type="range" min="0" max="255" step="1" value="${entry.cpuChoices[field.key]}" ${entry.cpuMode==='playlist'?'':'disabled'} aria-label="Race ${i+1} ${field.label}"><output class="playlistCpuValue">${entry.cpuChoices[field.key]}</output></label>`).join('');
     row.innerHTML=`<span class="playlistRace">${i+1}</span>
       <select class="playlistCircuit" aria-label="Race ${i+1} circuit">${circuitOptions(entry.circuit)}</select>
       <span class="playlistCircuitName${q.loaded?'':' notLoaded'}">${q.name}</span>
-      <select class="playlistLapSelect" aria-label="Race ${i+1} lap override">${lapOptions(entry.laps)}</select>`;
-    const circuit=row.querySelector('.playlistCircuit'),name=row.querySelector('.playlistCircuitName'),laps=row.querySelector('.playlistLapSelect');
+      <select class="playlistLapSelect" aria-label="Race ${i+1} lap override" title="Use circuit lap value or override with 2–20 laps">${lapOptions(entry.laps)}</select>
+      <select class="playlistCpuMode" aria-label="Race ${i+1} CPU Choices source" title="Use circuit CPU Choices or store playlist-specific values"><option value="circuit"${entry.cpuMode==='circuit'?' selected':''}>Circuit</option><option value="playlist"${entry.cpuMode==='playlist'?' selected':''}>Playlist</option></select>
+      <div class="playlistCpuChoices"${entry.cpuMode==='playlist'?'':' hidden'}>
+        <div class="playlistCpuGrid">${cpuInputs}</div>
+      </div>`;
+
+    const circuit=row.querySelector('.playlistCircuit'),name=row.querySelector('.playlistCircuitName'),
+      laps=row.querySelector('.playlistLapSelect'),mode=row.querySelector('.playlistCpuMode'),
+      cpuChoices=row.querySelector('.playlistCpuChoices');
+
+    const syncCpuControls=()=>{
+      cpuChoices.hidden=entries[i].cpuMode!=='playlist';
+      row.querySelectorAll('.playlistCpuInput').forEach(input=>{
+        input.disabled=entries[i].cpuMode!=='playlist';
+        input.value=String(entries[i].cpuChoices[input.dataset.key]);
+        input.parentElement.querySelector('.playlistCpuValue').value=input.value;
+      });
+    };
+
     circuit.addEventListener('change',()=>{
-      const n=Number(circuit.value),desc=circuitDescriptor(n);entries[i].circuit=n;name.textContent=desc.name;name.classList.toggle('notLoaded',!desc.loaded);setStatus('Modified · export writes IHPL v2.');
+      const n=Number(circuit.value),desc=circuitDescriptor(n);
+      entries[i].circuit=n;name.textContent=desc.name;name.classList.toggle('notLoaded',!desc.loaded);
+      if(entries[i].cpuMode==='circuit'){entries[i].cpuChoices=circuitCpuValues(n);syncCpuControls();}
+      setStatus('Modified.');
     });
-    laps.addEventListener('change',()=>{entries[i].laps=laps.value==='inherit'?'inherit':Number(laps.value);setStatus('Modified · export writes IHPL v2.');});
+    laps.addEventListener('change',()=>{entries[i].laps=laps.value==='inherit'?'inherit':Number(laps.value);setStatus('Modified.');});
+    mode.addEventListener('change',()=>{
+      entries[i].cpuMode=mode.value==='playlist'?'playlist':'circuit';
+      if(entries[i].cpuMode==='playlist')entries[i].cpuChoices=circuitCpuValues(entries[i].circuit);
+      else entries[i].cpuChoices=circuitCpuValues(entries[i].circuit);
+      syncCpuControls();setStatus('Modified.');
+    });
+    row.querySelectorAll('.playlistCpuInput').forEach(input=>input.addEventListener('input',()=>{
+      if(entries[i].cpuMode!=='playlist')return;
+      entries[i].cpuChoices[input.dataset.key]=Number(input.value);
+      input.parentElement.querySelector('.playlistCpuValue').value=input.value;
+      setStatus('Modified.');
+    }));
     rows.appendChild(row);
   });
 }
 function download(bytes,name){
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
-  a.download=name;a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
+  a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 async function importFile(file){
   try{
     const parsed=parse(new Uint8Array(await file.arrayBuffer()));
-    entries=parsed.entries.map(e=>({...e}));render();
-    const note=parsed.version===VERSION_V1?' v1 physical Track IDs were converted to zero-based circuit IDs; export will use v2.':'';
-    setStatus(`Imported IHPL v${parsed.version} · ${parsed.count} races.${note}`);
+    entries=parsed.entries.map(e=>({...e,cpuChoices:{...e.cpuChoices}}));render();
+    setStatus(`Imported ${parsed.count} races.`);
   }catch(e){setStatus(`ERROR: ${e.message}`,true);}
 }
 $('playlistImport').addEventListener('click',()=>$('playlistInput').click());
 $('playlistInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importFile(f);e.target.value='';});
 $('playlistRaceCount')?.addEventListener('input',e=>{const out=$('playlistRaceCountText');if(out)out.textContent=String(e.target.value);});
-$('playlistRaceCount')?.addEventListener('change',e=>{resizeEntries(Number(e.target.value));render();setStatus(`Championship length set to ${entries.length} race${entries.length===1?'':'s'} · export writes IHPL v2.`);});
-$('playlistReset').addEventListener('click',()=>{entries=defaultEntries();render();setStatus('Reset to the established retail 11-race championship order.');});
-window.addEventListener('indyheat-circuit-library-changed',()=>{render();});
+$('playlistRaceCount')?.addEventListener('change',e=>{resizeEntries(Number(e.target.value));render();setStatus(`Championship length set to ${entries.length} race${entries.length===1?'':'s'}.`);});
+$('playlistReset').addEventListener('click',()=>{entries=defaultEntries();render();setStatus('Reset.');});
+window.addEventListener('indyheat-circuit-library-changed',()=>render());
 $('playlistExport').addEventListener('click',()=>{
   try{
-    // Pull values directly from the visible controls so export cannot lag behind UI state.
     const current=Array.from(rows.querySelectorAll('.playlistRow')).map((row,i)=>{
-      const circuit=Number(row.querySelector('.playlistCircuit').value);
-      const raw=row.querySelector('.playlistLapSelect').value;
-      return {circuit,laps:raw==='inherit'?'inherit':Number(raw)};
+      const circuit=Number(row.querySelector('.playlistCircuit').value),
+        rawLaps=row.querySelector('.playlistLapSelect').value,
+        cpuMode=row.querySelector('.playlistCpuMode').value==='playlist'?'playlist':'circuit',
+        cpuChoices={};
+      row.querySelectorAll('.playlistCpuInput').forEach(input=>cpuChoices[input.dataset.key]=Number(input.value));
+      return {circuit,laps:rawLaps==='inherit'?'inherit':Number(rawLaps),cpuMode,cpuChoices};
     });
-    const bytes=encode(current,{forRuntime:true});
-    // Re-read our completed output before download, matching the circuit-package export philosophy.
-    const verify=parse(bytes);
-    if(verify.version!==VERSION_V2||verify.count!==current.length)throw new Error('Playlist self-check failed');
-    entries=verify.entries.map(e=>({...e}));
+    const bytes=encode(current),verify=parse(bytes);
+    entries=verify.entries.map(e=>({...e,cpuChoices:{...e.cpuChoices}}));
     download(bytes,'indyheat_playlist.bin');
-    setStatus(`Exported IHPL v2 · ${verify.count} races · ${bytes.length} bytes.`);
+    setStatus(`Exported ${verify.count} races · ${bytes.length} bytes.`);
   }catch(e){setStatus(`ERROR: ${e.message}`,true);}
 });
-
 render();
 })(typeof globalThis!=='undefined'?globalThis:this);
 </script>

@@ -23,6 +23,18 @@ const OFF=Object.freeze({
   startY:0x66,
   startOrient:0x6A
 });
+const CPU_CHOICES_OFFSET=0x50;
+const CPU_CHOICES_SIZE=6;
+const LEGACY_CPU_CHOICES_SIZE=12;
+const CPU_CHOICES=Object.freeze([
+  Object.freeze({key:'turbos',label:'Turbos',offset:0x50}),
+  Object.freeze({key:'brakes',label:'Brakes',offset:0x52}),
+  Object.freeze({key:'tyres',label:'Tyres',offset:0x54}),
+  Object.freeze({key:'crew',label:'Crew',offset:0x56}),
+  Object.freeze({key:'mpg',label:'MPG',offset:0x58}),
+  Object.freeze({key:'engine',label:'Engine',offset:0x5A})
+]);
+
 const PIT=Object.freeze({
   serviceX:0x00,
   serviceY:0x04,
@@ -89,6 +101,10 @@ function parseRaceSetup(main,record){
     flagX:s16(be16(main,o+OFF.flagX)),flagY:s16(be16(main,o+OFF.flagY)),
     startX:s32(be32(main,o+OFF.startX)),startY:s32(be32(main,o+OFF.startY)),
     startOrient:s16(be16(main,o+OFF.startOrient)),
+    cpuChoices:Object.freeze({
+      turbos:be16(main,o+0x50),brakes:be16(main,o+0x52),tyres:be16(main,o+0x54),
+      crew:be16(main,o+0x56),mpg:be16(main,o+0x58),engine:be16(main,o+0x5A)
+    }),
     pitPointer,pitFileOffset,pits
   };
 }
@@ -104,6 +120,43 @@ function writeCommon(main,recordOffset,values={}){
   if(values.startX!=null)wr32(main,recordOffset+OFF.startX,Number(values.startX)>>>0);
   if(values.startY!=null)wr32(main,recordOffset+OFF.startY,Number(values.startY)>>>0);
   if(values.startOrient!=null)wr16(main,recordOffset+OFF.startOrient,clampInt(values.startOrient,-32768,32767,'Start orientation')&0xffff);
+}
+function writeCpuChoices(main,recordOffset,values={}){
+  for(const field of CPU_CHOICES){
+    if(values[field.key]==null)continue;
+    wr16(main,recordOffset+field.offset,clampInt(values[field.key],0,0xFFFF,`CPU ${field.label} weight`));
+  }
+}
+function encodeCpuChoicesBin(main,record){
+  const o=record.offset??record,out=new Uint8Array(CPU_CHOICES_SIZE);
+  CPU_CHOICES.forEach((field,i)=>{
+    const value=be16(main,o+field.offset);
+    if(value>255)throw new Error(`CPU ${field.label} weight must be 0..255`);
+    out[i]=value;
+  });
+  return out;
+}
+function decodeCpuChoicesBin(bin){
+  if(!(bin instanceof Uint8Array))bin=new Uint8Array(bin||[]);
+  const out={};
+  if(bin.length===CPU_CHOICES_SIZE){
+    CPU_CHOICES.forEach((field,i)=>out[field.key]=bin[i]);
+    return out;
+  }
+  if(bin.length===LEGACY_CPU_CHOICES_SIZE){
+    CPU_CHOICES.forEach((field,i)=>{
+      const value=be16(bin,i*2);
+      if(value>255)throw new Error(`CPU ${field.label} weight must be 0..255`);
+      out[field.key]=value;
+    });
+    return out;
+  }
+  throw new Error(`cpu_choices.bin must be ${CPU_CHOICES_SIZE} bytes`);
+}
+function applyCpuChoicesBin(main,record,bin){
+  const values=decodeCpuChoicesBin(bin),o=record.offset??record;
+  writeCpuChoices(main,o,values);
+  return values;
 }
 function writePit(main,pitFileOffset,index,values={}){
   index=clampInt(index,0,PIT_RECORD_COUNT-1,'Pit slot');const o=pitFileOffset+index*PIT_RECORD_SIZE;
@@ -248,9 +301,9 @@ function pitHeadingFromRoute(record,pit){
   return best?angle16FromWorldVector(best.dx,best.dy):null;
 }
 
-const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
+const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
   be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
-  writeCommon,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
+  writeCommon,writeCpuChoices,encodeCpuChoicesBin,decodeCpuChoicesBin,applyCpuChoicesBin,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
   mergeProjectedFixed,projectFixed22_6,inverseFixedXZ,
   addFixed32,gridCarPositions,angle16ToCanvasRadians,angle16FromWorldVector,pitHeadingFromRoute};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
@@ -363,7 +416,7 @@ function injectUi(){
   $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);refreshPanel();draw();setStatus('Selected circuit race setup restored to the loaded Disk.1 data.');});
   $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($70).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8.`);});
   $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $70 authored race setup.`);});
-  $('raceExportMain').addEventListener('click',()=>{if(C.model)downloadBytes(C.model.main,'indyheat_main_modified_v0115.bin');});
+  $('raceExportMain').addEventListener('click',()=>{if(C.model){const v=String(root.INDY_HEAT_EDITOR_VERSION||'').replace(/\./g,'');downloadBytes(C.model.main,`indyheat_main_modified_v${v}.bin`);}});
   cv.addEventListener('pointerdown',pointerDown);cv.addEventListener('pointermove',pointerMove);cv.addEventListener('pointerup',pointerUp);cv.addEventListener('pointercancel',pointerUp);cv.addEventListener('contextmenu',e=>{if(active)e.preventDefault();});
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{currentPit=0;refreshPanel();draw();},0));
   $('editorScale')?.addEventListener('change',()=>setTimeout(draw,0));$('opacity')?.addEventListener('input',draw);
@@ -613,6 +666,7 @@ let bootTimer=null;
 let zipHookBusy=false;
 const authoredNames=new Map();
 let pendingImportedName=null;
+let pendingImportedCpuChoices=null;
 const RETAIL_ROUTE_COUNTS=Object.freeze([
   Object.freeze([46,46,45]), // Illinois
   Object.freeze([55,61,49]), // New Jersey
@@ -715,6 +769,25 @@ function commitPendingImportedName(){
   pendingImportedName=null;
   return true;
 }
+function commitPendingImportedCpuChoices(){
+  const pending=pendingImportedCpuChoices;if(!pending||pending.circuitIndex==null)return false;
+  if(currentCircuitIndex()!==pending.circuitIndex)return false;
+  const o=selectedOption();
+  if(!o||(o.dataset?.indyheatCustom!=='1'&&!o.dataset?.indyheatPackageKey))return false;
+  pendingImportedCpuChoices=null;
+  if(!pending.bytes)return true; // no sidecar = inherit the selected host/template values
+  const R=root.IndyHeatRaceSetupTools,values=R?.decodeCpuChoicesBin?.(pending.bytes);
+  if(!R||!values)return false;
+  for(const model of loadedModels()){
+    const record=recordFor(model);if(record)R.writeCpuChoices(model.main,record.offset,values);
+  }
+  document.dispatchEvent(new CustomEvent('indyheat-cpu-choices-imported',{detail:{circuitIndex:pending.circuitIndex,values:{...values}}}));
+  return true;
+}
+function commitPendingImportedSidecars(){
+  const a=commitPendingImportedName(),b=commitPendingImportedCpuChoices();
+  return a||b;
+}
 function setRaceStatus(text){const e=$('raceSetupStatus');if(e)e.textContent=text;}
 function setTopStatus(text,bad=false){
   const e=$('circuitPackageTopStatus');if(!e)return;
@@ -725,7 +798,7 @@ function updateCounter(){
   out.textContent=`${input.value.length}/${NAME_DISPLAY_SIZE}`;
 }
 function syncNameUi(force=false){
-  commitPendingImportedName();
+  commitPendingImportedSidecars();
   const input=$('raceCircuitName');if(!input)return false;
   if(!force&&document.activeElement===input&&input.dataset.editing==='1')return true;
   try{input.value=currentName();}catch(_e){return false;}
@@ -784,20 +857,24 @@ function installNameImport(){
     (async()=>{
       try{
         const entries=P.readZipStore(new Uint8Array(await file.arrayBuffer()));
-        let circuitIndex=null,hit=null;
+        let circuitIndex=null,nameHit=null,cpuHit=null;
         for(const [name,data] of entries){
           const root=/^circuit_(\d{2})\//.exec(name);if(root&&circuitIndex==null)circuitIndex=Number(root[1]);
-          const m=/^circuit_(\d{2})\/name\.bin$/.exec(name);
-          if(m){hit={circuitIndex:Number(m[1]),bytes:data};break;}
+          const nm=/^circuit_(\d{2})\/name\.bin$/.exec(name);if(nm)nameHit={circuitIndex:Number(nm[1]),bytes:data};
+          const cm=/^circuit_(\d{2})\/cpu_choices\.bin$/.exec(name);if(cm)cpuHit={circuitIndex:Number(cm[1]),bytes:data};
         }
-        if(hit){
-          if(hit.bytes.length!==NAME_SIZE)throw new Error(`name.bin must be exactly $${NAME_SIZE.toString(16).toUpperCase()} bytes`);
-          if(hit.bytes[NAME_DISPLAY_SIZE]!==0)throw new Error('name.bin byte 17 must be the terminating NUL');
-          for(let i=0;i<NAME_DISPLAY_SIZE;i++)if(hit.bytes[i]<32||hit.bytes[i]>126)throw new Error('name.bin display bytes must be printable ASCII');
-          pendingImportedName={circuitIndex:hit.circuitIndex,bytes:hit.bytes.slice()};
+        if(nameHit){
+          if(nameHit.bytes.length!==NAME_SIZE)throw new Error(`name.bin must be exactly $${NAME_SIZE.toString(16).toUpperCase()} bytes`);
+          if(nameHit.bytes[NAME_DISPLAY_SIZE]!==0)throw new Error('name.bin byte 17 must be the terminating NUL');
+          for(let i=0;i<NAME_DISPLAY_SIZE;i++)if(nameHit.bytes[i]<32||nameHit.bytes[i]>126)throw new Error('name.bin display bytes must be printable ASCII');
+          pendingImportedName={circuitIndex:nameHit.circuitIndex,bytes:nameHit.bytes.slice()};
         }else pendingImportedName={circuitIndex,bytes:null};
-        setTimeout(()=>{commitPendingImportedName();syncNameUi(true);},50);
-        setTimeout(()=>{commitPendingImportedName();syncNameUi(true);},250);
+        if(cpuHit){
+          root.IndyHeatRaceSetupTools.decodeCpuChoicesBin(cpuHit.bytes); // validates size/layout
+          pendingImportedCpuChoices={circuitIndex:cpuHit.circuitIndex,bytes:cpuHit.bytes.slice()};
+        }else pendingImportedCpuChoices={circuitIndex,bytes:null};
+        setTimeout(()=>{commitPendingImportedSidecars();syncNameUi(true);},50);
+        setTimeout(()=>{commitPendingImportedSidecars();syncNameUi(true);},250);
       }catch(err){setTopStatus(`ERROR: ${err.message}`,true);}
     })();
   },true);
@@ -919,6 +996,7 @@ function directPackageFiles(P,circuitIndex,templateIndex,nameBytes,raceSetupByte
   });
   const folder=P.circuitFolder(circuitIndex);
   files.push({name:`${folder}/name.bin`,data:nameBytes.slice()});
+  files.push({name:`${folder}/cpu_choices.bin`,data:root.IndyHeatRaceSetupTools.encodeCpuChoicesBin(pm.main,pr)});
   files.push({name:`${folder}/template.bin`,data:Uint8Array.of(0,templateIndex)});
   return {files,waypointCounts:wp.counts,presentationBin,previewBytes:preview.resource.data.slice()};
 }
@@ -929,6 +1007,7 @@ function verifyDirectPackage(P,zipBytes,circuitIndex,expectedName,expectedLaps,e
   if(decodeNameBytes(nameBytes)!==expectedName)throw new Error(`Internal export verification failed: name is ${decodeNameBytes(nameBytes)}, expected ${expectedName}`);
   const setup=get('race_setup.bin'),laps=(setup[0]<<8)|setup[1];
   if(laps!==expectedLaps)throw new Error(`Internal export verification failed: laps are ${laps}, expected ${expectedLaps}`);
+  root.IndyHeatRaceSetupTools.decodeCpuChoicesBin(get('cpu_choices.bin'));
   const pres=P.decodePresentationBin(get('presentation.bin'));
   if(pres.mapId!==expectedMapId)throw new Error(`Internal export verification failed: map is ${pres.mapId}, expected ${expectedMapId}`);
   const template=get('template.bin'),templateIndex=(template[0]<<8)|template[1];
@@ -977,7 +1056,7 @@ function boot(){
   let tries=0;tick();
   bootTimer=setInterval(()=>{if(tick()||++tries>400){clearInterval(bootTimer);bootTimer=null;}},50);
   document.addEventListener('indyheat-race-setup-capture',e=>{
-    if(e.detail?.type==='model'){authoredNames.clear();pendingImportedName=null;}
+    if(e.detail?.type==='model'){authoredNames.clear();pendingImportedName=null;pendingImportedCpuChoices=null;}
     setTimeout(()=>syncNameUi(true),0);
   });
 }

@@ -65,7 +65,8 @@ const MODE_ORDER=Object.freeze([
   'layerEditRecovery',
   'layerEditRaceSetup',
   'layerEditMini',
-  'layerEditMap'
+  'layerEditMap',
+  'layerEditCpuChoices'
 ]);
 
 const PIT_TOGGLES=Object.freeze([
@@ -127,7 +128,7 @@ function presentation(){
 }
 
 function setVersionLabel(){
-  const version=String(root.INDY_HEAT_EDITOR_VERSION||'0.47');
+  const version=String(root.INDY_HEAT_EDITOR_VERSION||'');
   const h=document.querySelector('header h1');
   if(h)h.textContent=`Indy Heat Amiga — Circuit Editor v${version}`;
   document.title=`Indy Heat Amiga – Circuit Editor v${version}`;
@@ -216,6 +217,7 @@ function reorderModeButtons(){
 function inferCurrentMode(){
   // Startup fallback only. Once a mode is chosen, currentModeId is authoritative.
   if(!$('raceSetupPane')?.hidden&&$('layerEditRaceSetup'))return 'layerEditRaceSetup';
+  if(!$('cpuChoicesPane')?.hidden&&$('layerEditCpuChoices'))return 'layerEditCpuChoices';
   if((!$('recoveryEditorPane')?.hidden||$('recoveryEditCanvas')?.classList.contains('editing'))&&$('layerEditRecovery'))return 'layerEditRecovery';
 
   const active=MODE_ORDER.filter(id=>$(id)?.classList.contains('active'));
@@ -1122,7 +1124,7 @@ function tick(){
     packageTools()&&indyTools()&&
     $('layerEditBackdrop')&&$('layerEditMask')&&$('layerEditSurface')&&
     $('layerModeWaypoints')&&$('layerEditRaceSetup')&&$('layerEditMini')&&
-    $('layerEditMap')&&$('layerEditRecovery')&&
+    $('layerEditMap')&&$('layerEditCpuChoices')&&$('layerEditRecovery')&&
     $('raceSetupPane')&&$('circuitViewPits')&&$('circuitViewRaceControl')
   );
 }
@@ -1208,7 +1210,8 @@ const MODE_ORDER=Object.freeze([
   'layerEditRecovery',
   'layerEditRaceSetup',
   'layerEditMini',
-  'layerEditMap'
+  'layerEditMap',
+  'layerEditCpuChoices'
 ]);
 
 let hudDrag=null;
@@ -1263,7 +1266,7 @@ function currentPresentation(){
 }
 
 function setVersion(){
-  const version=String(root.INDY_HEAT_EDITOR_VERSION||'0.47');
+  const version=String(root.INDY_HEAT_EDITOR_VERSION||'');
   const h=document.querySelector('header h1');
   if(h)h.textContent=`Indy Heat Amiga — Circuit Editor v${version}`;
   document.title=`Indy Heat Amiga – Circuit Editor v${version}`;
@@ -1720,7 +1723,7 @@ function tick(){
   return !!(
     colourControlsReady&&
     tools()&&packageTools()&&capture()&&
-    $('layerModeButtons')&&$('layerEditRecovery')&&$('layerEditRaceSetup')&&
+    $('layerModeButtons')&&$('layerEditRecovery')&&$('layerEditRaceSetup')&&$('layerEditCpuChoices')&&
     $('circuitPreviewFromBackdrop')
   );
 }
