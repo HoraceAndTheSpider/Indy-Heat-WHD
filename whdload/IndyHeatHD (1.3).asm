@@ -13,16 +13,27 @@
 
 
 ;
-; Development 1.3 test 47 retains the runtime-proven test-46 championship restart
-; and switches CUSTOM2 playlist/runtime CPU-choice handling to the compact editor v0.122
-; contract.  The active event is still rebuilt immediately by custom_event_advance, so
-; Gasoline Alley sees the upcoming race record before its upgrade-choice processing.
-; Circuit CPU values are inherited from the restored template / optional cpu_choices.bin;
-; playlist CPU values, when present, override all six families together.
+; Development 1.3 test 50 retains the runtime-proven test-49 private resource /
+; MiniMap path and removes the remaining custom-circuit retail structural identity.
+; circuit_10..99 is now selected only by its authored circuit ID and package data: the
+; Slave no longer reads a template sidecar, infers a retail circuit from route counts, or
+; keeps a per-event structural map.
 ;
-; Test 47 also removes the largest CUSTOM2-only zero-filled work buffers from the Slave
-; image.  They now live in the extra Chip-RAM workspace above the established $95FFF
-; active arena; retail low-memory mode remains untouched.
+; Five private 22-byte resource entries are constructed directly at $95500 for
+; background, foreground, surface, recovery and preview.  Only the fields needed by
+; the custom runtime are populated: decompressed length at entry+$06 and the already-
+; resident high-memory payload pointer at entry+$0E.  No retail resource entry is copied.
+;
+; A private 12-byte MiniMap descriptor is built at $95570 with count=1, flags=0 and
+; its +$06.l pointer aimed at the private preview resource entry.  race+$46.l points
+; directly at this descriptor.  The object-loader call at $4436 is wrapped exactly like
+; the four established track-resource loads, so an already-resident custom preview at
+; $93000 bypasses the retail allocator/decompressor.  The old $4440 retail-preview copy
+; hook is no longer used.
+;
+; race_setup.bin remains the editor v0.124 $74 layout.  The active event is still rebuilt
+; immediately by custom_event_advance, preserving Gasoline Alley look-forward behaviour.
+; Retail circuits 0..9 continue to use their normal pristine native race records.
 ;
 ; Test 44 retains the test-43 variable-playlist/custom-resource
 ; architecture and consumes the editor v0.114 authored route/pitlane fields.
@@ -38,10 +49,9 @@
 ;   include the complete custom arena;
 ; - preserve the original CUSTOM1 trainer options and CUSTOM2 custom-track gate;
 ; - compact IHPL uses zero-based circuit indexes 0..99 plus optional lap/CPU override;
-; - circuit_00..09 select the ten proven retail physical templates;
-; - circuit_10..99 use template.bin when present (word 0..9) so custom
-;   routes may have variable waypoint counts; existing packages without it
-;   retain the test-17 unique-retail-count inference for compatibility;
+; - circuit_00..09 select the ten proven retail physical circuits;
+; - circuit_10..99 has no retail structural identity: custom routes are validated and
+;   installed directly from waypoints.bin when that event becomes active;
 ; - every active circuit_10..99 reuses the same dedicated high-Chip slots:
 ;     background   $80000..
 ;     foreground   $8D000..
@@ -49,41 +59,40 @@
 ;     recovery     $92000..
 ;     preview      $93000..
 ;     routes/IHWP  $94000..
-;     pits/setup/presentation/name/template and diagnostics $95000..$95FFF;
-; - background/foreground/surface/recovery are loaded directly into those fixed
-;   slots; four private copies of the active template's resource-directory entries
-;   live at $95500, with their runtime pointers aimed at the high payloads;
+;     pits/setup/presentation/name/resource metadata and diagnostics $95000..$95FFF;
+; - background/foreground/surface/recovery/preview are loaded directly into fixed
+;   slots; five clean private resource entries live at $95500 and contain only the
+;   required decompressed-length and resident-pointer fields;
 ; - only the disposable active race record is repointed to those private entries;
-;   the retail resource directory is never modified, and every event rebuild starts
-;   from a pristine template captured in the high CUSTOM2 workspace;
+;   the retail resource directory is never modified; retail events are restored
+;   from pristine race-record snapshots captured in the high CUSTOM2 workspace;
 ; - the game's normal allocator/load/free calls are bypassed only while the active
 ;   race's private entries address the dedicated custom track range;
-; - preview.bin is loaded once into its fixed high slot, then copied into the
-;   game's temporary raw preview buffer at the already-proven $4440 post-decrunch
-;   hook immediately before the game converts it into its object;
+; - preview.bin is loaded once into its fixed high slot; a private race+$46
+;   descriptor points at the private preview entry and the $4436 wrapper bypasses
+;   retail loading/decompression before normal object conversion continues;
 ; - no circuit_10..99 background/foreground/surface/recovery data is deferred to
 ;   a later Load call or written into a retail allocator-owned destination;
 ; - IHWP stored records use the established bytewise-complement encoding and
 ;   are decoded with NOT.W/NOT.B for X, progress, Y and link respectively;
-; - circuit_10..99 resource/template/route/settings/pit installation is mandatory:
-;   failure uses an explicit WHDLoad requester instead of continuing with retail
-;   template data;
+; - circuit_10..99 resource/route/settings/pit installation is explicit; failures
+;   use the established WHDLoad requester rather than continuing with stale data;
 ; - the three race descriptors are repointed to the active route arena with
 ;   authored start/end/count values, then route_settings.bin writes the three
 ;   explicit minimum-previous-sequence lap guards at race+$0A/+$16/+$22;
-; - race_setup.bin is the current exact $70 package layout; its appended words
-;   explicitly write pit pickup centre X/top Y/half-width and Pit approach Y;
+; - race_setup.bin is the current exact $74 package layout; it explicitly writes
+;   pit pickup centre X/top Y/half-width, Pit approach Y and race+$6C.l Route A/B polarity;
 ; - custom routes retain each authored route's independent point-0 and explicit boundary;
 ;   no retail shared-boundary byte alias is required between route A/B or B/C;
-; - after the ten pristine retail templates are captured into the high CUSTOM2 workspace,
-;   retail circuit_00..09 events execute from that circuit's original native race-record
-;   slot, restored from its pristine template before each reuse;
+; - after the ten pristine retail race records are captured into the high CUSTOM2
+;   workspace, retail circuit_00..09 events execute from that circuit's original native
+;   race-record slot, restored from its snapshot before each reuse;
 ; - only circuit_10..99 uses the disposable $5902 staging record, preserving the
 ;   runtime-proven custom-first path while avoiding retail resource-pointer transplants;
 ; - regional-map interception remains unchanged from the runtime-proven path;
 ; - preserve the established editor package files: background, foreground,
 ;   surface, recovery, preview, waypoints, route_settings, race_setup,
-;   presentation, optional name.bin, optional cpu_choices.bin and optional template.bin;
+;   presentation, optional name.bin and optional cpu_choices.bin;
 ; - explicit playlist fields are applied last; laps=0 retains the circuit/package
 ;   race_setup lap total, and bit-7 CPU values override all six circuit weights;
 ; - retain the runtime-proven 0-99 lap compositor and regional-map replacement;
@@ -109,12 +118,11 @@ RACE_RECORD_SIZE        EQU     $82
 RACE_RECORD_COUNT       EQU     11
 RACE_SENTINEL           EQU     $5E98
 RACE_SETUP_LEGACY_SIZE  EQU     $68             ; indyheat_rXX_setup.bin legacy override only
-RACE_SETUP_SIZE         EQU     $70             ; current circuit package layout
+RACE_SETUP_V70_SIZE     EQU     $70             ; legacy circuit-package layout
+RACE_SETUP_SIZE         EQU     $74             ; current circuit package layout
 RACE_NAME_SIZE          EQU     $12             ; race+$70..+$81, 17 display bytes + NUL
-CIRCUIT_TEMPLATE_SIZE   EQU     2               ; optional template.bin, big-endian word 0..9
 PIT_LONG_COUNT_MINUS1   EQU     21              ; $58 / 4 = 22 longs -> DBF 21
 TRACK_COUNT             EQU     10
-TRACK_TEMPLATE_SIZE     EQU     TRACK_COUNT*RACE_RECORD_SIZE
 PLAYLIST_MAX_CIRCUIT    EQU     99
 PLAYLIST_MAX_EVENTS     EQU     99
 PLAYLIST_HEADER_SIZE    EQU     5               ; "IHPL" + count.b
@@ -137,6 +145,11 @@ CURRENT_LAP_GLYPH_SQUARE EQU    CURRENT_LAP_GLYPH_BASE+(14*8)
 CURRENT_LAP_GLYPH_BLANK EQU     CURRENT_LAP_GLYPH_BASE+(15*8)
 CUSTOM_NAME_BUFFER_SIZE EQU     128
 TRACK_BACKGROUND_SIZE   EQU     $C800
+TRACK_FOREGROUND_SIZE   EQU     $2800
+TRACK_FOREGROUND_SIZE_ALT EQU   $2804
+TRACK_SURFACE_SIZE      EQU     $1180
+TRACK_RECOVERY_SIZE     EQU     $0460
+TRACK_PREVIEW_SIZE      EQU     $0A02
 RESOURCE_TABLE_RUNTIME  EQU     $4C6A
 RESOURCE_ENTRY_SIZE     EQU     22
 RESOURCE_ENTRY_COUNT    EQU     108
@@ -182,9 +195,11 @@ CUSTOM_PIT_ARENA_BASE       EQU $95000
 CUSTOM_RACE_SETUP_BASE      EQU $95100
 CUSTOM_PRESENTATION_BASE    EQU $95200
 CUSTOM_NAME_BASE            EQU $95300
-CUSTOM_TEMPLATE_BASE        EQU $95400
-CUSTOM_RESOURCE_META_BASE   EQU $95500          ; four private 22-byte resource entries
-CUSTOM_RESOURCE_META_SIZE   EQU 4*RESOURCE_ENTRY_SIZE ; $58
+CUSTOM_RESOURCE_META_BASE   EQU $95500          ; five clean private 22-byte resource entries
+CUSTOM_TRACK_RESOURCE_META_SIZE EQU 4*RESOURCE_ENTRY_SIZE ; $58
+CUSTOM_PREVIEW_RESOURCE_META_BASE EQU CUSTOM_RESOURCE_META_BASE+CUSTOM_TRACK_RESOURCE_META_SIZE ; $95558
+CUSTOM_RESOURCE_META_SIZE   EQU 5*RESOURCE_ENTRY_SIZE ; $6E
+CUSTOM_PREVIEW_DESCRIPTOR_BASE EQU $95570        ; private 12-byte race+$46 descriptor
 CUSTOM_ACTIVE_RACE_BASE      EQU RACE_RUNTIME_BASE ; circuit_10+ disposable live $82 race record
 CUSTOM_ACTIVE_RACE_END       EQU CUSTOM_ACTIVE_RACE_BASE+RACE_RECORD_SIZE
 CUSTOM_DIAG_BASE            EQU $95F00
@@ -202,16 +217,14 @@ CUSTOM_WORK_REGION_SELECTOR EQU $96090          ; 99 bytes
 CUSTOM_WORK_PLAYLIST_NAME   EQU $96100          ; 128 bytes
 CUSTOM_WORK_WAYPOINTS       EQU $96200          ; $0800
 CUSTOM_WORK_PLAYLIST        EQU $96A00          ; max $31D, slot rounded to $0320
-CUSTOM_WORK_TEMPLATE_MAP    EQU $96D20          ; 99 words = $C6
-CUSTOM_WORK_CIRCUIT_MAP     EQU $96DE6          ; 99 words = $C6
-CUSTOM_WORK_TRACK_TEMPLATES EQU $96F00          ; 10 * $82 = $514
+CUSTOM_WORK_CIRCUIT_MAP     EQU $96D20          ; 99 words = $C6; custom IDs, $FFFF for retail
+CUSTOM_WORK_TRACK_SNAPSHOTS EQU $96F00          ; 10 * $82 = $514
 CUSTOM_ACTIVE_END           EQU $98000          ; minimum BaseMem for CUSTOM2=1
 
-CUSTOM_FAIL_TEMPLATE    EQU     1
-CUSTOM_FAIL_ROUTES      EQU     2
-CUSTOM_FAIL_PITS        EQU     3
-CUSTOM_FAIL_ASSETS      EQU     4
-CUSTOM_FAIL_PLAYLIST    EQU     5
+CUSTOM_FAIL_ROUTES      EQU     1
+CUSTOM_FAIL_PITS        EQU     2
+CUSTOM_FAIL_ASSETS      EQU     3
+CUSTOM_FAIL_PLAYLIST    EQU     4
 
 
 	INCDIR	Includes:
@@ -286,7 +299,7 @@ _memcfg
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 47"
+	dc.b	"1.3 test 50"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -393,7 +406,7 @@ _custom2
 ;--------------------------------
 
 patch_boot
-	; CUSTOM2=1 captures the ten retail source templates before any compatibility
+	; CUSTOM2=1 captures the ten retail source race records before any compatibility
 	; staging write. Legacy per-event setup files remain a retail-mode feature only;
 	; custom mode rebuilds one disposable race record for each IHPL event.
 	move.l	_custom2(pc),d0
@@ -405,7 +418,7 @@ patch_boot
 	bra.b	.apply_patches
 
 .custom_patches
-	; Validate/index the playlist and capture pristine retail templates.
+	; Validate/index the playlist and capture pristine retail race records.
 	; Retail events later use their original native record slots; circuit_10+ uses $5902.
 	bsr.w	load_region_selector
 	bsr.w	apply_playlist
@@ -505,11 +518,12 @@ PL_CUSTOMTRACKS
 	PL_PSS	$58E8,custom_free_surface,2
 	PL_PSS	$58F4,custom_free_recovery,2
 
-	; $4432 is the retail descriptor/object loader.  By $4440 its $BA50
-	; resource load/decrunch has completed and entry+14 is valid, but the raw
-	; resource has not yet been converted into the descriptor's object.
-	; Replace only the active custom event's race+$46 preview at that point.
-	PL_P	$4440,custom_preview_postdecrunch
+	; The $4432 generic object loader normally executes:
+	;   $4436 MOVEA.L 6(A1),A0 / $443A BSR $BA50.
+	; Wrap those eight bytes exactly like the established track-resource loads.
+	; Private custom preview entries already point at resident $93000 data, so they
+	; bypass retail allocation/decompression; all retail object banks fall through.
+	PL_PSS	$4436,custom_load_preview,2
 
 	PL_NEXT	pl_boot
 
@@ -535,6 +549,19 @@ custom_load_surface
 	bra.w	custom_load_resource_entry
 custom_load_recovery
 	movea.l	$42(a2),a0
+	bra.w	custom_load_resource_entry
+
+; A1 is the 12-byte object-bank descriptor at the original $4436 call site.
+; Restrict the bypass to our exact private preview entry; every other object bank
+; executes the untouched retail load body.
+custom_load_preview
+	movea.l	6(a1),a0
+	cmpa.l	#CUSTOM_PREVIEW_RESOURCE_META_BASE+2,a0
+	beq.b	.resident
+	movem.l	a0-a5,-(a7)
+	jmp	$BA52.l
+.resident
+	rts
 
 custom_load_resource_entry
 	move.l	d0,-(a7)
@@ -582,82 +609,13 @@ custom_free_resource_entry
 
 
 ;---------------------------------------------------------------------------
-; CUSTOM GASOLINE ALLEY MINIMAP — TEST 33
+; CUSTOM GASOLINE ALLEY MINIMAP — TEST 49
 ;
-; Retail object loader at $4432 (A0 = 12-byte descriptor):
-;   $4432  MOVEA.L A0,A1
-;   $4434  MOVE.L  A1,-(SP)
-;   $4436  MOVEA.L 6(A1),A0       ; resource-table +2 pointer
-;   $443A  BSR     $BA50          ; load/decrunch resource
-;   $443E  MOVEA.L (SP)+,A1
-;   $4440  MOVE.L  A1,-(SP)       ; hook here
-;   ...
-;   $4456  MOVEA.L 6(A1),A0
-;   $445A  MOVEA.L 12(A0),A0      ; entry+14 raw resource pointer
-;
-; Hooking $4440 guarantees the raw preview resource exists, while still replacing
-; it before the retail object-conversion routine consumes it.  The six bytes
-; displaced by PL_P are replayed exactly before resuming at $4446.
+; race+$46 for circuit_10+ now points at CUSTOM_PREVIEW_DESCRIPTOR_BASE.
+; The descriptor uses a clean private preview resource entry whose runtime pointer
+; is already CUSTOM_PREVIEW_BASE.  custom_load_preview above bypasses $BA50 only
+; for that resident custom entry; normal retail object-bank loads are unchanged.
 ;---------------------------------------------------------------------------
-
-custom_preview_postdecrunch
-	movem.l	d0-d7/a0-a6,-(a7)
-
-	; Resolve the slave-tracked active playlist event.
-	moveq	#0,d0
-	move.w	active_event_index(pc),d0
-	cmp.w	#PLAYLIST_MAX_EVENTS-1,d0
-	bhi.w	.done
-
-	move.w	d0,d1
-	add.w	d1,d1
-	lea	CUSTOM_WORK_CIRCUIT_MAP,a0
-	move.w	0(a0,d1.w),d5
-	cmp.w	#TRACK_COUNT,d5
-	blo.w	.done
-	cmp.w	#PLAYLIST_MAX_CIRCUIT,d5
-	bhi.w	.done
-
-	; A1 is the descriptor currently being built.  Only replace the descriptor
-	; that is exactly race+$46 for the active custom event.
-	movea.l	active_race_ptr(pc),a0
-	movea.l	$46(a0),a0
-	cmpa.l	a0,a1
-	bne.w	.done
-
-	; Descriptor+6 points at +2 inside the resource-table entry.  At this exact
-	; post-decrunch point, +12 from that pointer is the valid retail temporary raw
-	; buffer which the object converter consumes at $445A.  The custom source is
-	; already resident at CUSTOM_PREVIEW_BASE; do not reopen preview.bin here.
-	movea.l	6(a1),a0
-	move.l	4(a0),d3		; preview resource outLen (entry+6)
-	movea.l	12(a0),a4		; retail temporary raw buffer (entry+14)
-	move.l	a4,d0
-	beq.w	.done
-	tst.l	d3
-	beq.w	.done
-	cmp.l	#CUSTOM_PREVIEW_SLOT_SIZE,d3
-	bhi.w	.done
-	cmp.l	active_custom_preview_size(pc),d3
-	bne.w	.done
-
-	lea	CUSTOM_PREVIEW_BASE,a3
-	move.w	d3,d6
-	subq.w	#1,d6
-.copy_preview
-	move.b	(a3)+,(a4)+
-	dbf	d6,.copy_preview
-
-	lea	CUSTOM_DIAG_FLAGS,a0
-	ori.w	#$000A,(a0)		; bit1 recognised + bit3 high-source copy
-
-.done
-	movem.l	(a7)+,d0-d7/a0-a6
-
-	; Replay the six bytes replaced at $4440, then resume retail loader.
-	move.l	a1,-(a7)
-	move.w	4(a1),d0
-	jmp	$4446
 
 
 ;---------------------------------------------------------------------------
@@ -1198,21 +1156,19 @@ race_setup_buffer
 ;             /presentation.bin
 ;             /name.bin          optional $12 Gasoline Alley circuit name
 ;             /cpu_choices.bin   optional six-byte Gasoline Alley CPU weights
-;             /template.bin      optional word 0..9 for variable-count circuit_10+
 ;
 ; circuit_00..09 remain direct substitutes for the ten proven physical retail
-; templates.  The compact playlist additionally selects circuit_10..99.  Those custom
+; circuits.  The compact playlist additionally selects circuit_10..99.  Those custom
 ; events are prepared by apply_playlist with private pit/waypoint storage; this
 ; stock-package pass deliberately skips them.
 ;
 ; Boot-time sidecars:
-;   race_setup.bin       exact $70 current compact layout
+;   race_setup.bin       exact $74 current compact layout
 ;   route_settings.bin   IHRS v1 / $0C, three route lap-guard values
 ;   presentation.bin     IHPR v2 / $14
 ;   waypoints.bin        IHWP v1, three route payloads
 ;   name.bin          optional exact $12 copy of race+$70..+$81
 ;   cpu_choices.bin   optional six bytes: Turbos, Brakes, Tyres, Crew, MPG, Engine
-;   template.bin      optional exact $02 structural retail template index
 ;
 ; circuit_00..09 retain the established deferred stock-package compatibility
 ; bridge.  circuit_10..99 do not use it: their graphical files are loaded into
@@ -1236,7 +1192,7 @@ apply_circuit_packages
 
 .next_event
 	; A compact-playlist custom-library event has already consumed its circuit_10+
-	; sidecars and must not be reinterpreted as its structural circuit_00..09.
+	; sidecars and must not be reinterpreted as its retail circuit_00..09.
 	move.w	d7,d0
 	add.w	d0,d0
 	lea	CUSTOM_WORK_CIRCUIT_MAP,a0
@@ -1381,7 +1337,7 @@ build_circuit_path
 
 ; IN: D0.w circuit index, A3 race record
 apply_circuit_setup
-	movem.l	d0-d7/a0-a6,-(a7)
+	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d4			; circuit index
 
 	lea	circuit_leaf_race_setup(pc),a1
@@ -1390,9 +1346,17 @@ apply_circuit_setup
 
 	move.l	_resload(pc),a2
 	jsr	resload_GetFileSize(a2)
+	move.l	d0,d5			; remember package layout for $6C handling
 	cmp.l	#RACE_SETUP_SIZE,d0
-	bne.w	.done
+	beq.b	.have_setup
+	; Keep test-47 $70 stock-package compatibility, but modern circuit_10+
+	; packages must provide the current exact $74 race_setup.bin.
+	cmp.w	#TRACK_COUNT,d4
+	bhs.w	.failed
+	cmp.l	#RACE_SETUP_V70_SIZE,d0
+	bne.w	.success
 
+.have_setup
 	move.l	a5,a0
 	cmp.w	#TRACK_COUNT,d4
 	blo.b	.stock_setup_dest
@@ -1411,12 +1375,13 @@ apply_circuit_setup
 .stock_setup_src
 	lea	race_setup_buffer(pc),a0
 .parse_setup
-	movea.l	a0,a6			; preserve $70 setup base for appended pitlane fields
+	movea.l	a0,a6			; preserve $74 setup base for appended fields
 	moveq	#0,d0
 	move.w	(a0),d0
-	beq.w	.done
+	cmp.w	#2,d0
+	blo.w	.failed
 	cmp.w	#CUSTOM_MAX_LAPS,d0
-	bhi.w	.done
+	bhi.w	.failed
 
 	move.w	(a0)+,$28(a3)		; laps
 	move.l	(a0)+,$5C(a3)		; flag X/Y
@@ -1435,14 +1400,26 @@ apply_circuit_setup
 	dbf	d6,.copy_pits
 .skip_pits
 
-	; v0.114 current package appends four explicit race-level pitlane fields.
 	lea	$68(a6),a0
 	move.w	(a0)+,$2C(a3)		; pit pickup centre X
 	move.w	(a0)+,$2E(a3)		; pit pickup top Y
 	move.w	(a0)+,$30(a3)		; pit pickup half-width
 	move.w	(a0)+,$60(a3)		; Pit approach Y
 
-	; Gasoline Alley renders race+$70..+$81.  Custom-library name.bin uses its
+	; v0.124 appends the authored race+$6C.l Route A/B starting-assignment
+	; polarity. $70 stock packages retain their existing retail value.
+	cmp.l	#RACE_SETUP_SIZE,d5
+	bne.b	.route_assignment_done
+	move.l	$70(a6),d0
+	tst.l	d0
+	beq.b	.route_assignment_ok
+	cmp.l	#$FFFFFFFF,d0
+	bne.w	.failed
+.route_assignment_ok
+	move.l	d0,$6C(a3)
+.route_assignment_done
+
+	; Gasoline Alley renders race+$70..+$81. Custom-library name.bin uses its
 	; own high-Chip slot; stock package compatibility retains the local buffer.
 	move.w	d4,d0
 	lea	circuit_leaf_name(pc),a1
@@ -1452,7 +1429,7 @@ apply_circuit_setup
 	move.l	_resload(pc),a2
 	jsr	resload_GetFileSize(a2)
 	cmp.l	#RACE_NAME_SIZE,d0
-	bne.w	.done
+	bne.w	.success
 
 	move.l	a5,a0
 	cmp.w	#TRACK_COUNT,d4
@@ -1473,21 +1450,26 @@ apply_circuit_setup
 	lea	race_setup_buffer(pc),a0
 .validate_name
 	cmp.b	#0,RACE_NAME_SIZE-1(a0)
-	bne.b	.done
+	bne.b	.success
 	lea	$70(a3),a1
 	moveq	#8,d6
 .copy_name
 	move.w	(a0)+,(a1)+
 	dbf	d6,.copy_name
 
-.done
-	movem.l	(a7)+,d0-d7/a0-a6
+.success
+	moveq	#1,d0
+	bra.b	.return
+.failed
+	moveq	#0,d0
+.return
+	movem.l	(a7)+,d1-d7/a0-a6
 	rts
 
 
 ; IN: D0.w circuit index, A3 race record
 ; OUT: D0.l = 1 success/inherit, 0 malformed sidecar
-; Missing cpu_choices.bin deliberately inherits the restored circuit/template values.
+; Missing cpu_choices.bin deliberately inherits the restored circuit values.
 ; When present, six bytes expand to the six race+$50..+$5A words in retail chooser order.
 apply_circuit_cpu_choices
 	movem.l	d1-d7/a0-a6,-(a7)
@@ -1711,7 +1693,6 @@ circuit_leaf_race_setup	dc.b	"race_setup.bin",0
 circuit_leaf_presentation	dc.b	"presentation.bin",0
 circuit_leaf_name		dc.b	"name.bin",0
 circuit_leaf_cpu_choices	dc.b	"cpu_choices.bin",0
-circuit_leaf_template	dc.b	"template.bin",0
 	even
 
 circuit_resource_leaf_offsets
@@ -1729,8 +1710,8 @@ circuit_resource_leaf_offsets
 ;
 ; CUSTOM2 != 1 never probes the playlist. CUSTOM2 = 1 loads the current editor
 ; format into CUSTOM_WORK_PLAYLIST, validates the complete variable-length file,
-; resolves structural templates for circuit_10..99, then snapshots the ten retail
-; race templates.  No playlist/version compatibility layer is carried in the Slave.
+; indexes custom circuit IDs, then snapshots the ten retail race records.
+; No playlist/version compatibility layer is carried in the Slave.
 ;---------------------------------------------------------------------------
 
 apply_playlist
@@ -1771,7 +1752,6 @@ apply_playlist
 	lea	CUSTOM_WORK_PLAYLIST,a4
 	adda.l	d4,a4			; exact end of loaded file
 	lea	PLAYLIST_HEADER_SIZE(a0),a1	; first variable event
-	lea	CUSTOM_WORK_TEMPLATE_MAP,a5
 	lea	CUSTOM_WORK_CIRCUIT_MAP,a6
 	move.w	d5,d7
 	subq.w	#1,d7
@@ -1791,16 +1771,12 @@ apply_playlist
 	bhi.w	.invalid
 	cmp.w	#TRACK_COUNT,d2
 	bhs.b	.validate_custom
-	move.w	d2,(a5)
 	move.w	#$FFFF,(a6)
 	bra.b	.validate_laps
 
 .validate_custom
-	move.w	d2,d0
-	bsr.w	infer_custom_template
-	tst.w	d0
-	bmi.w	.custom_invalid
-	move.w	d0,(a5)
+	; Custom events carry only their authored circuit ID. waypoints.bin is loaded and
+	; validated once, when the event is activated; there is no retail lookup.
 	move.w	d2,(a6)
 
 .validate_laps
@@ -1824,7 +1800,6 @@ apply_playlist
 	cmp.l	d3,d0
 	blo.w	.invalid
 	adda.w	d3,a1
-	addq.l	#2,a5
 	addq.l	#2,a6
 	dbf	d7,.validate_event
 
@@ -1832,16 +1807,11 @@ apply_playlist
 	cmpa.l	a4,a1
 	bne.w	.invalid
 
-	bsr.w	capture_track_templates
+	bsr.w	capture_track_snapshots
 	lea	playlist_event_count(pc),a0
 	move.w	d5,(a0)
 	bra.b	.done
 
-.custom_invalid
-	lea	CUSTOM_DIAG_FAILURE,a0
-	move.w	#CUSTOM_FAIL_TEMPLATE,(a0)
-	lea	custom_fail_template_msg(pc),a0
-	bra.w	abort_custom_event
 
 .invalid
 	lea	CUSTOM_DIAG_FAILURE,a0
@@ -1865,11 +1835,9 @@ reset_playlist_event_maps
 	lea	playlist_file_size(pc),a0
 	clr.l	(a0)
 	lea	CUSTOM_WORK_CIRCUIT_MAP,a0
-	lea	CUSTOM_WORK_TEMPLATE_MAP,a1
 	moveq	#PLAYLIST_MAX_EVENTS-1,d0
 .clear
 	move.w	#$FFFF,(a0)+
-	move.w	#$FFFF,(a1)+
 	dbf	d0,.clear
 	rts
 
@@ -1899,73 +1867,7 @@ playlist_event_address
 
 
 ; IN: D0.w = custom circuit index 10..99
-; OUT: D0.w = structural retail template 0..9, or -1
-;
-; Variable-count packages carry template.bin (one BE word 0..9).  Existing
-; packages without it remain compatible through the test-17 unique count match.
-; waypoints.bin itself is validated in either case before a template is accepted.
-infer_custom_template
-	movem.l	d1-d7/a0-a6,-(a7)
-	move.w	d0,d7
-
-	move.w	d7,d0
-	bsr.w	validate_custom_waypoint_file
-	tst.l	d0
-	beq.w	.failed
-
-	move.w	d7,d0
-	lea	circuit_leaf_template(pc),a1
-	bsr.w	build_circuit_path
-	move.l	a0,a5
-	move.l	_resload(pc),a2
-	jsr	resload_GetFileSize(a2)
-	tst.l	d0
-	beq.b	.legacy_counts
-	cmp.l	#CIRCUIT_TEMPLATE_SIZE,d0
-	bne.w	.failed
-
-	move.l	a5,a0
-	lea	CUSTOM_TEMPLATE_BASE,a1
-	move.l	_resload(pc),a2
-	jsr	resload_LoadFile(a2)
-	moveq	#0,d0
-	move.w	CUSTOM_TEMPLATE_BASE,d0
-	cmp.w	#TRACK_COUNT-1,d0
-	bls.w	.return
-	bra.w	.failed
-
-.legacy_counts
-	lea	retail_route_counts(pc),a0
-	moveq	#0,d2
-	moveq	#TRACK_COUNT-1,d5
-.compare_template
-	lea	inferred_route_counts(pc),a4
-	move.w	(a0),d0
-	cmp.w	(a4),d0
-	bne.b	.next_template
-	move.w	2(a0),d0
-	cmp.w	2(a4),d0
-	bne.b	.next_template
-	move.w	4(a0),d0
-	cmp.w	4(a4),d0
-	bne.b	.next_template
-	move.w	d2,d0
-	bra.b	.return
-.next_template
-	lea	6(a0),a0
-	addq.w	#1,d2
-	dbf	d5,.compare_template
-
-.failed
-	moveq	#-1,d0
-.return
-	movem.l	(a7)+,d1-d7/a0-a6
-	rts
-
-
-; IN: D0.w = custom circuit index 10..99
 ; OUT: D0.l = 1 valid / loaded at CUSTOM_ROUTE_ARENA_BASE, 0 invalid
-; SIDE: inferred_route_counts receives A/B/C ordinary point counts.
 ;
 ; Validation is deliberately format/safety based rather than retail-topology based.
 ; Custom routes may have independent point-0 and boundary records; the active
@@ -2004,7 +1906,6 @@ validate_custom_waypoint_file
 	; link safety is checked after decode in load_active_custom_routes.
 	subq.l	#8,d6
 	lea	8(a0),a1
-	lea	inferred_route_counts(pc),a4
 	moveq	#CIRCUIT_WAYPOINT_ROUTES-1,d5
 .validate_route
 	cmp.l	#4,d6
@@ -2013,7 +1914,6 @@ validate_custom_waypoint_file
 	moveq	#0,d0
 	move.w	(a1),d0			; ordinary point count
 	beq.w	.failed
-	move.w	d0,(a4)+
 	cmp.w	#1,2(a1)			; explicit boundary required by race descriptor
 	bne.w	.failed
 	lea	4(a1),a2			; first stored point
@@ -2038,20 +1938,6 @@ validate_custom_waypoint_file
 	movem.l	(a7)+,d1-d7/a0-a6
 	rts
 
-inferred_route_counts
-	ds.w	3
-retail_route_counts
-	dc.w	46,46,45		; circuit_00 Illinois
-	dc.w	55,61,49		; circuit_01 New Jersey
-	dc.w	56,67,47		; circuit_02 West Canada
-	dc.w	63,67,66		; circuit_03 South California
-	dc.w	76,77,53		; circuit_04 East Canada
-	dc.w	68,70,54		; circuit_05 Indianapolis
-	dc.w	71,77,71		; circuit_06 Michigan
-	dc.w	77,73,71		; circuit_07 Colorado
-	dc.w	49,46,42		; circuit_08 North California
-	dc.w	82,80,77		; circuit_09 Kentucky
-	even
 
 ; Resolve CUSTOM to a safe relative filename.
 ; OUT: D0=1 and A0=filename, or D0=0 on failure.
@@ -2097,12 +1983,12 @@ resolve_playlist_name
 	moveq	#0,d0
 	rts
 
-; Canonical physical-track template order:
+; Canonical physical-track order:
 ; 01 Illinois, 02 New Jersey, 03 West Canada, 04 South California,
 ; 05 East Canada, 06 Indianapolis, 07 Michigan, 08 Colorado,
 ; 09 North California, 10 Kentucky. Event 11 is Indianapolis again.
 
-capture_track_templates
+capture_track_snapshots
 	movem.l	d0-d7/a0-a5,-(a7)
 
 	lea	CUSTOM_WORK_PREVIEW_IDS,a0
@@ -2112,7 +1998,7 @@ capture_track_templates
 	dbf	d0,.clear_preview
 
 	lea	track_source_offsets(pc),a4
-	lea	CUSTOM_WORK_TRACK_TEMPLATES,a5
+	lea	CUSTOM_WORK_TRACK_SNAPSHOTS,a5
 	lea	RACE_RUNTIME_BASE.w,a3
 	moveq	#0,d5
 	moveq	#TRACK_COUNT-1,d7
@@ -2169,13 +2055,6 @@ active_event_index
 	even
 active_race_ptr
 	dc.l	RACE_RUNTIME_BASE
-active_custom_resource_template
-	dc.w	$FFFF
-	even
-active_custom_resource_race
-	dc.l	0
-active_custom_preview_size
-	dc.l	0
 active_route_starts
 	ds.l	CIRCUIT_WAYPOINT_ROUTES
 active_route_ends
@@ -2183,11 +2062,11 @@ active_route_ends
 active_route_counts
 	ds.w	CIRCUIT_WAYPOINT_ROUTES
 	even
-; Pristine retail templates live at CUSTOM_WORK_TRACK_TEMPLATES.
+; Pristine retail race-record snapshots live at CUSTOM_WORK_TRACK_SNAPSHOTS.
 	even
 
 ;---------------------------------------------------------------------------
-; ACTIVE CUSTOM EVENT ARENA / WORKSPACE — TEST 47
+; ACTIVE CUSTOM EVENT ARENA / WORKSPACE — TEST 50
 ;
 ; The original Indy Heat program owns $00000..$7FFFF.  Default MemConfig=0
 ; allocates $C0000 BaseMem. $80000..$95FFF remains the active circuit_10+ arena;
@@ -2213,30 +2092,24 @@ activate_custom_event
 	cmp.w	#PLAYLIST_MAX_EVENTS-1,d7
 	bhi.w	.done
 
+	; Resolve the actual playlist circuit directly. There is no structural map.
 	move.w	d7,d0
-	add.w	d0,d0
-	move.w	d0,d4
-	lea	CUSTOM_WORK_TEMPLATE_MAP,a0
-	move.w	0(a0,d4.w),d5
-	cmp.w	#TRACK_COUNT-1,d5
+	bsr.w	playlist_event_address
+	moveq	#0,d6
+	move.b	(a0),d6
+	andi.w	#PLAYLIST_CIRCUIT_MASK,d6
+	cmp.w	#PLAYLIST_MAX_CIRCUIT,d6
 	bhi.w	.asset_failed
-
-	lea	CUSTOM_WORK_CIRCUIT_MAP,a0
-	move.w	0(a0,d4.w),d6
-	cmp.w	#$FFFF,d6
-	bne.b	.have_circuit
-	move.w	d5,d6
-.have_circuit
-
 	cmp.w	#TRACK_COUNT,d6
 	bhs.b	.custom_record
+	move.w	d6,d5			; retail physical circuit 0..9 only
 
 	; Retail circuit_00..09: restore and use that circuit's own original native
 	; race-record slot. Do not transplant its retail resource pointers elsewhere.
 	moveq	#0,d0
 	move.w	d5,d0
 	mulu	#RACE_RECORD_SIZE,d0
-	lea	CUSTOM_WORK_TRACK_TEMPLATES,a0
+	lea	CUSTOM_WORK_TRACK_SNAPSHOTS,a0
 	adda.l	d0,a0
 
 	move.w	d5,d0
@@ -2268,18 +2141,17 @@ activate_custom_event
 	cmp.w	#PLAYLIST_MAX_CIRCUIT,d6
 	bhi.w	.asset_failed
 
-	; circuit_10+ retains the proven custom-first staging address $5902.
-	moveq	#0,d0
-	move.w	d5,d0
-	mulu	#RACE_RECORD_SIZE,d0
-	lea	CUSTOM_WORK_TRACK_TEMPLATES,a0
-	adda.l	d0,a0
-	lea	CUSTOM_ACTIVE_RACE_BASE,a1
-	; Preserve D6 here for the same copy_race_record clobber.
-	move.w	d6,-(a7)
-	bsr.w	copy_race_record
-	move.w	(a7)+,d6
+	; circuit_10+ retains the proven custom-first staging address $5902, but
+	; test 50 retains the clean test-48 construction. Clear the full
+	; record first; every gameplay field is then supplied explicitly below.
 	lea	CUSTOM_ACTIVE_RACE_BASE,a3
+	movea.l	a3,a0
+	moveq	#31,d0			; 32 longs = $80
+.clear_custom_race
+	clr.l	(a0)+
+	dbf	d0,.clear_custom_race
+	clr.w	(a0)			; final $02 = complete $82-byte record
+
 	lea	active_race_ptr(pc),a0
 	move.l	a3,(a0)
 
@@ -2290,6 +2162,8 @@ activate_custom_event
 
 	move.w	d6,d0
 	bsr.w	apply_circuit_setup
+	tst.l	d0
+	beq.w	.asset_failed
 	move.w	d6,d0
 	bsr.w	apply_circuit_cpu_choices
 	tst.l	d0
@@ -2308,7 +2182,6 @@ activate_custom_event
 
 .custom_assets
 	move.w	d6,d0
-	move.w	d5,d1
 	bsr.w	load_active_custom_assets
 	tst.l	d0
 	beq.w	.asset_failed
@@ -2333,7 +2206,7 @@ activate_custom_event
 .apply_laps
 	; custom_event_advance has already selected/rebuilt the upcoming race before
 	; Gasoline Alley.  Resolve that event's compact record and apply playlist fields
-	; last, so Circuit mode inherits the race/template values and Playlist mode wins.
+	; last, so Circuit mode inherits the race values and Playlist mode wins.
 	move.w	d7,d0
 	bsr.w	playlist_event_address
 	moveq	#0,d1
@@ -2393,7 +2266,7 @@ mirror_stock_presentation_to_event0
 	; A previous circuit_10+ event may have used $5902 as its staging record.
 	; Restore the genuine Illinois/event-zero record first so any remaining early
 	; hard-coded event-zero consumers see valid retail structure/resource pointers.
-	lea	CUSTOM_WORK_TRACK_TEMPLATES,a0
+	lea	CUSTOM_WORK_TRACK_SNAPSHOTS,a0
 	lea	RACE_RUNTIME_BASE.w,a1
 	bsr.w	copy_race_record
 	lea	RACE_RUNTIME_BASE.w,a1
@@ -2435,20 +2308,11 @@ load_active_stock_routes_optional
 
 
 ; Release slave-local ownership of the active circuit_10+ staging record.
-; Retail templates remain immutable in CUSTOM_WORK_TRACK_TEMPLATES; test 39 restores each
+; Retail race-record snapshots remain immutable in CUSTOM_WORK_TRACK_SNAPSHOTS; test 39 restores each
 ; stock circuit's own native slot before reuse.
 release_active_custom_resources
-	movem.l	d0/a0,-(a7)
-	; The circuit_10+ $5902 staging record is disposable. Retail native slots are
-	; restored from CUSTOM_WORK_TRACK_TEMPLATES before reuse; transition cleanup therefore
-	; only clears slave-local ownership/preview state before the arena is reused.
-	lea	active_custom_resource_template(pc),a0
-	move.w	#$FFFF,(a0)
-	lea	active_custom_resource_race(pc),a0
-	clr.l	(a0)
-	lea	active_custom_preview_size(pc),a0
-	clr.l	(a0)
-	movem.l	(a7)+,d0/a0
+	; All circuit_10+ graphical payloads and private metadata live in the fixed
+	; reusable arena.  The next custom activation overwrites them in place.
 	rts
 
 ; A deferred stock-package override armed before an event transition must not
@@ -2496,60 +2360,48 @@ load_custom_asset_exact
 	rts
 
 
-; IN: D0.w custom circuit index, D1.w structural template 0..9
+; IN: D0.w custom circuit index
 ; OUT: D0.l = 1 success / 0 failure
 ;
-; Files are loaded first; the active race is repointed to private high-memory
-; resource-entry copies only after every mandatory graphical payload has passed
-; exact-size validation.  The retail resource directory itself is never changed.
+; Test 49 constructs five clean private resource entries from known package formats.
+; No retail resource metadata or preview descriptor is copied.
 load_active_custom_assets
 	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d7			; circuit index
-	moveq	#0,d6
-	move.w	d1,d6			; structural template 0..9
-	cmp.w	#TRACK_COUNT-1,d6
-	bhi.w	.failed
-
-	; D5 is the byte offset into circuit_entry_ptrs; retain D6 as the actual
-	; template index so pointer commit/state recording is unambiguous.
-	move.w	d6,d5
-	lsl.w	#2,d5
-	lea	circuit_entry_ptrs(pc),a0
-	movea.l	0(a0,d5.w),a4		; base resource entry+2 pointer
 
 	; background.bin
-	move.l	4(a4),d1		; entry+6 outLen
-	cmp.l	#TRACK_BACKGROUND_SIZE,d1
-	bne.w	.failed
 	move.w	d7,d0
+	move.l	#TRACK_BACKGROUND_SIZE,d1
 	lea	circuit_leaf_background(pc),a1
 	lea	CUSTOM_BACKGROUND_BASE,a2
 	bsr.w	load_custom_asset_exact
 	tst.l	d0
 	beq.w	.failed
 
-	; foreground.bin: retail variants are $2800 or $2804.
-	lea	RESOURCE_ENTRY_SIZE(a4),a4
-	move.l	4(a4),d1
-	tst.l	d1
-	beq.w	.failed
-	cmp.l	#CUSTOM_FOREGROUND_SLOT_SIZE,d1
-	bhi.w	.failed
+	; foreground.bin: established raw variants are $2800 and $2804.
 	move.w	d7,d0
+	move.l	#TRACK_FOREGROUND_SIZE,d1
+	lea	circuit_leaf_foreground(pc),a1
+	lea	CUSTOM_FOREGROUND_BASE,a2
+	bsr.w	load_custom_asset_exact
+	tst.l	d0
+	bne.b	.foreground_2800
+	move.w	d7,d0
+	move.l	#TRACK_FOREGROUND_SIZE_ALT,d1
 	lea	circuit_leaf_foreground(pc),a1
 	lea	CUSTOM_FOREGROUND_BASE,a2
 	bsr.w	load_custom_asset_exact
 	tst.l	d0
 	beq.w	.failed
+	move.l	#TRACK_FOREGROUND_SIZE_ALT,d4
+	bra.b	.foreground_loaded
+.foreground_2800
+	move.l	#TRACK_FOREGROUND_SIZE,d4
+.foreground_loaded
 
 	; surface.bin
-	lea	RESOURCE_ENTRY_SIZE(a4),a4
-	move.l	4(a4),d1
-	tst.l	d1
-	beq.w	.failed
-	cmp.l	#CUSTOM_SURFACE_SLOT_SIZE,d1
-	bhi.w	.failed
 	move.w	d7,d0
+	move.l	#TRACK_SURFACE_SIZE,d1
 	lea	circuit_leaf_surface(pc),a1
 	lea	CUSTOM_SURFACE_BASE,a2
 	bsr.w	load_custom_asset_exact
@@ -2557,61 +2409,54 @@ load_active_custom_assets
 	beq.w	.failed
 
 	; recovery.bin
-	lea	RESOURCE_ENTRY_SIZE(a4),a4
-	move.l	4(a4),d1
-	tst.l	d1
-	beq.w	.failed
-	cmp.l	#CUSTOM_RECOVERY_SLOT_SIZE,d1
-	bhi.w	.failed
 	move.w	d7,d0
+	move.l	#TRACK_RECOVERY_SIZE,d1
 	lea	circuit_leaf_recovery(pc),a1
 	lea	CUSTOM_RECOVERY_BASE,a2
 	bsr.w	load_custom_asset_exact
 	tst.l	d0
 	beq.w	.failed
 
-	; preview.bin size comes from the active race's preview descriptor/resource
-	; entry rather than a hard-coded package assumption.
-	movea.l	$46(a3),a0
-	move.l	a0,d0
-	beq.w	.failed
-	movea.l	6(a0),a0		; descriptor+6 -> resource entry+2
-	move.l	4(a0),d4		; entry+6 outLen
-	tst.l	d4
-	beq.w	.failed
-	cmp.l	#CUSTOM_PREVIEW_SLOT_SIZE,d4
-	bhi.w	.failed
+	; preview.bin: one 78x51 five-plane BOB = $0A02 bytes.
 	move.w	d7,d0
-	move.l	d4,d1
+	move.l	#TRACK_PREVIEW_SIZE,d1
 	lea	circuit_leaf_preview(pc),a1
 	lea	CUSTOM_PREVIEW_BASE,a2
 	bsr.w	load_custom_asset_exact
 	tst.l	d0
 	beq.w	.failed
 
-	; Build four private resource-directory entries from the retail template.
-	; Each full entry is 22 bytes; the race record points at entry+2, matching
-	; the original resource-directory contract.  The global retail table remains
-	; completely untouched.
-	lea	circuit_entry_ptrs(pc),a0
-	movea.l	0(a0,d5.w),a0		; source entry+2
-	lea	-2(a0),a0			; source full entry
-	lea	CUSTOM_RESOURCE_META_BASE,a1
-	moveq	#21,d0			; 22 longs = 88 bytes = four entries
-.copy_resource_meta
-	move.l	(a0)+,(a1)+
-	dbf	d0,.copy_resource_meta
-
+	; Clear five full 22-byte private entries: 27 longs + final word = $6E.
 	lea	CUSTOM_RESOURCE_META_BASE,a0
+	moveq	#26,d0
+.clear_resource_meta
+	clr.l	(a0)+
+	dbf	d0,.clear_resource_meta
+	clr.w	(a0)
+
+	; Each private entry needs only decompressed length at +$06 and the fixed
+	; already-resident payload pointer at +$0E.
+	lea	CUSTOM_RESOURCE_META_BASE,a0
+	move.l	#TRACK_BACKGROUND_SIZE,6(a0)
 	move.l	#CUSTOM_BACKGROUND_BASE,14(a0)
+
 	lea	RESOURCE_ENTRY_SIZE(a0),a0
+	move.l	d4,6(a0)
 	move.l	#CUSTOM_FOREGROUND_BASE,14(a0)
+
 	lea	RESOURCE_ENTRY_SIZE(a0),a0
+	move.l	#TRACK_SURFACE_SIZE,6(a0)
 	move.l	#CUSTOM_SURFACE_BASE,14(a0)
+
 	lea	RESOURCE_ENTRY_SIZE(a0),a0
+	move.l	#TRACK_RECOVERY_SIZE,6(a0)
 	move.l	#CUSTOM_RECOVERY_BASE,14(a0)
 
-	; Repoint only this active race record to the four private entries.
+	lea	RESOURCE_ENTRY_SIZE(a0),a0
+	move.l	#TRACK_PREVIEW_SIZE,6(a0)
+	move.l	#CUSTOM_PREVIEW_BASE,14(a0)
+
+	; Repoint the active race to the four clean private track entries.
 	lea	CUSTOM_RESOURCE_META_BASE+2,a0
 	move.l	a0,$36(a3)
 	lea	RESOURCE_ENTRY_SIZE(a0),a0
@@ -2621,15 +2466,21 @@ load_active_custom_assets
 	lea	RESOURCE_ENTRY_SIZE(a0),a0
 	move.l	a0,$42(a3)
 
-	lea	active_custom_resource_template(pc),a0
-	move.w	d6,(a0)
-	lea	active_custom_resource_race(pc),a0
-	move.l	a3,(a0)
-	lea	active_custom_preview_size(pc),a0
-	move.l	d4,(a0)
+	; Build the private generic MiniMap descriptor:
+	; +00.l converted-object pointer = 0 before conversion
+	; +04.w object count = 1
+	; +06.l preview resource entry+2
+	; +0A.w conversion flags = 0
+	lea	CUSTOM_PREVIEW_DESCRIPTOR_BASE,a1
+	clr.l	(a1)
+	move.w	#1,4(a1)
+	lea	CUSTOM_PREVIEW_RESOURCE_META_BASE+2,a0
+	move.l	a0,6(a1)
+	clr.w	10(a1)
+	move.l	a1,$46(a3)
 
 	lea	CUSTOM_DIAG_FLAGS,a0
-	ori.w	#$0001,(a0)
+	ori.w	#$000B,(a0)		; private resources + private preview descriptor/path
 	moveq	#1,d0
 	bra.b	.return
 
@@ -2648,7 +2499,6 @@ abort_custom_event
 	rts
 
 custom_fail_memory_msg	dc.b	"Custom track mode needs default memory; remove MemConfig=1",0
-custom_fail_template_msg	dc.b	"Custom circuit template/waypoints invalid",0
 custom_fail_assets_msg	dc.b	"Custom circuit graphical asset load failed",0
 custom_fail_routes_msg	dc.b	"Custom circuit route/settings data failed",0
 custom_fail_pits_msg	dc.b	"Custom circuit pit data failed",0
@@ -2724,19 +2574,8 @@ load_circuit_route_settings
 ; OUT: D0.l = 1 success / 0 failure
 load_active_custom_pits
 	movem.l	d1-d7/a0-a6,-(a7)
-	move.w	d0,d7
-	lea	circuit_leaf_race_setup(pc),a1
-	bsr.w	build_circuit_path
-	move.l	a0,a5
-	move.l	_resload(pc),a2
-	jsr	resload_GetFileSize(a2)
-	cmp.l	#RACE_SETUP_SIZE,d0
-	bne.b	.failed
-	move.l	a5,a0
-	lea	CUSTOM_RACE_SETUP_BASE,a1
-	move.l	_resload(pc),a2
-	jsr	resload_LoadFile(a2)
-
+	; apply_circuit_setup has already exact-size validated and loaded the current
+	; $74 race_setup.bin into CUSTOM_RACE_SETUP_BASE. Reuse that resident copy.
 	lea	CUSTOM_RACE_SETUP_BASE+$10,a0	; four $16 pit records begin at +$10
 	lea	CUSTOM_PIT_ARENA_BASE,a1
 	moveq	#PIT_LONG_COUNT_MINUS1,d6
@@ -2745,10 +2584,6 @@ load_active_custom_pits
 	dbf	d6,.copy
 	move.l	#CUSTOM_PIT_ARENA_BASE,$32(a3)
 	moveq	#1,d0
-	bra.b	.return
-.failed
-	moveq	#0,d0
-.return
 	movem.l	(a7)+,d1-d7/a0-a6
 	rts
 
@@ -2890,14 +2725,13 @@ copy_normalize_waypoint_records
 ; +04.w proof version (=1)
 ; +06.w active event index
 ; +08.w custom circuit index or $FFFF
-; +0A.w structural template index or $FFFF
+; +0A.w reserved ($FFFF)
 ; +0C..+2F active race route descriptors ($24 bytes)
 ; +30..+47 first 24 bytes of relocated/custom Route A
-; +48..+5F first 24 bytes at the retail template's Route-A address after the
-;            game's own startup processing
+; +48..+5F reserved (zero)
 ; +60..+8B active race bytes $24..$4F (HUD/preview/marker presentation fields)
 ; +F0.w flags: bit0 custom resource, bit1 MiniMap recognised, bit2 map, bit3 MiniMap copied
-; +F2.w strict custom failure: 1 template/topology, 2 routes, 3 pits, 4 assets, 5 playlist
+; +F2.w strict custom failure: 1 routes, 2 pits, 3 assets, 4 playlist
 ;
 ; The block is diagnostic only and occupies the final page of the test-33 active arena.
 ;---------------------------------------------------------------------------
@@ -2930,8 +2764,6 @@ capture_custom_route_diag
 	add.w	d0,d0
 	lea	CUSTOM_WORK_CIRCUIT_MAP,a0
 	move.w	0(a0,d0.w),8(a6)
-	lea	CUSTOM_WORK_TEMPLATE_MAP,a0
-	move.w	0(a0,d0.w),$0A(a6)
 
 .copy_desc
 	movea.l	a5,a0
@@ -2944,29 +2776,12 @@ capture_custom_route_diag
 	; First 24 bytes from the active/custom Route A.
 	movea.l	(a5),a0
 	move.l	a0,d0
-	beq.b	.template_sample
+	beq.b	.presentation_sample
 	lea	$30(a6),a1
 	moveq	#5,d0
 .copy_custom
 	move.l	(a0)+,(a1)+
 	dbf	d0,.copy_custom
-
-.template_sample
-	moveq	#0,d0
-	move.w	$0A(a6),d0
-	cmp.w	#TRACK_COUNT-1,d0
-	bhi.b	.presentation_sample
-	mulu	#RACE_RECORD_SIZE,d0
-	lea	CUSTOM_WORK_TRACK_TEMPLATES,a0
-	adda.l	d0,a0
-	movea.l	(a0),a0
-	move.l	a0,d0
-	beq.b	.presentation_sample
-	lea	$48(a6),a1
-	moveq	#5,d0
-.copy_template
-	move.l	(a0)+,(a1)+
-	dbf	d0,.copy_template
 
 .presentation_sample
 	lea	$24(a5),a0
