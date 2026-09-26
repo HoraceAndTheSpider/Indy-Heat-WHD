@@ -9,11 +9,10 @@
  * paired Route A/B descriptors is selected first for the same per-car state.
  * It does not move, mirror, reverse or relabel either waypoint route.
  *
- * route_settings.bin remains IHRS v1 / $0C. Byte +$0B was previously spare:
- *   $00 = legacy/unset (retain the current host/template value on import)
- *   $80 = explicit normal assignment  (race+$6C = $00000000)
- *   $81 = explicit swapped assignment (race+$6C = $FFFFFFFF)
- * Bits 1..6 remain reserved and must be zero when bit 7 is set.
+ * Modern packages store this value explicitly at race_setup.bin +$70.l in the
+ * $74-byte format. The short-lived v0.123 route_settings.bin byte +$0B encoding
+ * is accepted on import only so those packages remain usable. New exports leave
+ * route_settings.bin unchanged.
  */
 const ROUTE_SETTING_OFFSET=0x0B;
 const EXPLICIT_BIT=0x80;
@@ -90,24 +89,18 @@ function injectControl(){
   sync();return true;
 }
 
-function patchRouteSettingsEncoder(){
-  const p=P();if(!p?.encodeRouteSettingsBin||p.__indyHeatRouteABAssignmentHook)return false;
-  const base=p.encodeRouteSettingsBin.bind(p);
-  p.encodeRouteSettingsBin=function(guards,...rest){
-    const out=base(guards,...rest);
-    if(!(out instanceof Uint8Array)||out.length!==0x0C)return out;
-    out[ROUTE_SETTING_OFFSET]=EXPLICIT_BIT|(currentSwap()?SWAPPED_BIT:0);
-    return out;
-  };
-  p.__indyHeatRouteABAssignmentHook=true;
-  return true;
-}
-function decodeStoredAssignment(bytes){
+function decodeLegacyStoredAssignment(bytes){
   if(!(bytes instanceof Uint8Array)||bytes.length!==0x0C)return null;
   const v=bytes[ROUTE_SETTING_OFFSET];
   if(!(v&EXPLICIT_BIT))return null;
-  if(v&0x7e)throw new Error('Invalid Route A/B starting assignment in route_settings.bin');
+  if(v&0x7e)throw new Error('Invalid legacy Route A/B starting assignment in route_settings.bin');
   return !!(v&SWAPPED_BIT);
+}
+function decodeRaceSetupAssignment(bytes){
+  if(!(bytes instanceof Uint8Array)||bytes.length<0x74)return null;
+  const v=be32(bytes,0x70);
+  if(v===0)return false;if(v===0xffffffff)return true;
+  throw new Error('race_setup.bin Route A/B starting assignment must be $00000000 or $FFFFFFFF');
 }
 function selectedCircuitMatches(index){
   const o=selectedOption();
@@ -126,7 +119,9 @@ function captureImport(file){
   (async()=>{
     try{
       const bytes=new Uint8Array(await file.arrayBuffer()),pkg=p.parseCircuitZip(bytes),entries=p.readZipStore(bytes);
-      const settings=entries.get(`${pkg.folder}/route_settings.bin`),swapped=decodeStoredAssignment(settings);
+      const setup=entries.get(`${pkg.folder}/race_setup.bin`),settings=entries.get(`${pkg.folder}/route_settings.bin`);
+      let swapped=decodeRaceSetupAssignment(setup);
+      if(swapped===null)swapped=decodeLegacyStoredAssignment(settings);
       pendingImports.set(Number(pkg.circuitIndex),swapped===null?{explicit:false}:{explicit:true,swapped});
       for(const delay of [0,25,75,150])setTimeout(()=>applyPending(),delay);
     }catch(err){console.warn('Route A/B assignment import:',err);}
@@ -138,36 +133,8 @@ function installImportHook(){
   input.addEventListener('change',e=>captureImport(e.target.files?.[0]),true);
   return true;
 }
-function installCircuitZipExportHook(){
-  const button=$('circuitPackageZip');if(!button||button.dataset.routeABAssignmentHook)return !!button;
-  button.dataset.routeABAssignmentHook='1';
-  button.addEventListener('click',()=>{
-    const NativeBlob=root.Blob,p=P();if(!NativeBlob||!p?.readZipStore||!p?.zipStore)return;
-    class RouteABBlob extends NativeBlob{
-      constructor(parts=[],options={}){
-        let useParts=parts;
-        try{
-          if(String(options?.type||'').toLowerCase()==='application/zip'&&parts.length===1&&parts[0] instanceof Uint8Array){
-            const entries=p.readZipStore(parts[0]),key=[...entries.keys()].find(name=>/\/route_settings\.bin$/i.test(name));
-            if(key){
-              const bytes=entries.get(key).slice();
-              if(bytes.length===0x0C){
-                bytes[ROUTE_SETTING_OFFSET]=EXPLICIT_BIT|(currentSwap()?SWAPPED_BIT:0);entries.set(key,bytes);
-                useParts=[p.zipStore([...entries.entries()].map(([name,data])=>({name,data})))];
-              }
-            }
-          }
-        }catch(err){console.warn('Route A/B assignment export:',err);}
-        super(useParts,options);
-      }
-    }
-    root.Blob=RouteABBlob;
-    setTimeout(()=>{if(root.Blob===RouteABBlob)root.Blob=NativeBlob;},0);
-  },true);
-  return true;
-}
 function install(){
-  const ok=injectControl();patchRouteSettingsEncoder();installImportHook();installCircuitZipExportHook();
+  const ok=injectControl();installImportHook();
   if(ok&&!installed){
     installed=true;
     $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{applyPending();sync();},0));
@@ -179,5 +146,5 @@ function install(){
 let tries=0;function boot(){if(install()||++tries>240)return;setTimeout(boot,50);}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});else setTimeout(boot,0);
 
-root.IndyHeatRouteABAssignment={version:'0.123',readSwap,writeAll,currentSwap,decodeStoredAssignment};
+root.IndyHeatRouteABAssignment={version:'0.124',readSwap,writeAll,currentSwap,decodeRaceSetupAssignment,decodeLegacyStoredAssignment};
 })(typeof globalThis!=='undefined'?globalThis:this);

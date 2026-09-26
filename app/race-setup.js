@@ -7,7 +7,8 @@ const PIT_RECORD_SIZE=0x16;
 const PIT_RECORD_COUNT=4;
 const PIT_BLOCK_SIZE=PIT_RECORD_SIZE*PIT_RECORD_COUNT; // $58
 const LEGACY_COMPACT_SIZE=0x68;
-const COMPACT_SIZE=0x70;
+const LEGACY_COMPACT_SIZE_V70=0x70;
+const COMPACT_SIZE=0x74;
 const LAP_MIN=2;
 const LAP_MAX=20;
 const OFF=Object.freeze({
@@ -21,7 +22,8 @@ const OFF=Object.freeze({
   pitApproachY:0x60,
   startX:0x62,
   startY:0x66,
-  startOrient:0x6A
+  startOrient:0x6A,
+  routeAssignment:0x6C
 });
 const CPU_CHOICES_OFFSET=0x50;
 const CPU_CHOICES_SIZE=6;
@@ -49,7 +51,8 @@ const COMPACT_LAYOUT=Object.freeze({
   flag:{offset:0x02,length:4,source:'race+$5C.w/+$5E.w'},
   start:{offset:0x06,length:10,source:'race+$62.l/+$66.l/+$6A.w'},
   pits:{offset:0x10,length:PIT_BLOCK_SIZE,source:'four raw $16-byte pit records via race+$32.l'},
-  pitlane:{offset:0x68,length:8,source:'race+$2C/+2E/+30/+60 pitlane controls'}
+  pitlane:{offset:0x68,length:8,source:'race+$2C/+2E/+30/+60 pitlane controls'},
+  routeAssignment:{offset:0x70,length:4,source:'race+$6C.l Route A/B starting assignment'}
 });
 
 // Four start-grid local offsets written by the race setup code into each car's
@@ -101,6 +104,7 @@ function parseRaceSetup(main,record){
     flagX:s16(be16(main,o+OFF.flagX)),flagY:s16(be16(main,o+OFF.flagY)),
     startX:s32(be32(main,o+OFF.startX)),startY:s32(be32(main,o+OFF.startY)),
     startOrient:s16(be16(main,o+OFF.startOrient)),
+    routeAssignment:be32(main,o+OFF.routeAssignment),
     cpuChoices:Object.freeze({
       turbos:be16(main,o+0x50),brakes:be16(main,o+0x52),tyres:be16(main,o+0x54),
       crew:be16(main,o+0x56),mpg:be16(main,o+0x58),engine:be16(main,o+0x5A)
@@ -179,23 +183,25 @@ function makeCompactBin(main,record){
   wr16(out,COMPACT_LAYOUT.pitlane.offset+2,setup.pitPickupY&0xffff);
   wr16(out,COMPACT_LAYOUT.pitlane.offset+4,setup.pitPickupHalfWidth);
   wr16(out,COMPACT_LAYOUT.pitlane.offset+6,setup.pitApproachY&0xffff);
+  wr32(out,COMPACT_LAYOUT.routeAssignment.offset,setup.routeAssignment);
   return out;
 }
 function applyCompactBin(main,record,bin){
   if(!(bin instanceof Uint8Array))bin=new Uint8Array(bin);
-  if(bin.length!==LEGACY_COMPACT_SIZE&&bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be $68 (${LEGACY_COMPACT_SIZE}) or $70 (${COMPACT_SIZE}) bytes`);
+  if(bin.length!==LEGACY_COMPACT_SIZE&&bin.length!==LEGACY_COMPACT_SIZE_V70&&bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be $68 (${LEGACY_COMPACT_SIZE}), $70 (${LEGACY_COMPACT_SIZE_V70}) or $74 (${COMPACT_SIZE}) bytes`);
   const setup=parseRaceSetup(main,record),o=setup.recordOffset;
   const importedLaps=be16(bin,COMPACT_LAYOUT.laps.offset);
   wr16(main,o+OFF.laps,importedLaps<LAP_MIN?LAP_MIN:importedLaps);
   main.set(bin.slice(COMPACT_LAYOUT.flag.offset,COMPACT_LAYOUT.flag.offset+4),o+OFF.flagX);
   main.set(bin.slice(COMPACT_LAYOUT.start.offset,COMPACT_LAYOUT.start.offset+10),o+OFF.startX);
   main.set(bin.slice(COMPACT_LAYOUT.pits.offset,COMPACT_LAYOUT.pits.offset+PIT_BLOCK_SIZE),setup.pitFileOffset);
-  if(bin.length>=COMPACT_SIZE){
+  if(bin.length>=LEGACY_COMPACT_SIZE_V70){
     wr16(main,o+OFF.pitPickupX,be16(bin,COMPACT_LAYOUT.pitlane.offset+0));
     wr16(main,o+OFF.pitPickupY,be16(bin,COMPACT_LAYOUT.pitlane.offset+2));
     wr16(main,o+OFF.pitPickupHalfWidth,be16(bin,COMPACT_LAYOUT.pitlane.offset+4));
     wr16(main,o+OFF.pitApproachY,be16(bin,COMPACT_LAYOUT.pitlane.offset+6));
   }
+  if(bin.length>=COMPACT_SIZE)wr32(main,o+OFF.routeAssignment,be32(bin,COMPACT_LAYOUT.routeAssignment.offset));
   return parseRaceSetup(main,record);
 }
 function setupFilename(record){return `indyheat_r${String(Number(record.index)).padStart(2,'0')}_setup.bin`;}
@@ -301,7 +307,7 @@ function pitHeadingFromRoute(record,pit){
   return best?angle16FromWorldVector(best.dx,best.dy):null;
 }
 
-const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
+const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,LEGACY_COMPACT_SIZE_V70,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
   be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
   writeCommon,writeCpuChoices,encodeCpuChoicesBin,decodeCpuChoicesBin,applyCpuChoicesBin,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
   mergeProjectedFixed,projectFixed22_6,inverseFixedXZ,
@@ -414,8 +420,8 @@ function injectUi(){
   ['raceShowStart','raceShowPitlaneZone','raceShowPitApproach','raceShowPits','raceShowPitCrew','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars'].forEach(id=>$(id)?.addEventListener('change',draw));
   $('raceApply').addEventListener('click',applyPanel);
   $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);refreshPanel();draw();setStatus('Selected circuit race setup restored to the loaded Disk.1 data.');});
-  $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($70).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8.`);});
-  $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $70 authored race setup.`);});
+  $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($74).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8 · Route A/B assignment 4.`);});
+  $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $74 authored race setup.`);});
   $('raceExportMain').addEventListener('click',()=>{if(C.model){const v=String(root.INDY_HEAT_EDITOR_VERSION||'').replace(/\./g,'');downloadBytes(C.model.main,`indyheat_main_modified_v${v}.bin`);}});
   cv.addEventListener('pointerdown',pointerDown);cv.addEventListener('pointermove',pointerMove);cv.addEventListener('pointerup',pointerUp);cv.addEventListener('pointercancel',pointerUp);cv.addEventListener('contextmenu',e=>{if(active)e.preventDefault();});
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{currentPit=0;refreshPanel();draw();},0));
@@ -442,7 +448,7 @@ function refreshPanel(){
   currentPit=Math.max(0,Math.min(3,currentPit));$('racePitSlot').value=String(currentPit);const p=s.pits[currentPit];
   $('raceServiceX').value=fixedText(p.serviceX);$('raceServiceY').value=fixedText(p.serviceY);$('raceBoardX').value=fixedText(p.boardX);$('raceBoardY').value=fixedText(p.boardY);$('raceScreenX').value=p.screenX;$('raceScreenY').value=p.screenY;$('raceSlotWord').value=p.slotWord;
   const r=currentRecord(),d=dirty();
-  setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}\n${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($70). Drag visible anchors or edit fields.`);
+  setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}\n${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($74). Drag visible anchors or edit fields.`);
   $('raceRevert').disabled=!d;
 }
 function applyPanel(){
@@ -600,7 +606,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
  *   and '@' as invisible alignment/fill glyphs around the readable name.
  *
  * Package compatibility:
- *   race_setup.bin is authored as the current $70 format; older $68 package
+ *   race_setup.bin is authored as the current $74 format; older $68/$70 package
  *   files remain importable and are upgraded on the next export.
  *   The editor adds an optional package sidecar, name.bin, containing the
  *   exact 18 raw bytes. Older editor builds ignore the extra ZIP member.
@@ -1005,7 +1011,11 @@ function verifyDirectPackage(P,zipBytes,circuitIndex,expectedName,expectedLaps,e
   const get=name=>{const b=entries.get(`${folder}/${name}`);if(!b)throw new Error(`Internal export verification failed: missing ${name}`);return b;};
   const nameBytes=get('name.bin');
   if(decodeNameBytes(nameBytes)!==expectedName)throw new Error(`Internal export verification failed: name is ${decodeNameBytes(nameBytes)}, expected ${expectedName}`);
-  const setup=get('race_setup.bin'),laps=(setup[0]<<8)|setup[1];
+  const setup=get('race_setup.bin');
+  if(setup.length!==0x74)throw new Error(`Internal export verification failed: race_setup.bin is $${setup.length.toString(16).toUpperCase()} bytes, expected $74`);
+  const laps=(setup[0]<<8)|setup[1];
+  const routeAssignment=root.IndyHeatRaceSetupTools.be32(setup,0x70);
+  if(routeAssignment!==0&&routeAssignment!==0xffffffff)throw new Error('Internal export verification failed: Route A/B starting assignment is not $00000000 or $FFFFFFFF');
   if(laps!==expectedLaps)throw new Error(`Internal export verification failed: laps are ${laps}, expected ${expectedLaps}`);
   root.IndyHeatRaceSetupTools.decodeCpuChoicesBin(get('cpu_choices.bin'));
   const pres=P.decodePresentationBin(get('presentation.bin'));
