@@ -94,6 +94,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   .playlistRace{grid-row:1/5}
   .playlistCircuit,.playlistCircuitName,.playlistLapSelect,.playlistCpuMode{grid-column:2}
   .playlistCpuChoices{grid-column:1/-1}
+  body.indyheatMobileUi .mobileDiagnostic{display:none!important}
+  body.indyheatMobileUi #layerModeButtons{position:sticky;top:0;z-index:20;background:#101217;padding:4px 0}
 }
 </style>
 
@@ -102,7 +104,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.153';
+  const EDITOR_VERSION='0.162';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -184,6 +186,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 
     <section>
       <h2>View</h2>
+      <label class="mini" title="Stores only editor UI preferences in this browser. No cookies, analytics or tracking."><input id="rememberEditorSettings" type="checkbox"> Remember settings on this device</label>
       <label><input id="showBg" type="checkbox" checked> Image</label>
       <label>Image opacity <input id="backgroundOpacity" type="range" min="0" max="100" value="100"><span id="backgroundOpacityText">100%</span></label>
       <label id="paletteModeControl" class="inlineControl" hidden>Colours
@@ -193,20 +196,21 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
       <label><input id="showSurface" type="checkbox"> Surface types</label>
       <div class="classToggles indent compactSubcontrols">
         <label><input class="surfaceClass" data-class="0" type="checkbox"> Normal</label>
-        <label><input class="surfaceClass" data-class="1" type="checkbox" checked> Edge / collision</label>
-        <label><input class="surfaceClass" data-class="2" type="checkbox" checked> Slowdown A</label>
-        <label><input class="surfaceClass" data-class="3" type="checkbox" checked> Slowdown B</label>
+        <label><input class="surfaceClass" data-class="1" type="checkbox"> Edge / collision</label>
+        <label><input class="surfaceClass" data-class="2" type="checkbox"> Slowdown A</label>
+        <label><input class="surfaceClass" data-class="3" type="checkbox"> Slowdown B</label>
       </div>
 
-      <label><input id="showWaypoints" type="checkbox" checked> Waypoints</label>
+      <label><input id="showWaypoints" type="checkbox"> Waypoints</label>
       <div class="classToggles indent compactSubcontrols">
-        <label><input class="waypointSet" data-set="0" type="checkbox" checked> Route A</label>
-        <label><input class="waypointSet" data-set="1" type="checkbox" checked> Route B</label>
-        <label><input class="waypointSet" data-set="2" type="checkbox" checked> Route C / service</label>
-        <label><input id="showWaypointLinks" type="checkbox" checked> Route links</label>
+        <label><input class="waypointSet" data-set="0" type="checkbox"> Route A</label>
+        <label><input class="waypointSet" data-set="1" type="checkbox"> Route B</label>
+        <label><input class="waypointSet" data-set="2" type="checkbox"> Route C / service</label>
+        <label><input id="showWaypointLinks" type="checkbox"> Route links</label>
         <label><input id="showSequenceGroups" type="checkbox"> Sequence groups</label>
         <label><input id="showBit7Flags" type="checkbox"> AI Turbo markers</label>
         <label><input id="showNonDefaultLinkDeltas" type="checkbox"> Link deltas ≠ +6</label>
+        <label><input id="hideWaypointNumbers" type="checkbox"> Hide waypoint numbers</label>
         <label class="inlineControl">Labels
           <select id="wpLabelMode"><option value="off">Off</option><option value="index" selected>Waypoint ID</option><option value="sequence">Sequence</option></select>
         </label>
@@ -220,8 +224,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
       </div>
       <label id="masterZoomControl">Zoom
         <div class="masterZoomSlider">
-          <input id="editorScale" type="range" min="1" max="10" step="0.5" value="2">
-          <span id="editorScaleText">200%</span>
+          <input id="editorScale" type="range" min="1" max="10" step="0.5" value="3">
+          <span id="editorScaleText">300%</span>
         </div>
       </label>
       <label id="overlayOpacityControl">Overlay opacity <input id="opacity" type="range" min="0" max="100" value="55"><span id="opacityText">55%</span></label>
@@ -360,29 +364,30 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   </div>
 </main>
 <script src="indyheat.js?v=0114"></script>
-<script src="edit-guard.js?v=0147"></script>
+<script src="edit-guard.js?v=0159"></script>
 <script src="recovery-hook.js"></script>
 <script src="layer-tools.js?v=050"></script>
 <script src="indyheat_race_graphics.js?v=0148"></script>
-<script src="app.js?v=0152"></script>
-<script src="layer-editor.js?v=0134"></script>
+<script src="app.js?v=0161"></script>
+<script src="palette-control.js?v=0155"></script>
+<script src="layer-editor.js?v=0156"></script>
 <script src="waypoint-actions.js?v=071"></script>
 <script src="recovery-editor.js?v=049"></script>
-<script src="race-setup.js?v=0151"></script>
+<script src="race-setup.js?v=0160"></script>
 <script src="cpu-choices.js?v=0147"></script>
-<script src="race-validation.js?v=0147"></script>
+<script src="race-validation.js?v=0160"></script>
 <script src="track-backdrop.js?v=0131"></script>
-<script src="palette-control.js?v=0145"></script>
-<script src="circuit-package.js?v=0150"></script>
+<script src="circuit-package.js?v=0161"></script>
 <script src="route-ab-assignment.js?v=0124"></script>
 <script src="circuit-library.js?v=0147"></script>
 <script src="brush-tools.js?v=078"></script>
 <script src="brush-library.js?v=0111"></script>
 <script src="foreground-auto.js?v=0132"></script>
-<script src="minimap-brush-ui.js?v=0145"></script>
-<script src="backdrop-brush-ui.js?v=0145"></script>
+<script src="minimap-brush-ui.js?v=0154"></script>
+<script src="backdrop-brush-ui.js?v=0154"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
-<script src="editor-ui.js?v=0147"></script>
+<script src="editor-ui.js?v=0161"></script>
+<script src="editor-preferences.js?v=0161"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */

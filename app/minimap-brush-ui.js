@@ -109,7 +109,8 @@ function brushTransparencyIndex(){
   const key=sourceKey();if(!brushTransparencyBySource.has(key)){const d=decodedPreview();brushTransparencyBySource.set(key,Number.isInteger(d?.transparent)?d.transparent:0);}
   return brushTransparencyBySource.get(key);
 }
-function configurePaletteControl(){const palette=$('circuitPreviewPalette'),PC=root.IndyHeatPaletteControl;if(!palette||!PC)return false;return PC.configure(palette,{secondary:brushTransparencyIndex,primaryTarget:()=>transparencyPickArmed?'secondary':'primary',onSecondary:i=>{transparencyPickArmed=false;setTransparencyIndex(i);},secondaryTitle:'brush transparency index · right-click to keep/set'});}
+function configurePaletteControl(){const palette=$('circuitPreviewPalette'),PC=root.IndyHeatPaletteControl;if(!palette||!PC)return false;return PC.configure(palette,{secondary:brushTransparencyIndex,primaryTarget:()=>transparencyPickArmed?'secondary':'primary',onSecondary:i=>{transparencyPickArmed=false;setTransparencyIndex(i);},secondaryTitle:'brush transparency index · right-click to keep/set',stencil:true});}
+function applyStencil(basePixels,outPixels){const palette=$('circuitPreviewPalette'),PC=root.IndyHeatPaletteControl;return palette&&PC?.applyStencilPixels?PC.applyStencilPixels(palette,basePixels,outPixels):outPixels;}
 function updatePaletteTransparency(transparent=brushTransparencyIndex()){
   transparent=Number(transparent);configurePaletteControl();
   const value=$('circuitPreviewTransparentValue');if(value)value.textContent=String(transparent);const swatch=$('circuitPreviewTransparentSwatch'),rgb=P()?.PRESENTATION_PALETTE_RGB?.[transparent];if(swatch&&rgb)swatch.style.background=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
@@ -132,19 +133,20 @@ function finishCapture(){
 
 function applyNormalPoints(basePixels,points,value){const out=Uint8Array.from(basePixels);for(const [x,y] of normalBrushPoints(points))if(x>=0&&y>=0&&x<P().PREVIEW_WIDTH&&y<P().PREVIEW_HEIGHT)out[y*P().PREVIEW_WIDTH+x]=value;return {pixels:out,transparent:null,written:points.length};}
 function applyPoints(decoded,points,{erase=false,filled=false,anchor=null}={}){
-  const p=P(),maskColour=brushTransparencyIndex(),value=erase?maskColour:currentPaintColour();if(brush){
-    if(erase){const placed=filled?patternFillBrushMask(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brush,points,anchor?.x??0,anchor?.y??0,maskColour):stampBrushMaskPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brush,points,maskColour);return {...placed,transparent:decoded.transparent};}
-    if(filled)return patternFillRasterBrush(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,anchor?.x??0,anchor?.y??0,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase:false});
-    return stampRasterBrushPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase:false});
-  }
-  const r=applyNormalPoints(decoded.pixels,points,value);r.transparent=decoded.transparent;return r;
+  const p=P(),maskColour=brushTransparencyIndex(),value=erase?maskColour:currentPaintColour();let placed;
+  if(brush){
+    if(erase)placed=filled?patternFillBrushMask(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brush,points,anchor?.x??0,anchor?.y??0,maskColour):stampBrushMaskPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,brush,points,maskColour);
+    else if(filled)placed=patternFillRasterBrush(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,anchor?.x??0,anchor?.y??0,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase:false});
+    else placed=stampRasterBrushPoints(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,decoded.transparent,brush,points,{paletteSize:p.PRESENTATION_PALETTE_RGB?.length||32,erase:false});
+  }else placed=applyNormalPoints(decoded.pixels,points,value);
+  placed.pixels=applyStencil(decoded.pixels,placed.pixels);placed.transparent=placed.transparent??decoded.transparent;return placed;
 }
 function commitPoints(points,{erase=false,filled=false,anchor=null,snapshot=null}={}){
   const q=currentPreview(),decoded=decodedPreview(q);if(!q||!decoded)return false;try{const before=snapshot||q.resource.data.slice(),placed=applyPoints(decoded,points,{erase,filled,anchor});writePreview(q,placed.pixels,placed.transparent??decoded.transparent);pushUndoBytes(q,before);gesture=null;hover=null;syncTransparencyUi();setState(`${toolLabel(drawTool)} committed${brush?' with custom brush':''}.`);redraw();return true;}catch(err){setState(`ERROR: ${err.message}`,true);return false;}
 }
 function commitFill(pt,erase){
-  const q=currentPreview(),p=P(),decoded=decodedPreview(q);if(!q||!p||!decoded)return;const target=decoded.pixels[pt.y*p.PREVIEW_WIDTH+pt.x],probe=(target+1)%(p.PRESENTATION_PALETTE_RGB?.length||32),indices=L.floodFillIndices(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,pt.x,pt.y,probe),points=indices.map(i=>[i%p.PREVIEW_WIDTH,(i/p.PREVIEW_WIDTH)|0]);if(!points.length)return;
-  if(brush)commitPoints(points,{erase,filled:true,anchor:pt});else{const value=erase?brushTransparencyIndex():currentPaintColour();const out=decoded.pixels.slice();for(const i of indices)out[i]=value;const snap=q.resource.data.slice();writePreview(q,out,decoded.transparent);pushUndoBytes(q,snap);setState(`Fill committed${erase?' using brush transparency index '+brushTransparencyIndex():''}.`);redraw();}
+  const q=currentPreview(),p=P(),decoded=decodedPreview(q);if(!q||!p||!decoded)return;const target=decoded.pixels[pt.y*p.PREVIEW_WIDTH+pt.x],PC=root.IndyHeatPaletteControl,palette=$('circuitPreviewPalette');if(palette&&PC?.stencilBlocked?.(palette,target)){setState(`Fill blocked by stencil colour ${target}.`);return;}const probe=(target+1)%(p.PRESENTATION_PALETTE_RGB?.length||32),indices=L.floodFillIndices(decoded.pixels,p.PREVIEW_WIDTH,p.PREVIEW_HEIGHT,pt.x,pt.y,probe),points=indices.map(i=>[i%p.PREVIEW_WIDTH,(i/p.PREVIEW_WIDTH)|0]);if(!points.length)return;
+  if(brush)commitPoints(points,{erase,filled:true,anchor:pt});else{const value=erase?brushTransparencyIndex():currentPaintColour();let out=decoded.pixels.slice();for(const i of indices)out[i]=value;out=applyStencil(decoded.pixels,out);const snap=q.resource.data.slice();writePreview(q,out,decoded.transparent);pushUndoBytes(q,snap);setState(`Fill committed${erase?' using brush transparency index '+brushTransparencyIndex():''}.`);redraw();}
 }
 function shapePoints(tool,start,end){if(tool==='line')return L.linePoints(start.x,start.y,end.x,end.y);if(tool==='rectangle')return L.rectanglePoints(start.x,start.y,end.x,end.y);if(tool==='rectangle-filled')return L.filledRectanglePoints(start.x,start.y,end.x,end.y);if(tool==='ellipse')return L.ellipsePoints(start.x,start.y,end.x,end.y);if(tool==='ellipse-filled')return L.filledEllipsePoints(start.x,start.y,end.x,end.y);return [[end.x,end.y]];}
 function toolIsFilled(tool){return tool==='rectangle-filled'||tool==='ellipse-filled';}

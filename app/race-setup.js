@@ -11,6 +11,10 @@ const LEGACY_COMPACT_SIZE_V70=0x70;
 const COMPACT_SIZE=0x74;
 const LAP_MIN=2;
 const LAP_MAX=20;
+const SCREEN_WIDTH=320;
+const SCREEN_HEIGHT=256;
+const PIT_PICKUP_HEIGHT=30;
+const RACE_POINT_MARGIN=6;
 const OFF=Object.freeze({
   laps:0x28,
   pitPickupX:0x2C,
@@ -307,11 +311,36 @@ function pitHeadingFromRoute(record,pit){
   return best?angle16FromWorldVector(best.dx,best.dy):null;
 }
 
-const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,LEGACY_COMPACT_SIZE_V70,COMPACT_SIZE,LAP_MIN,LAP_MAX,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
+function clampNumber(v,min,max){
+  v=Number(v);if(!Number.isFinite(v))v=min;
+  return Math.max(min,Math.min(max,v));
+}
+function screenBounds(margin=0){
+  margin=Math.max(0,Number(margin)||0);
+  return {minX:margin,maxX:(SCREEN_WIDTH-1)-margin,minY:margin,maxY:(SCREEN_HEIGHT-1)-margin};
+}
+function clampScreenPoint(x,y,bounds=screenBounds()){
+  return {x:clampNumber(x,bounds.minX,bounds.maxX),y:clampNumber(y,bounds.minY,bounds.maxY)};
+}
+function clampProjectedPairToBounds(xRaw,zRaw,bounds=screenBounds(),iterations=4){
+  let xr=Number(xRaw)|0,zr=Number(zRaw)|0,changed=false;
+  for(let i=0;i<Math.max(1,Number(iterations)|0);i++){
+    const q=projectFixedXZ(xr,zr);if(!q)break;
+    const c=clampScreenPoint(q.x,q.y,bounds);
+    if(c.x===q.x&&c.y===q.y)return {xRaw:xr,zRaw:zr,projected:q,changed};
+    const inv=inverseFixedXZ(c.x,c.y,xr,zr);if(!inv)break;
+    if(inv.xRaw===xr&&inv.zRaw===zr)break;
+    xr=inv.xRaw;zr=inv.zRaw;changed=true;
+  }
+  return {xRaw:xr,zRaw:zr,projected:projectFixedXZ(xr,zr),changed};
+}
+
+
+const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,LEGACY_COMPACT_SIZE_V70,COMPACT_SIZE,LAP_MIN,LAP_MAX,SCREEN_WIDTH,SCREEN_HEIGHT,PIT_PICKUP_HEIGHT,RACE_POINT_MARGIN,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
   be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
   writeCommon,writeCpuChoices,encodeCpuChoicesBin,decodeCpuChoicesBin,applyCpuChoicesBin,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
   mergeProjectedFixed,projectFixed22_6,inverseFixedXZ,
-  addFixed32,gridCarPositions,angle16ToCanvasRadians,angle16FromWorldVector,pitHeadingFromRoute};
+  addFixed32,gridCarPositions,angle16ToCanvasRadians,angle16FromWorldVector,pitHeadingFromRoute,clampNumber,screenBounds,clampScreenPoint,clampProjectedPairToBounds};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatRaceSetupTools=api;
 
@@ -332,12 +361,12 @@ function currentRecord(){
 }
 function currentSetup(){const r=currentRecord();return r&&C.model?parseRaceSetup(C.model.main,r):null;}
 function setStatus(s){const el=$('raceSetupStatus');if(el)el.textContent=s;}
-function dirty(){const r=currentRecord();return !!(r&&C.model&&C.originalMain&&isSetupDirty(C.model.main,C.originalMain,r));}
+function dirty(){const r=currentRecord();const raceDirty=!!(r&&C.model&&C.originalMain&&isSetupDirty(C.model.main,C.originalMain,r));const hudDirty=!!root.IndyHeatRaceHud?.isDirty?.();return raceDirty||hudDirty;}
 
 function ensureGraphics(){
   if(!C.model)return;
   if(root.IndyHeatRaceGraphics){
-    try{graphics=root.IndyHeatRaceGraphics.attach(C.model,{resourceIds:[0x05,0x08,0x0F]});imageCache.clear();draw();}catch(e){setStatus(`Race graphics unavailable: ${e.message}`);}
+    try{graphics=root.IndyHeatRaceGraphics.attach(C.model,{resourceIds:[0x05,0x08,0x0F]});imageCache.clear();refreshPanel();draw();}catch(e){setStatus(`Race graphics unavailable: ${e.message}`);}
     return;
   }
   if(document.querySelector('script[data-indyheat-race-graphics]'))return;
@@ -360,6 +389,9 @@ function injectUi(){
     .raceLapSliderRow{display:flex;align-items:center;gap:4px;width:100%;min-width:0;white-space:nowrap}
     .raceLapSliderRow #raceLaps{flex:1 1 auto;width:auto;max-width:none;min-width:58px;margin:0}
     .raceLapSliderValue{flex:0 0 5.5ch;min-width:5.5ch;text-align:left;white-space:nowrap;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
+    .racePositionSliderRow{display:flex;align-items:center;gap:4px;width:100%;min-width:0;white-space:nowrap}
+    .racePositionSliderRow input[type=range]{flex:1 1 auto;width:auto;min-width:58px;margin:0}
+    .racePositionSliderValue{flex:0 0 3.5ch;min-width:3.5ch;text-align:right;white-space:nowrap;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
     .raceSetupWide{grid-column:1/-1}
     .raceSetupChecks{display:none}
     .raceSetupChecks label{margin:0;font-size:11px}
@@ -387,27 +419,30 @@ function injectUi(){
       <div class="raceSetupGrid">
         <label>Laps <span class="raceLapSliderRow"><input id="raceLaps" type="range" min="2" max="20" step="1" title="Authored custom range: 2–20"><output id="raceLapsSliderValue" class="raceLapSliderValue" for="raceLaps">2 laps</output></span></label>
         <label>Start orient <input id="raceStartOrient" type="number" min="-32768" max="32767" step="1"></label>
-        <label>Flag X <input id="raceFlagX" type="number" min="-32768" max="32767" step="1"></label>
-        <label>Flag Y <input id="raceFlagY" type="number" min="-32768" max="32767" step="1"></label>
-        <label>Grid X (16.16) <input id="raceStartX" type="number" step="0.0001"></label>
-        <label>Grid Y (16.16) <input id="raceStartY" type="number" step="0.0001"></label>
+        <input id="raceFlagX" type="hidden"><input id="raceFlagY" type="hidden"><input id="raceStartX" type="hidden"><input id="raceStartY" type="hidden">
+        <label>Flag X <span class="racePositionSliderRow"><input id="raceFlagXSlider" type="range" min="0" max="319" step="1"><output id="raceFlagXValue" class="racePositionSliderValue" for="raceFlagXSlider">0</output></span></label>
+        <label>Flag Y <span class="racePositionSliderRow"><input id="raceFlagYSlider" type="range" min="0" max="255" step="1"><output id="raceFlagYValue" class="racePositionSliderValue" for="raceFlagYSlider">0</output></span></label>
+        <label>Grid X <span class="racePositionSliderRow"><input id="raceStartXSlider" type="range" min="0" max="319" step="1"><output id="raceStartXValue" class="racePositionSliderValue" for="raceStartXSlider">0</output></span></label>
+        <label>Grid Y <span class="racePositionSliderRow"><input id="raceStartYSlider" type="range" min="0" max="255" step="1"><output id="raceStartYValue" class="racePositionSliderValue" for="raceStartYSlider">0</output></span></label>
       </div>
       <div class="toolGroupTitle">Pitlane</div>
       <div class="raceSetupGrid">
-        <label>Pickup centre X <input id="racePitPickupX" type="number" min="-32768" max="32767" step="1"></label>
-        <label>Pickup top Y <input id="racePitPickupY" type="number" min="-32768" max="32767" step="1"></label>
-        <label>Pickup half-width <input id="racePitPickupHalfWidth" type="number" min="0" max="32767" step="1"></label>
-        <label>Pit approach Y <input id="racePitApproachY" type="number" min="-32768" max="32767" step="1"></label>
+        <input id="racePitPickupX" type="hidden"><input id="racePitPickupY" type="hidden"><input id="racePitPickupHalfWidth" type="hidden"><input id="racePitApproachY" type="hidden">
+        <label>Pickup centre X <span class="racePositionSliderRow"><input id="racePitPickupXSlider" type="range" min="0" max="319" step="1"><output id="racePitPickupXValue" class="racePositionSliderValue" for="racePitPickupXSlider">0</output></span></label>
+        <label>Pickup top Y <span class="racePositionSliderRow"><input id="racePitPickupYSlider" type="range" min="0" max="226" step="1"><output id="racePitPickupYValue" class="racePositionSliderValue" for="racePitPickupYSlider">0</output></span></label>
+        <label>Pickup half-width <span class="racePositionSliderRow"><input id="racePitPickupHalfWidthSlider" type="range" min="0" max="159" step="1"><output id="racePitPickupHalfWidthValue" class="racePositionSliderValue" for="racePitPickupHalfWidthSlider">0</output></span></label>
+        <label>Pit approach Y <span class="racePositionSliderRow"><input id="racePitApproachYSlider" type="range" min="6" max="249" step="1"><output id="racePitApproachYValue" class="racePositionSliderValue" for="racePitApproachYSlider">0</output></span></label>
       </div>
       <div class="toolGroupTitle">Pit slot</div>
       <div class="raceSetupGrid">
         <label class="raceSetupWide">Slot <select id="racePitSlot"><option value="0">Pit 1</option><option value="1">Pit 2</option><option value="2">Pit 3</option><option value="3">Pit 4</option></select></label>
-        <label>Service X (16.16) <input id="raceServiceX" type="number" step="0.0001"></label>
-        <label>Service Y (16.16) <input id="raceServiceY" type="number" step="0.0001"></label>
-        <label>PIT board X (16.16) <input id="raceBoardX" type="number" step="0.0001"></label>
-        <label>PIT board Y (16.16) <input id="raceBoardY" type="number" step="0.0001"></label>
-        <label>Crew screen X <input id="raceScreenX" type="number" min="-32768" max="32767" step="1"></label>
-        <label>Crew screen Y <input id="raceScreenY" type="number" min="-32768" max="32767" step="1"></label>
+        <input id="raceServiceX" type="hidden"><input id="raceServiceY" type="hidden"><input id="raceBoardX" type="hidden"><input id="raceBoardY" type="hidden"><input id="raceScreenX" type="hidden"><input id="raceScreenY" type="hidden">
+        <label>Pit box X <span class="racePositionSliderRow"><input id="raceServiceXSlider" type="range" min="6" max="313" step="1"><output id="raceServiceXValue" class="racePositionSliderValue" for="raceServiceXSlider">0</output></span></label>
+        <label>Pit box Y <span class="racePositionSliderRow"><input id="raceServiceYSlider" type="range" min="6" max="249" step="1"><output id="raceServiceYValue" class="racePositionSliderValue" for="raceServiceYSlider">0</output></span></label>
+        <label>PIT board X <span class="racePositionSliderRow"><input id="raceBoardXSlider" type="range" min="0" max="319" step="1"><output id="raceBoardXValue" class="racePositionSliderValue" for="raceBoardXSlider">0</output></span></label>
+        <label>PIT board Y <span class="racePositionSliderRow"><input id="raceBoardYSlider" type="range" min="0" max="255" step="1"><output id="raceBoardYValue" class="racePositionSliderValue" for="raceBoardYSlider">0</output></span></label>
+        <label>Pit crew X <span class="racePositionSliderRow"><input id="raceScreenXSlider" type="range" min="0" max="319" step="1"><output id="raceScreenXValue" class="racePositionSliderValue" for="raceScreenXSlider">0</output></span></label>
+        <label>Pit crew Y <span class="racePositionSliderRow"><input id="raceScreenYSlider" type="range" min="0" max="255" step="1"><output id="raceScreenYValue" class="racePositionSliderValue" for="raceScreenYSlider">0</output></span></label>
         <label class="raceSetupWide">Slot / side word <input id="raceSlotWord" type="number" min="-32768" max="32767" step="1"></label>
       </div>
       <button id="raceApply" type="button" hidden aria-hidden="true" tabindex="-1">Apply fields</button>
@@ -426,11 +461,13 @@ function injectUi(){
   $('raceCopyPitsA').addEventListener('click',()=>copyPitsFromCompare('A'));
   $('raceCopyPitsB').addEventListener('click',()=>copyPitsFromCompare('B'));
   document.addEventListener('indyheat-circuit-compare-changed',syncRaceCompareCopyButtons);
+  document.addEventListener('indyheat-race-setup-updated',()=>{const finish=()=>{refreshPanel();draw();};if(EG)EG.frame('race-external-update',finish);else requestAnimationFrame(finish);});
   ['raceShowStart','raceShowPitlaneZone','raceShowPitApproach','raceShowPits','raceShowPitCrew','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars'].forEach(id=>$(id)?.addEventListener('change',draw));
-  ['raceStartOrient','raceFlagX','raceFlagY','raceStartX','raceStartY','racePitPickupX','racePitPickupY','racePitPickupHalfWidth','racePitApproachY','raceServiceX','raceServiceY','raceBoardX','raceBoardY','raceScreenX','raceScreenY','raceSlotWord'].forEach(id=>$(id)?.addEventListener('input',commitPanelField));
+  ['raceStartOrient','raceSlotWord'].forEach(id=>$(id)?.addEventListener('input',commitPanelField));
+  ['raceFlagXSlider','raceFlagYSlider','raceStartXSlider','raceStartYSlider','racePitPickupXSlider','racePitPickupYSlider','racePitPickupHalfWidthSlider','racePitApproachYSlider','raceServiceXSlider','raceServiceYSlider','raceBoardXSlider','raceBoardYSlider','raceScreenXSlider','raceScreenYSlider'].forEach(id=>$(id)?.addEventListener('input',commitPositionSlider));
   // Hidden compatibility hook for older internal helpers; users no longer need an Apply step.
   $('raceApply').addEventListener('click',applyPanel);
-  $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);refreshPanel();draw();setStatus('Selected circuit race setup restored to the loaded Disk.1 data.');});
+  $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);root.IndyHeatRaceHud?.revertCurrent?.();refreshPanel();draw();setStatus('Selected circuit race setup and HUD position restored to the loaded Disk.1 data.');});
   $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($74).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8 · Route A/B assignment 4.`);});
   $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $74 authored race setup.`);});
   $('raceExportMain').addEventListener('click',()=>{if(C.model){const v=String(root.INDY_HEAT_EDITOR_VERSION||'').replace(/\./g,'');downloadBytes(C.model.main,`indyheat_main_modified_v${v}.bin`);}});
@@ -438,7 +475,7 @@ function injectUi(){
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{currentPit=0;refreshPanel();draw();},0));
   $('editorScale')?.addEventListener('change',()=>setTimeout(draw,0));$('opacity')?.addEventListener('input',draw);
   document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(()=>{ensureGraphics();refreshPanel();draw();},0));
-  document.addEventListener('indyheat-edit-finished',e=>{const control=e.detail?.control;if(control&&$('raceSetupPane')?.contains(control)){const finish=()=>{refreshPanel();draw();};if(EG)EG.frame('race-edit-finished',finish);else requestAnimationFrame(finish);}});
+  document.addEventListener('indyheat-edit-finished',e=>{const control=e.detail?.control;if(control&&$('raceSetupPane')?.contains(control)){constrainRacePositions();const finish=()=>{refreshPanel();draw();};if(EG)EG.frame('race-edit-finished',finish);else requestAnimationFrame(finish);}});
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>draw()).observe(view);
   return true;
 }
@@ -474,12 +511,106 @@ function commitLapSlider(){
   }catch(e){setStatus(`ERROR: ${e.message}`);return false;}
 }
 
+function setCompatValue(id,value){
+  const el=$(id);if(!el)return;
+  const next=String(value??'');if(el.value!==next)el.value=next;
+}
+function sliderOutputId(sliderId){return String(sliderId||'').replace(/Slider$/,'Value');}
+function setPositionSlider(sliderId,value,min,max){
+  const input=$(sliderId),out=$(sliderOutputId(sliderId));if(!input)return;
+  min=Math.ceil(Number(min));max=Math.floor(Number(max));if(!Number.isFinite(min)||!Number.isFinite(max)||min>max){min=0;max=0;}
+  const active=!!EG?.editing?.(input);
+  if(!active){input.min=String(min);input.max=String(max);}
+  let v=Math.round(Number(value));if(!Number.isFinite(v))v=min;v=Math.max(min,Math.min(max,v));
+  if(active){const live=Math.round(Number(input.value));if(Number.isFinite(live))v=live;}
+  else if(EG)EG.setValue(input,v);else input.value=String(v);
+  if(out){out.value=String(v);out.textContent=String(v);out.setAttribute('aria-label',String(v));}
+}
+function gridAnchorScreenBounds(setup){
+  const fallback=screenBounds(RACE_POINT_MARGIN),origin=projectFixedXZ(setup?.startX,setup?.startY);if(!origin)return fallback;
+  const qs=[origin,...gridCarPositions(setup).map(c=>projectFixedXZ(c.x,c.y)).filter(Boolean)];if(!qs.length)return fallback;
+  const minDx=Math.min(...qs.map(q=>q.x-origin.x)),maxDx=Math.max(...qs.map(q=>q.x-origin.x));
+  const minDy=Math.min(...qs.map(q=>q.y-origin.y)),maxDy=Math.max(...qs.map(q=>q.y-origin.y));
+  const b={
+    minX:Math.ceil(RACE_POINT_MARGIN-minDx),maxX:Math.floor((SCREEN_WIDTH-1-RACE_POINT_MARGIN)-maxDx),
+    minY:Math.ceil(RACE_POINT_MARGIN-minDy),maxY:Math.floor((SCREEN_HEIGHT-1-RACE_POINT_MARGIN)-maxDy)
+  };
+  return b.minX<=b.maxX&&b.minY<=b.maxY?b:fallback;
+}
+function pitApproachScreenY(setup,pit){
+  if(!setup||!pit)return null;
+  const xRaw=s16((Number(pit.serviceX)>>>16)&0xffff)<<16,zRaw=Number(setup.pitApproachY)<<16,q=projectFixedXZ(xRaw,zRaw);
+  return q?.y??null;
+}
+function syncCompatibilityPositionFields(setup){
+  if(!setup)return;
+  setCompatValue('racePitPickupX',setup.pitPickupX);setCompatValue('racePitPickupY',setup.pitPickupY);setCompatValue('racePitPickupHalfWidth',setup.pitPickupHalfWidth);setCompatValue('racePitApproachY',setup.pitApproachY);
+  setCompatValue('raceFlagX',setup.flagX);setCompatValue('raceFlagY',setup.flagY);setCompatValue('raceStartX',fixedText(setup.startX));setCompatValue('raceStartY',fixedText(setup.startY));
+  const pit=setup.pits?.[currentPit];if(!pit)return;
+  setCompatValue('raceServiceX',fixedText(pit.serviceX));setCompatValue('raceServiceY',fixedText(pit.serviceY));setCompatValue('raceBoardX',fixedText(pit.boardX));setCompatValue('raceBoardY',fixedText(pit.boardY));setCompatValue('raceScreenX',pit.screenX);setCompatValue('raceScreenY',pit.screenY);
+}
+function syncPositionSliders(setup){
+  if(!setup)return;
+  const pit=setup.pits?.[currentPit]||setup.pits?.[0];if(!pit)return;
+  const flagBounds=spriteAnchorBounds(0x0F,26,0);
+  setPositionSlider('raceFlagXSlider',setup.flagX,flagBounds.minX,flagBounds.maxX);setPositionSlider('raceFlagYSlider',setup.flagY,flagBounds.minY,flagBounds.maxY);
+  const grid=projectFixedXZ(setup.startX,setup.startY),gridBounds=gridAnchorScreenBounds(setup);
+  setPositionSlider('raceStartXSlider',grid?.x,gridBounds.minX,gridBounds.maxX);setPositionSlider('raceStartYSlider',grid?.y,gridBounds.minY,gridBounds.maxY);
+  const hw=Math.max(0,Math.min(159,Math.round(Number(setup.pitPickupHalfWidth)||0))),pickupMinX=hw,pickupMaxX=(SCREEN_WIDTH-1)-hw;
+  setPositionSlider('racePitPickupXSlider',setup.pitPickupX,pickupMinX,pickupMaxX);setPositionSlider('racePitPickupYSlider',setup.pitPickupY,0,SCREEN_HEIGHT-PIT_PICKUP_HEIGHT);
+  const halfMax=Math.max(0,Math.min(159,Math.round(Math.min(Number(setup.pitPickupX)||0,(SCREEN_WIDTH-1)-(Number(setup.pitPickupX)||0)))));
+  setPositionSlider('racePitPickupHalfWidthSlider',setup.pitPickupHalfWidth,0,halfMax);
+  setPositionSlider('racePitApproachYSlider',pitApproachScreenY(setup,pit),RACE_POINT_MARGIN,(SCREEN_HEIGHT-1)-RACE_POINT_MARGIN);
+  const service=projectFixedXZ(pit.serviceX,pit.serviceY),serviceBounds=screenBounds(RACE_POINT_MARGIN);
+  setPositionSlider('raceServiceXSlider',service?.x,serviceBounds.minX,serviceBounds.maxX);setPositionSlider('raceServiceYSlider',service?.y,serviceBounds.minY,serviceBounds.maxY);
+  const board=projectFixedXZ(pit.boardX,pit.boardY),boardBounds=spriteFamilyAnchorBounds(0x08,pit.index*16,16,0);
+  setPositionSlider('raceBoardXSlider',board?.x,boardBounds.minX,boardBounds.maxX);setPositionSlider('raceBoardYSlider',board?.y,boardBounds.minY,boardBounds.maxY);
+  const crewBounds=spriteFamilyAnchorBounds(0x05,pit.index*76,76,0);
+  setPositionSlider('raceScreenXSlider',pit.screenX,crewBounds.minX,crewBounds.maxX);setPositionSlider('raceScreenYSlider',pit.screenY,crewBounds.minY,crewBounds.maxY);
+}
+function sliderNumber(id,fallback=0){const el=$(id),n=Number(el?.value);return Number.isFinite(n)?Math.round(n):Math.round(Number(fallback)||0);}
+function commitPositionSlider(e){
+  const input=e?.target,r=currentRecord(),s=currentSetup();if(!input||!r||!s||!C.model)return;
+  const pit=s.pits?.[currentPit]||s.pits?.[0];if(!pit)return;
+  try{
+    const id=input.id;
+    if(id==='raceFlagXSlider'||id==='raceFlagYSlider'){
+      writeCommon(C.model.main,r.offset,{flagX:sliderNumber('raceFlagXSlider',s.flagX),flagY:sliderNumber('raceFlagYSlider',s.flagY)});
+    }else if(id==='racePitPickupXSlider'||id==='racePitPickupYSlider'||id==='racePitPickupHalfWidthSlider'){
+      writeCommon(C.model.main,r.offset,{pitPickupX:sliderNumber('racePitPickupXSlider',s.pitPickupX),pitPickupY:sliderNumber('racePitPickupYSlider',s.pitPickupY),pitPickupHalfWidth:sliderNumber('racePitPickupHalfWidthSlider',s.pitPickupHalfWidth)});
+    }else if(id==='raceStartXSlider'||id==='raceStartYSlider'){
+      const q=projectFixedXZ(s.startX,s.startY);if(!q)return;
+      const inv=inverseFixedXZ(sliderNumber('raceStartXSlider',q.x),sliderNumber('raceStartYSlider',q.y),s.startX,s.startY);if(!inv)return;
+      writeCommon(C.model.main,r.offset,{startX:inv.xRaw,startY:inv.zRaw});
+    }else if(id==='racePitApproachYSlider'){
+      const xRaw=s16((Number(pit.serviceX)>>>16)&0xffff)<<16,preferY=Number(s.pitApproachY)<<16,q=projectFixedXZ(xRaw,preferY);if(!q)return;
+      const inv=inverseFixedXZ(q.x,sliderNumber('racePitApproachYSlider',q.y),xRaw,preferY);if(!inv)return;
+      writeCommon(C.model.main,r.offset,{pitApproachY:s16((Number(inv.zRaw)>>>16)&0xffff)});
+    }else if(id==='raceServiceXSlider'||id==='raceServiceYSlider'){
+      const q=projectFixedXZ(pit.serviceX,pit.serviceY);if(!q)return;
+      const inv=inverseFixedXZ(sliderNumber('raceServiceXSlider',q.x),sliderNumber('raceServiceYSlider',q.y),pit.serviceX,pit.serviceY);if(!inv)return;
+      writePit(C.model.main,s.pitFileOffset,currentPit,{serviceX:inv.xRaw,serviceY:inv.zRaw});
+    }else if(id==='raceBoardXSlider'||id==='raceBoardYSlider'){
+      const q=projectFixedXZ(pit.boardX,pit.boardY);if(!q)return;
+      const inv=inverseFixedXZ(sliderNumber('raceBoardXSlider',q.x),sliderNumber('raceBoardYSlider',q.y),pit.boardX,pit.boardY);if(!inv)return;
+      writePit(C.model.main,s.pitFileOffset,currentPit,{boardX:inv.xRaw,boardY:inv.zRaw});
+    }else if(id==='raceScreenXSlider'||id==='raceScreenYSlider'){
+      writePit(C.model.main,s.pitFileOffset,currentPit,{screenX:sliderNumber('raceScreenXSlider',pit.screenX),screenY:sliderNumber('raceScreenYSlider',pit.screenY)});
+    }else return;
+    const latest=currentSetup();syncCompatibilityPositionFields(latest);syncPositionSliders(latest);
+    const d=dirty(),revert=$('raceRevert');if(revert)revert.disabled=!d;
+    const finish=()=>{draw();setStatus(`${latest?.name||s.name||`Race ${s.recordIndex}`} · ${d?'Modified':'Unmodified'} · position changes are live.`);};
+    if(EG)EG.frame('race-position-slider',finish);else finish();
+  }catch(err){setStatus(`ERROR: ${err.message}`);}
+}
+
 function refreshPanel(){
   const s=currentSetup();if(!s){setStatus('Race setup data is not available for this circuit yet.');return;}
   const put=(id,value)=>{const el=$(id);if(!el)return;if(EG)EG.setValue(el,value);else el.value=String(value??'');};
   put('raceLaps',s.laps);syncLapReadout();put('racePitPickupX',s.pitPickupX);put('racePitPickupY',s.pitPickupY);put('racePitPickupHalfWidth',s.pitPickupHalfWidth);put('racePitApproachY',s.pitApproachY);put('raceFlagX',s.flagX);put('raceFlagY',s.flagY);put('raceStartX',fixedText(s.startX));put('raceStartY',fixedText(s.startY));put('raceStartOrient',s.startOrient);
   currentPit=Math.max(0,Math.min(3,currentPit));put('racePitSlot',currentPit);const p=s.pits[currentPit];
   put('raceServiceX',fixedText(p.serviceX));put('raceServiceY',fixedText(p.serviceY));put('raceBoardX',fixedText(p.boardX));put('raceBoardY',fixedText(p.boardY));put('raceScreenX',p.screenX);put('raceScreenY',p.screenY);put('raceSlotWord',p.slotWord);
+  syncCompatibilityPositionFields(s);syncPositionSliders(s);
   const r=currentRecord(),d=dirty();
   setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}
 ${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($74). Drag visible anchors or edit fields.`);
@@ -510,9 +641,100 @@ function copyPitsFromCompare(slot){
   syncRaceCompareCopyButtons();
 }
 
+
+function spriteAnchorBounds(resourceId,frameIndex,fallbackMargin=0){
+  const fallback=screenBounds(fallbackMargin),frame=graphics?.getFrame?.(resourceId,frameIndex);
+  if(!frame)return fallback;
+  const minX=Math.max(0,Math.ceil(Number(frame.xOrigin)||0)+fallbackMargin);
+  const minY=Math.max(0,Math.ceil(Number(frame.yOrigin)||0)+fallbackMargin);
+  const maxX=Math.min(SCREEN_WIDTH-1,Math.floor(SCREEN_WIDTH-Number(frame.width||0)+Number(frame.xOrigin||0)-fallbackMargin));
+  const maxY=Math.min(SCREEN_HEIGHT-1,Math.floor(SCREEN_HEIGHT-Number(frame.height||0)+Number(frame.yOrigin||0)-fallbackMargin));
+  return (minX<=maxX&&minY<=maxY)?{minX,maxX,minY,maxY}:fallback;
+}
+function spriteFamilyAnchorBounds(resourceId,start,count,fallbackMargin=0){
+  const fallback=screenBounds(fallbackMargin);let minX=fallback.minX,minY=fallback.minY,maxX=fallback.maxX,maxY=fallback.maxY,found=false;
+  for(let i=0;i<count;i++){
+    const frame=graphics?.getFrame?.(resourceId,start+i);if(!frame)continue;found=true;
+    minX=Math.max(minX,Math.ceil(Number(frame.xOrigin)||0)+fallbackMargin);
+    minY=Math.max(minY,Math.ceil(Number(frame.yOrigin)||0)+fallbackMargin);
+    maxX=Math.min(maxX,Math.floor(SCREEN_WIDTH-Number(frame.width||0)+Number(frame.xOrigin||0)-fallbackMargin));
+    maxY=Math.min(maxY,Math.floor(SCREEN_HEIGHT-Number(frame.height||0)+Number(frame.yOrigin||0)-fallbackMargin));
+  }
+  return (found&&minX<=maxX&&minY<=maxY)?{minX,maxX,minY,maxY}:fallback;
+}
+function writeProjectedInside(pitFileOffset,index,kind,xRaw,zRaw,bounds){
+  const safe=clampProjectedPairToBounds(xRaw,zRaw,bounds);
+  if(kind==='start'){
+    const r=currentRecord();if(r&&C.model)writeCommon(C.model.main,r.offset,{startX:safe.xRaw,startY:safe.zRaw});
+  }else if(kind==='service')writePit(C.model.main,pitFileOffset,index,{serviceX:safe.xRaw,serviceY:safe.zRaw});
+  else if(kind==='board')writePit(C.model.main,pitFileOffset,index,{boardX:safe.xRaw,boardY:safe.zRaw});
+  return safe.changed;
+}
+function constrainStartGrid(setup){
+  let xRaw=setup.startX,zRaw=setup.startY,changed=false;
+  for(let pass=0;pass<4;pass++){
+    const origin=projectFixedXZ(xRaw,zRaw);if(!origin)break;
+    const temp={...setup,startX:xRaw,startY:zRaw};
+    const qs=[origin,...gridCarPositions(temp).map(c=>projectFixedXZ(c.x,c.y)).filter(Boolean)];
+    if(!qs.length)break;
+    const b=screenBounds(RACE_POINT_MARGIN),minX=Math.min(...qs.map(q=>q.x)),maxX=Math.max(...qs.map(q=>q.x)),minY=Math.min(...qs.map(q=>q.y)),maxY=Math.max(...qs.map(q=>q.y));
+    let dx=0,dy=0;
+    if(minX<b.minX)dx=b.minX-minX;else if(maxX>b.maxX)dx=b.maxX-maxX;
+    if(minY<b.minY)dy=b.minY-minY;else if(maxY>b.maxY)dy=b.maxY-maxY;
+    if(!dx&&!dy)break;
+    const inv=inverseFixedXZ(origin.x+dx,origin.y+dy,xRaw,zRaw);if(!inv)break;
+    xRaw=inv.xRaw;zRaw=inv.zRaw;changed=true;
+  }
+  if(changed){const r=currentRecord();if(r&&C.model)writeCommon(C.model.main,r.offset,{startX:xRaw,startY:zRaw});}
+  return changed;
+}
+function constrainPitPickup(setup){
+  const r=currentRecord();if(!r||!C.model)return false;
+  let x=Math.round(Number(setup.pitPickupX)||0),y=Math.round(Number(setup.pitPickupY)||0),hw=Math.round(Number(setup.pitPickupHalfWidth)||0);
+  hw=Math.max(0,Math.min(159,hw));
+  x=Math.round(clampNumber(x,hw,(SCREEN_WIDTH-1)-hw));
+  y=Math.round(clampNumber(y,0,SCREEN_HEIGHT-PIT_PICKUP_HEIGHT));
+  const changed=x!==setup.pitPickupX||y!==setup.pitPickupY||hw!==setup.pitPickupHalfWidth;
+  if(changed)writeCommon(C.model.main,r.offset,{pitPickupX:x,pitPickupY:y,pitPickupHalfWidth:hw});
+  return changed;
+}
+function constrainPitApproach(setup){
+  const r=currentRecord(),pit=setup.pits[currentPit]||setup.pits[0];if(!r||!pit||!C.model)return false;
+  const xRaw=s16((Number(pit.serviceX)>>>16)&0xffff)<<16,zRaw=setup.pitApproachY<<16,q=projectFixedXZ(xRaw,zRaw);if(!q)return false;
+  const targetY=clampNumber(q.y,RACE_POINT_MARGIN,(SCREEN_HEIGHT-1)-RACE_POINT_MARGIN);if(targetY===q.y)return false;
+  const inv=inverseFixedXZ(q.x,targetY,xRaw,zRaw);if(!inv)return false;
+  const value=s16((Number(inv.zRaw)>>>16)&0xffff);if(value===setup.pitApproachY)return false;
+  writeCommon(C.model.main,r.offset,{pitApproachY:value});return true;
+}
+function constrainRacePositions(){
+  const r=currentRecord(),s=currentSetup();if(!r||!s||!C.model)return false;
+  let changed=false;
+  changed=constrainPitPickup(s)||changed;
+  changed=constrainStartGrid(currentSetup()||s)||changed;
+  let now=currentSetup()||s;
+  const flagBounds=spriteAnchorBounds(0x0F,26,0),flag=clampScreenPoint(now.flagX,now.flagY,flagBounds);
+  if(flag.x!==now.flagX||flag.y!==now.flagY){writeCommon(C.model.main,r.offset,{flagX:Math.round(flag.x),flagY:Math.round(flag.y)});changed=true;}
+  now=currentSetup()||now;
+  changed=constrainPitApproach(now)||changed;
+  now=currentSetup()||now;
+  const serviceBounds=screenBounds(RACE_POINT_MARGIN);
+  for(const pit of now.pits){
+    changed=writeProjectedInside(now.pitFileOffset,pit.index,'service',pit.serviceX,pit.serviceY,serviceBounds)||changed;
+    const latest=currentSetup()?.pits?.[pit.index]||pit;
+    // Retail $08 uses 16-frame player families; $05 uses 76-frame player families.
+    // Use the whole relevant family so an animation frame cannot extend beyond
+    // the canvas even when its anchor itself is still technically on-screen.
+    const boardBounds=spriteFamilyAnchorBounds(0x08,pit.index*16,16,0);
+    changed=writeProjectedInside(now.pitFileOffset,pit.index,'board',latest.boardX,latest.boardY,boardBounds)||changed;
+    const p2=currentSetup()?.pits?.[pit.index]||latest,crewBounds=spriteFamilyAnchorBounds(0x05,pit.index*76,76,0),crew=clampScreenPoint(p2.screenX,p2.screenY,crewBounds);
+    if(crew.x!==p2.screenX||crew.y!==p2.screenY){writePit(C.model.main,now.pitFileOffset,pit.index,{screenX:Math.round(crew.x),screenY:Math.round(crew.y)});changed=true;}
+  }
+  return changed;
+}
+
 function commitPanelField(e){
   const input=e?.target,r=currentRecord(),s=currentSetup();if(!input||!r||!s||!C.model)return;
-  if(input.value===''||input.validity?.valid===false)return;
+  if(input.value==='')return;
   try{
     const id=input.id,value=Number(input.value);
     if(!Number.isFinite(value))return;
@@ -542,7 +764,7 @@ function applyPanel(){
   try{
     writeCommon(C.model.main,r.offset,{laps:Number($('raceLaps').value),pitPickupX:Number($('racePitPickupX').value),pitPickupY:Number($('racePitPickupY').value),pitPickupHalfWidth:Number($('racePitPickupHalfWidth').value),pitApproachY:Number($('racePitApproachY').value),flagX:Number($('raceFlagX').value),flagY:Number($('raceFlagY').value),startX:numberToFixed($('raceStartX').value),startY:numberToFixed($('raceStartY').value),startOrient:Number($('raceStartOrient').value)});
     writePit(C.model.main,s.pitFileOffset,currentPit,{serviceX:numberToFixed($('raceServiceX').value),serviceY:numberToFixed($('raceServiceY').value),boardX:numberToFixed($('raceBoardX').value),boardY:numberToFixed($('raceBoardY').value),screenX:Number($('raceScreenX').value),screenY:Number($('raceScreenY').value),slotWord:Number($('raceSlotWord').value)});
-    refreshPanel();draw();setStatus(`${s.name} race/pit fields updated.${dirty()?' · Modified':''}`);
+    constrainRacePositions();refreshPanel();draw();setStatus(`${s.name} race/pit fields updated.${dirty()?' · Modified':''}`);
   }catch(e){setStatus(`ERROR: ${e.message}`);}
 }
 
@@ -671,7 +893,7 @@ function writeDrag(t,x,y){
   }
 }
 function pointerMove(e){if(!drag||drag.pointerId!==e.pointerId)return;const p=eventXY(e);writeDrag(drag,p.x,p.y);refreshPanel();draw();}
-function pointerUp(e){if(!drag||drag.pointerId!==e.pointerId)return;try{overlayCanvas().releasePointerCapture?.(e.pointerId);}catch(_e){}drag=null;overlayCanvas().classList.remove('dragging');refreshPanel();draw();}
+function pointerUp(e){if(!drag||drag.pointerId!==e.pointerId)return;try{overlayCanvas().releasePointerCapture?.(e.pointerId);}catch(_e){}drag=null;overlayCanvas().classList.remove('dragging');constrainRacePositions();refreshPanel();draw();}
 
 function init(){
   if(!injectUi())return;ensureGraphics();refreshPanel();draw();

@@ -75,6 +75,8 @@ function injectStyles(){
     .paintRadioList input:checked + label{border-color:#d6b54a;background:#5a4a1c}
     .paintSwatch{display:inline-block;width:12px;height:12px;border:1px solid #777;border-radius:2px}
     .paint-normal{background:rgba(255,255,255,.15)}.paint-edge{background:#dc4545}.paint-slowA{background:#5ed46c}.paint-slowB{background:#4a79e8}.paint-fg{background:#f5bd4f}.paint-clear{background:#111318}
+    #layerStencilPalette{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:5px 0}
+    #layerStencilPalette button{height:20px;min-width:0;border:1px solid #555;padding:0}
     .brushSizeRow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
     #layerBrushSize{width:100%;margin:0}
     #layerBrushSizeText{font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-width:52px;text-align:right;color:#d8dde6}
@@ -163,6 +165,10 @@ function setupControls(){
           <div id="layerPaintChoices" class="paintRadioList"></div>
         </div>
         <div class="toolGroup">
+          <div class="toolGroupTitle">Backdrop colour stencil</div>
+          <div id="layerStencilPalette"></div>
+        </div>
+        <div class="toolGroup">
           <div class="toolGroupTitle">Brush size</div>
           <div class="brushSizeRow">
             <input id="layerBrushSize" type="range" min="1" max="9" step="1" value="1">
@@ -217,7 +223,7 @@ function setupControls(){
     modeWaypoints:$('layerModeWaypoints'),editMask:$('layerEditMask'),editSurface:$('layerEditSurface'),
     drawingPane:$('layerDrawingPane'),waypointHost:$('layerWaypointHost'),
     tools:$('layerEditorTools'),
-    paintChoices:$('layerPaintChoices'),
+    paintChoices:$('layerPaintChoices'),stencilPalette:$('layerStencilPalette'),
     brushSize:$('layerBrushSize'),brushSizeText:$('layerBrushSizeText'),brushShape:$('layerBrushShape'),brushHatch:$('layerBrushHatch'),
     undo:$('layerUndo'),revert:$('layerRevert'),invert:$('layerInvert'),status:$('layerEditorStatus'),
     viewportToggle:$('circuitViewportToggle')
@@ -380,6 +386,49 @@ function setLayerStatus(text,bad=false){
   ui.status.classList.toggle('bad',!!bad);
 }
 
+function layerStencilPaletteRecords(){
+  const words=Array.from(T.VERIFIED_TRACK_PALETTE_WORDS||[]),rgb=typeof T.paletteWordsToRgb==='function'?T.paletteWordsToRgb(words):words.map(w=>T.amiga12ToRgb(w));
+  return Array.from({length:Math.max(32,rgb.length)},(_,i)=>({rgb:rgb[i]||[255,0,255],title:`${i} · $${Number(words[i]||0).toString(16).toUpperCase().padStart(3,'0')}`}));
+}
+function configureLayerStencilPalette(){
+  const PC=globalThis.IndyHeatPaletteControl;
+  if(!ui.stencilPalette||!PC)return false;
+  return PC.configure(ui.stencilPalette,{records:layerStencilPaletteRecords,stencil:true});
+}
+function stencilActive(){
+  const PC=globalThis.IndyHeatPaletteControl;return !!(ui.stencilPalette&&PC?.stencilActive?.(ui.stencilPalette));
+}
+function stencilBlocksBackdropColour(index){
+  const PC=globalThis.IndyHeatPaletteControl;return !!(ui.stencilPalette&&PC?.stencilBlocked?.(ui.stencilPalette,index));
+}
+function stencilAllowsGridPoint(x,y){
+  if(!stencilActive()||!bg)return true;
+  if(editMode==='surface'){
+    const px=x*2,py=y*2;
+    for(let dy=0;dy<2;dy++)for(let dx=0;dx<2;dx++)if(stencilBlocksBackdropColour(bg[(py+dy)*320+(px+dx)]))return false;
+    return true;
+  }
+  if(editMode==='mask')return !stencilBlocksBackdropColour(bg[y*320+x]);
+  return true;
+}
+function stencilFloodFillPoints(values,width,height,startX,startY,newValue,{hatched=false,hatchPhase=0}={}){
+  startX=Math.floor(Number(startX));startY=Math.floor(Number(startY));
+  if(!values||startX<0||startY<0||startX>=width||startY>=height||!stencilAllowsGridPoint(startX,startY))return [];
+  if(!stencilActive())return L.floodFillPoints(values,width,height,startX,startY,newValue,{hatched,hatchPhase});
+  const start=startY*width+startX,target=values[start];if(target===newValue)return [];
+  const seen=new Uint8Array(width*height),stack=[start],points=[];seen[start]=1;
+  while(stack.length){
+    const i=stack.pop(),x=i%width,y=(i/width)|0;
+    if(values[i]!==target||!stencilAllowsGridPoint(x,y))continue;
+    points.push([x,y]);
+    if(x>0){const n=i-1;if(!seen[n]){seen[n]=1;stack.push(n);}}
+    if(x+1<width){const n=i+1;if(!seen[n]){seen[n]=1;stack.push(n);}}
+    if(y>0){const n=i-width;if(!seen[n]){seen[n]=1;stack.push(n);}}
+    if(y+1<height){const n=i+width;if(!seen[n]){seen[n]=1;stack.push(n);}}
+  }
+  return hatched?L.hatchPoints(points,hatchPhase):points;
+}
+
 function currentTool(){
   return document.querySelector('input[name="layerTool"]:checked')?.value||'freehand';
 }
@@ -394,10 +443,10 @@ function setPaintChoices(mode){
   if(!ui.paintChoices||ui.paintChoices.dataset.mode===mode)return;
   if(mode==='surface'){
     ui.paintChoices.innerHTML=[
-      paintChoice(0,'Normal','paint-normal'),
+      paintChoice(0,'Normal - Track','paint-normal'),
       paintChoice(1,'Edge / collision','paint-edge',true),
-      paintChoice(2,'Slowdown A','paint-slowA'),
-      paintChoice(3,'Slowdown B','paint-slowB')
+      paintChoice(2,'Slowdown A - Grass','paint-slowA'),
+      paintChoice(3,'Slowdown B - Gravel Trap','paint-slowB')
     ].join('');
   }else{
     ui.paintChoices.innerHTML=[
@@ -442,10 +491,11 @@ function updateToolbar(){
   ui.invert.disabled=editMode!=='mask'||!res;
   setPaintChoices(editMode);
   updateBrushLabel();updateBrushShapeButton();updateBrushHatchButton();
+  const stencilText=stencilActive()?' · Backdrop-colour stencil active':'';
   if(editMode==='surface'){
-    setLayerStatus(`Surface: each brush unit is one native 2×2px cell. Right-click always paints Normal with the current tool and brush. 1px hatch is Foreground-only.${dirty?' · Modified':''}`);
+    setLayerStatus(`Surface: each brush unit is one native 2×2px cell. Right-click always paints Normal with the current tool and brush. 1px hatch is Foreground-only.${stencilText}${dirty?' · Modified':''}`);
   }else{
-    setLayerStatus(`Foreground: native 1px bitmap. Hatched keeps a fixed 1px on / 1px off pattern while brush size changes only its area. Right-click always paints the opposite of the selected value: Background ↔ Foreground. Invert layer flips the complete 320×256 mask.${dirty?' · Modified':''}`);
+    setLayerStatus(`Foreground: native 1px bitmap. Hatched keeps a fixed 1px on / 1px off pattern while brush size changes only its area. Right-click always paints the opposite of the selected value: Background ↔ Foreground. Invert layer flips the complete 320×256 mask.${stencilText}${dirty?' · Modified':''}`);
   }
 }
 
@@ -754,11 +804,11 @@ function gridValues(){return editMode==='surface'?surface?.cells:mask;}
 function writePoint(x,y,value){
   if(!currentResources)return;
   if(editMode==='surface'){
-    if(x<0||x>=160||y<0||y>=112)return;
+    if(x<0||x>=160||y<0||y>=112||!stencilAllowsGridPoint(x,y))return;
     L.setSurfaceCell(currentResources[2].data,x,y,value,surfaceOffset());
     surface.cells[y*160+x]=value;
   }else if(editMode==='mask'){
-    if(x<0||x>=320||y<0||y>=256)return;
+    if(x<0||x>=320||y<0||y>=256||!stencilAllowsGridPoint(x,y))return;
     L.setMaskPixel(currentResources[1].data,x,y,value,0);
     mask[y*320+x]=value?1:0;
   }
@@ -943,7 +993,7 @@ function beginGestureFrom(ev,source='main'){
   const bSize=brushSize(),bShape=brushShape(),hatched=brushHatched(),hatchPhase=(p.x+p.y)&1,capture=overlay;
   if(tool==='fill'){
     const size=gridSize(),vals=gridValues();
-    const pts=L.floodFillPoints(vals,size.w,size.h,p.x,p.y,value,{hatched,hatchPhase});
+    const pts=stencilFloodFillPoints(vals,size.w,size.h,p.x,p.y,value,{hatched,hatchPhase});
     writePoints(pts,value);
     commitHistory(snapshot);ev.preventDefault();return;
   }
@@ -1044,6 +1094,8 @@ function interceptExports(){
   },true);
 }
 
+configureLayerStencilPalette();
+ui.stencilPalette?.addEventListener('indyheat-palette-stencil-change',()=>{if(gesture?.multiClick)cancelClickShape('Shape cancelled.');else gesture=null;updateToolbar();queueRedraw();});
 ui.showMask.addEventListener('change',()=>queueRedraw());
 ui.showSurface.addEventListener('change',()=>queueRedraw());
 ui.modeWaypoints.addEventListener('click',e=>{e.preventDefault();enterWaypointMode();});

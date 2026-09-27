@@ -513,7 +513,7 @@ function drawWaypoints(){
       const px=x*S,py=y*S,r=Math.max(3,1.45*S);
       ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);ctx.fillStyle='rgba(0,0,0,.82)';ctx.fill();
       ctx.beginPath();ctx.arc(px,py,Math.max(2,0.9*S),0,Math.PI*2);ctx.fillStyle=col;ctx.fill();
-      drawWaypointLabel(waypointLabel(p,set),px,py,col,S);
+      if(!$('hideWaypointNumbers')?.checked)drawWaypointLabel(waypointLabel(p,set),px,py,col,S);
     }
   }
   const sp=state.selectedWaypoint;
@@ -1139,6 +1139,7 @@ window.addEventListener('indyheat-circuit-library-changed',()=>setTimeout(syncCi
 ['showBg','showMask1','showSurface','showWaypointLinks','showSequenceGroups','showHeading','headingReverse'].forEach(id=>$(id).addEventListener('change',render));
 $('paletteMode').addEventListener('change',render);
 $('wpLabelMode').addEventListener('change',render);
+$('hideWaypointNumbers')?.addEventListener('change',render);
 $('headingDensity').addEventListener('change',render);
 $('editorScale').addEventListener('change',()=>{resizeEditorCanvas();render();});
 document.querySelectorAll('.surfaceClass').forEach(c=>c.addEventListener('change',render));

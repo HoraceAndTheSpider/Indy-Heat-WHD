@@ -53,6 +53,7 @@ function setDirty(){const b=$('raceRevert');if(b)b.disabled=false;}
 function redrawRace(){
   const el=$('raceShowStart')||$('raceShowPits');
   if(el)el.dispatchEvent(new Event('change',{bubbles:true}));
+  document.dispatchEvent(new CustomEvent('indyheat-race-setup-updated'));
 }
 function setIssue(id,text,bad=false,muted=false){
   const el=$(id);if(!el)return;
@@ -234,7 +235,7 @@ function installUi(){
   const align=document.createElement('button');align.id='raceAlignCrew';align.type='button';align.textContent='Align crew to pit box';align.title='Set the selected pit crew to the retail-derived preferred anchor: 2 px left of the projected pit box; side 0 uses the same Y and side 1 uses +1 px Y.';
   actions.append(fix,align);pitGrid.insertAdjacentElement('afterend',actions);fix.addEventListener('click',fixPitSides);align.addEventListener('click',alignCrewToPitBox);
 
-  const watched=['raceStartX','raceStartY','raceStartOrient','raceServiceX','raceServiceY','raceScreenX','raceScreenY','raceSlotWord','racePitSlot'];
+  const watched=['raceStartXSlider','raceStartYSlider','raceStartOrient','raceServiceXSlider','raceServiceYSlider','raceScreenXSlider','raceScreenYSlider','raceSlotWord','racePitSlot'];
   const queueValidation=()=>{if(EG)EG.frame('race-validation-input',()=>updateAll());else setTimeout(updateAll,0);};
   for(const id of watched){const el=$(id);el?.addEventListener('input',queueValidation);el?.addEventListener('change',queueValidation);}
   $('trackSelect')?.addEventListener('change',()=>setTimeout(updateAll,0));

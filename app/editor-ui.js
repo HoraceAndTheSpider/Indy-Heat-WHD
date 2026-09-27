@@ -184,6 +184,9 @@ function installStyle(){
     .recoveryViewColourLabel span{min-width:0}
     .raceHudFieldsRow{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px}
     .raceHudFieldsRow label{min-width:0}
+    .raceHudSliderRow{display:flex;align-items:center;gap:4px;width:100%;min-width:0;white-space:nowrap}
+    .raceHudSliderRow input[type=range]{flex:1 1 auto;width:auto;min-width:58px;margin:0}
+    .raceHudSliderValue{flex:0 0 3.5ch;min-width:3.5ch;text-align:right;white-space:nowrap;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
     @media(max-width:1050px){#layerEditorColumn{width:100%!important;min-width:0!important;max-width:none!important;overflow-y:visible!important;scrollbar-gutter:auto!important}}
   `;
   document.head.appendChild(s);
@@ -526,7 +529,7 @@ function restoreLeftFoldContainers(){
   if(surfaceRow&&!surfaceRow.closest('details[data-circuit-fold]')){
     const d=document.createElement('details');
     d.dataset.circuitFold='1';
-    d.open=true;
+    d.open=false;
     const sm=document.createElement('summary');
     sm.textContent='Surface types';
     surfaceRow.parentNode.insertBefore(d,surfaceRow);
@@ -541,7 +544,7 @@ function restoreLeftFoldContainers(){
   if(wpLabel&&!wpLabel.closest('details[data-circuit-fold]')){
     const d=document.createElement('details');
     d.dataset.circuitFold='1';
-    d.open=true;
+    d.open=false;
     const sm=document.createElement('summary');
     sm.textContent='Waypoints';
     wpLabel.parentNode.insertBefore(d,wpLabel);
@@ -561,7 +564,7 @@ function restoreLeftFoldContainers(){
     const colourSource=recoveryArrowColour?.closest('.recoveryColourGrid')||recoveryGridColour?.closest('.recoveryColourGrid');
     recovery=document.createElement('details');
     recovery.id='circuitViewRecovery';
-    recovery.open=true;
+    recovery.open=false;
     recovery.innerHTML='<summary>Recovery</summary><div class="circuitViewToggleBody"></div>';
     const body=recovery.querySelector('div');
     const addRow=(check,label,colour)=>{
@@ -584,7 +587,7 @@ function restoreLeftFoldContainers(){
   if(!pits){
     pits=document.createElement('details');
     pits.id='circuitViewPits';
-    pits.open=true;
+    pits.open=false;
     pits.innerHTML='<summary>Pits</summary><div class="circuitViewToggleBody"></div>';
     viewSection.appendChild(pits);
   }
@@ -600,7 +603,7 @@ function restoreLeftFoldContainers(){
   if(!race){
     race=document.createElement('details');
     race.id='circuitViewRaceControl';
-    race.open=true;
+    race.open=false;
     race.innerHTML='<summary>Race control</summary><div class="circuitViewToggleBody"></div>';
     viewSection.appendChild(race);
   }
@@ -905,10 +908,20 @@ function hudHandle(p){
   return {x,y,actualX:ax,actualY:ay,clamped:x!==ax||y!==ay};
 }
 function safeHudAnchor(p){
+  // Whole HUD footprint: total-laps reaches 9 px left of the anchor, while
+  // the timer reaches 15 px right and 53 px below it.
+  const minX=9,maxX=TRACK_W-16,minY=0,maxY=TRACK_H-54;
   let x=Math.round(Number(p?.lapDisplayX)||0),y=Math.round(Number(p?.lapDisplayY)||0);
-  if(x<0)x=20;else if(x>=TRACK_W)x=TRACK_W-20;
-  if(y<0)y=20;else if(y>=TRACK_H)y=TRACK_H-20;
+  x=Math.max(minX,Math.min(maxX,x));y=Math.max(minY,Math.min(maxY,y));
   return {x,y};
+}
+function syncHudSlider(input,value){
+  if(!input)return;
+  const out=$(input.id==='circuitHudX'?'circuitHudXValue':'circuitHudYValue');
+  let shown=Math.round(Number(value)||0);
+  if(EG?.editing?.(input)){const live=Math.round(Number(input.value));if(Number.isFinite(live))shown=live;}
+  else if(EG)EG.setValue(input,shown);else input.value=String(shown);
+  if(out){out.value=String(shown);out.textContent=String(shown);out.setAttribute('aria-label',String(shown));}
 }
 function renderHud(){
   if(!ensureHudCanvas())return;
@@ -919,8 +932,8 @@ function renderHud(){
 
   const q=presentation();
   if(!q)return;
-  const safe=safeHudAnchor(q.p);
-  if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY)){writeHud(safe.x,safe.y);return;}
+  const safe=safeHudAnchor(q.p),hudFieldActive=!!(EG?.editing?.($('circuitHudX'))||EG?.editing?.($('circuitHudY')));
+  if(!hudFieldActive&&(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY))){writeHud(safe.x,safe.y);return;}
   const p=q.p,S=c.width/TRACK_W;
   const alpha=Math.max(.25,Math.min(1,Number($('opacity')?.value||55)/100));
   ctx.save();
@@ -962,18 +975,19 @@ function renderHud(){
   ctx.restore();
 
   syncHudDragHit(p);
-  if(EG){EG.setValue($('circuitHudX'),p.lapDisplayX);EG.setValue($('circuitHudY'),p.lapDisplayY);}else{if($('circuitHudX'))$('circuitHudX').value=String(p.lapDisplayX);if($('circuitHudY'))$('circuitHudY').value=String(p.lapDisplayY);}
+  syncHudSlider($('circuitHudX'),p.lapDisplayX);syncHudSlider($('circuitHudY'),p.lapDisplayY);
 }
-function writeHud(x,y){
+function writeHud(x,y,{clamp=true}={}){
   const P=packageTools();
   if(!P)return;
-  const safe=safeHudAnchor({lapDisplayX:x,lapDisplayY:y});
-  x=safe.x;y=safe.y;
+  x=Math.round(Number(x)||0);y=Math.round(Number(y)||0);
+  if(clamp){const safe=safeHudAnchor({lapDisplayX:x,lapDisplayY:y});x=safe.x;y=safe.y;}
   for(const m of authoringModels()){
     const r=recordForModel(m);
     if(r)P.writePresentation(m.main,r.offset,{lapDisplayX:x,lapDisplayY:y});
   }
-  if(EG){EG.setValue($('circuitHudX'),x);EG.setValue($('circuitHudY'),y);}else{if($('circuitHudX'))$('circuitHudX').value=String(x);if($('circuitHudY'))$('circuitHudY').value=String(y);}
+  syncHudSlider($('circuitHudX'),x);syncHudSlider($('circuitHudY'),y);
+  const revert=$('raceRevert');if(revert)revert.disabled=false;
   renderHud();
 }
 function ensureHudControls(){
@@ -990,7 +1004,7 @@ function ensureHudControls(){
   let ys=[...document.querySelectorAll('#circuitHudY')];
   let row=$('editorUiHudFields');
   let x=xs[0]||null,y=ys[0]||null;
-  const invalid=xs.length!==1||ys.length!==1||!x||!y||!row||x.closest('#editorUiHudFields')!==row||y.closest('#editorUiHudFields')!==row;
+  const invalid=xs.length!==1||ys.length!==1||!x||!y||!row||x.type!=='range'||y.type!=='range'||!$('circuitHudXValue')||!$('circuitHudYValue')||x.closest('#editorUiHudFields')!==row||y.closest('#editorUiHudFields')!==row;
   if(invalid){
     row?.remove();
     const labels=new Set([...xs,...ys].map(input=>input.closest('label')).filter(Boolean));
@@ -1002,10 +1016,10 @@ function ensureHudControls(){
     row.className='raceHudFieldsRow';
     const xLabel=document.createElement('label');
     xLabel.dataset.editorUiHudField='x';
-    xLabel.innerHTML='HUD X <input id="circuitHudX" type="number">';
+    xLabel.innerHTML='HUD X <span class="raceHudSliderRow"><input id="circuitHudX" type="range" min="9" max="304" step="1"><output id="circuitHudXValue" class="raceHudSliderValue" for="circuitHudX">0</output></span>';
     const yLabel=document.createElement('label');
     yLabel.dataset.editorUiHudField='y';
-    yLabel.innerHTML='HUD Y <input id="circuitHudY" type="number">';
+    yLabel.innerHTML='HUD Y <span class="raceHudSliderRow"><input id="circuitHudY" type="range" min="0" max="202" step="1"><output id="circuitHudYValue" class="raceHudSliderValue" for="circuitHudY">0</output></span>';
     row.append(xLabel,yLabel);
     x=xLabel.querySelector('input');y=yLabel.querySelector('input');
   }
@@ -1017,13 +1031,16 @@ function ensureHudControls(){
     grid.appendChild(row);
   }
 
-  const commit=()=>{if(!x||!y||x.value===''||y.value==='')return;const xv=Number(x.value),yv=Number(y.value);if(Number.isFinite(xv)&&Number.isFinite(yv))writeHud(xv,yv);};
+  if(x){x.min='9';x.max=String(TRACK_W-16);x.step='1';x.title='HUD X · slider limits keep the whole HUD on-screen.';}
+  if(y){y.min='0';y.max=String(TRACK_H-54);y.step='1';y.title='HUD Y · slider limits keep the whole HUD on-screen.';}
+
+  const commit=()=>{if(!x||!y||x.value===''||y.value==='')return;const xv=Number(x.value),yv=Number(y.value);if(Number.isFinite(xv)&&Number.isFinite(yv))writeHud(xv,yv,{clamp:false});};
   for(const input of [x,y])if(input&&!input.dataset.editorUiHudInstant){input.dataset.editorUiHudInstant='1';input.addEventListener('input',commit);input.addEventListener('change',commit);}
 
   const q=presentation();
   if(q){
     const safe=safeHudAnchor(q.p);
-    if(EG){EG.setValue(x,safe.x);EG.setValue(y,safe.y);}else{if(x)x.value=String(safe.x);if(y)y.value=String(safe.y);}
+    syncHudSlider(x,safe.x);syncHudSlider(y,safe.y);
     if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY))writeHud(safe.x,safe.y);
   }
   return true;
@@ -1343,7 +1360,11 @@ function syncLayerPaintSwatches(){
     '.paint-normal':'surface0',
     '.paint-edge':'surface1',
     '.paint-slowA':'surface2',
-    '.paint-slowB':'surface3'
+    '.paint-slowB':'surface3',
+    '.legend .occ':'foreground',
+    '.legend .c1':'surface1',
+    '.legend .c2':'surface2',
+    '.legend .c3':'surface3'
   };
   for(const [sel,key] of Object.entries(map))document.querySelectorAll(sel).forEach(e=>e.style.background=overlayColours[key]);
 }
@@ -1563,7 +1584,9 @@ function redrawHud(){
 function writeHud(x,y){
   const P=packageTools();
   if(!P)return false;
-  x=Math.round(x);y=Math.round(y);
+  x=Math.round(Number(x)||0);y=Math.round(Number(y)||0);
+  x=Math.max(9,Math.min(TRACK_W-16,x));
+  y=Math.max(0,Math.min(TRACK_H-54,y));
   let wrote=false;
   for(const m of models()){
     const r=recordFor(m);
@@ -1574,6 +1597,8 @@ function writeHud(x,y){
   if(!wrote)return false;
   const X=$('circuitHudX'),Y=$('circuitHudY');
   if(EG){EG.setValue(X,x);EG.setValue(Y,y);}else{if(X)X.value=String(x);if(Y)Y.value=String(y);}
+  const XO=$('circuitHudXValue'),YO=$('circuitHudYValue');if(XO){XO.value=String(x);XO.textContent=String(x);}if(YO){YO.value=String(y);YO.textContent=String(y);}
+  const revert=$('raceRevert');if(revert)revert.disabled=false;
   redrawHud();
   return true;
 }
@@ -1897,4 +1922,61 @@ function boot(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});
 else boot();
+})(typeof globalThis!=='undefined'?globalThis:this);
+
+
+/* -------------------------------------------------------------------------
+ * Race HUD baseline bridge.
+ * Race setup data and the lap-tower/HUD live in separate race-record fields,
+ * but Revert setup is the single user-facing revert operation. Keep the HUD
+ * dirty/revert state tied to the loaded Disk.1 baseline without coupling the
+ * race-setup module to editor-ui internals.
+ * ---------------------------------------------------------------------- */
+(function(root){
+'use strict';
+if(typeof document==='undefined')return;
+const $=id=>document.getElementById(id),TRACK_W=320,TRACK_H=256;
+function capture(){return root.IndyHeatRaceSetupCapture||null;}
+function tools(){return root.IndyHeatTools||null;}
+function packageTools(){return root.IndyHeatCircuitPackage||null;}
+function currentIndex(){return Number($('trackSelect')?.value||0);}
+function unique(items){const out=[];for(const x of items)if(x&&!out.includes(x))out.push(x);return out;}
+function recordsFor(model){
+  const C=capture(),T=tools();if(!model||!T)return [];
+  let records=C?.recordsByMain?.get(model.main)||null;
+  if(!records){records=T.parseRaceRecords(model.main);C?.recordsByMain?.set(model.main,records);}
+  for(const r of records)if(r.baseResourceId==null&&typeof T.raceBaseResourceId==='function')r.baseResourceId=T.raceBaseResourceId(r,model.resourceTableOffset+0x1000);
+  return records;
+}
+function recordFor(model){
+  const T=tools(),base=T?.TRACK_BASE_IDS?.[currentIndex()];
+  return recordsFor(model).find(r=>r.baseResourceId===base)||null;
+}
+function baseline(){
+  const C=capture(),P=packageTools(),m=C?.model||C?.layerModel||C?.coreModel,r=recordFor(m);
+  if(!C?.originalMain||!P||!r)return null;
+  try{return P.readPresentation(C.originalMain,r.offset);}catch(_e){return null;}
+}
+function current(){
+  const C=capture(),P=packageTools(),m=C?.model||C?.layerModel||C?.coreModel,r=recordFor(m);
+  if(!m||!P||!r)return null;
+  try{return P.readPresentation(m.main,r.offset);}catch(_e){return null;}
+}
+function clampHud(x,y){
+  return {x:Math.max(9,Math.min(TRACK_W-16,Math.round(Number(x)||0))),y:Math.max(0,Math.min(TRACK_H-54,Math.round(Number(y)||0)))};
+}
+function isDirty(){const a=current(),b=baseline();return !!(a&&b&&(a.lapDisplayX!==b.lapDisplayX||a.lapDisplayY!==b.lapDisplayY));}
+function revertCurrent(){
+  const C=capture(),P=packageTools(),b=baseline();if(!C||!P||!b)return false;
+  const safe=clampHud(b.lapDisplayX,b.lapDisplayY);
+  for(const m of unique([C.coreModel,C.layerModel,C.model,...(C.models||[])])){
+    const r=recordFor(m);if(r)P.writePresentation(m.main,r.offset,{lapDisplayX:safe.x,lapDisplayY:safe.y});
+  }
+  const EG=root.IndyHeatEditGuard,X=$('circuitHudX'),Y=$('circuitHudY');
+  if(EG){EG.setValue(X,safe.x,{force:true});EG.setValue(Y,safe.y,{force:true});}else{if(X)X.value=String(safe.x);if(Y)Y.value=String(safe.y);}
+  const XO=$('circuitHudXValue'),YO=$('circuitHudYValue');if(XO){XO.value=String(safe.x);XO.textContent=String(safe.x);}if(YO){YO.value=String(safe.y);YO.textContent=String(safe.y);}
+  $('opacity')?.dispatchEvent(new Event('input',{bubbles:true}));
+  return true;
+}
+root.IndyHeatRaceHud=Object.freeze({isDirty,revertCurrent,bounds:Object.freeze({minX:9,maxX:TRACK_W-16,minY:0,maxY:TRACK_H-54})});
 })(typeof globalThis!=='undefined'?globalThis:this);
