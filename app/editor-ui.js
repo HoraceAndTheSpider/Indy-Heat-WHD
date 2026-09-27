@@ -369,7 +369,8 @@ function installModeCoordinator(){
     if(!b||modeGuard)return;
     const id=b.id;
 
-    if(e.isTrusted===false){
+    const mobilePointerIntent=root.__indyheatMobileCircuitModeIntent===id;
+    if(e.isTrusted===false&&!mobilePointerIntent){
       // Programmatic mode changes are legitimate in a few workflows, but the
       // Waypoints click used internally while another user-selected mode is
       // activating must not steal the authoritative mode.
@@ -1797,6 +1798,12 @@ else
 if(typeof document==='undefined')return;
 const $=id=>document.getElementById(id);
 let scheduled=false;
+const TOUCH_UI=!!(root.matchMedia?.('(pointer: coarse)').matches&&root.innerWidth<=1050);
+// Native title/hover tooltips and the live status-copy MutationObservers added
+// in v0.163 are desktop affordances. On touch Safari they sit on the exact
+// regression boundary where Circuit controls stopped producing reliable clicks.
+// Skip only this cleanup IIFE on touch; all actual editor modules continue.
+if(TOUCH_UI)return;
 
 const MODE_TOOLTIPS=Object.freeze({
   layerEditBackdrop:'Edit the 320×256 circuit artwork using the race palette, drawing tools and reusable brushes.',

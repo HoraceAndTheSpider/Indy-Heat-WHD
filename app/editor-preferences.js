@@ -177,55 +177,127 @@ function installPersistence(){
 }
 
 
-// Mobile mode navigation uses the same Pointer Events path as the canvas.
-// Do not depend on iOS/Safari synthesising a click from a touch.  Resolve a
-// clean pointer tap by SCREEN COORDINATES as well as event.target so navigation
-// still works if another composited layer is accidentally hit-tested above a
-// visible mode button.
-function installMobileModePointerBridge(){
-  if(document.documentElement.dataset.indyheatMobileModePointerBridge)return;
-  document.documentElement.dataset.indyheatMobileModePointerBridge='1';
-  let gesture=null;
-  const selector='#layerModeButtons button,#editorModeSwitch button';
-  const atPoint=(x,y)=>{
-    const direct=document.elementFromPoint?.(x,y)?.closest?.(selector);
-    if(direct&&!direct.disabled)return direct;
-    for(const button of document.querySelectorAll(selector)){
-      if(button.disabled||!button.isConnected)continue;
-      const r=button.getBoundingClientRect();
-      if(r.width>0&&r.height>0&&x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return button;
+// Mobile Circuit Editor controls use the same Pointer Events path as the
+// canvas. iOS/Safari can show the pressed state yet fail to deliver the later
+// synthetic click when the Circuit Editor has several interactive canvas/UI
+// layers. Translate a clean touch pointer gesture directly into the existing
+// control action. Playlist and Brush Manager are deliberately left native.
+function installMobileCircuitPointerBridge(){
+  if(document.documentElement.dataset.indyheatMobileCircuitPointerBridge)return;
+  document.documentElement.dataset.indyheatMobileCircuitPointerBridge='1';
+  let gesture=null,dispatching=false;
+  const recent=new WeakMap();
+  const PALETTE_SELECTOR='.indyheatPaletteSwatch';
+
+  const circuitWorkspaceActive=()=>!document.body.classList.contains('playlistMode')&&!document.body.classList.contains('brushManagerMode');
+  const inCircuitScope=el=>!!(el&&(el.closest?.('#editorModeSwitch')||el.closest?.('#circuitFileActions')||(circuitWorkspaceActive()&&el.closest?.('main'))));
+  const controlForLabel=label=>{
+    if(!label)return null;
+    if(label.control)return label.control;
+    const id=label.getAttribute('for');
+    return id?document.getElementById(id):label.querySelector('input,select,textarea,button');
+  };
+  function actionForElement(el){
+    if(!el||!inCircuitScope(el))return null;
+    const button=el.closest?.('button');
+    if(button&&!button.disabled&&!button.matches(PALETTE_SELECTOR))return {kind:'click',el:button};
+    const select=el.closest?.('select');
+    if(select&&!select.disabled)return {kind:'picker',el:select};
+    const input=el.closest?.('input');
+    if(input&&!input.disabled){
+      const type=String(input.type||'text').toLowerCase();
+      if(type==='checkbox'||type==='radio')return {kind:'click',el:input};
+      if(type==='file'||type==='color')return {kind:'picker',el:input};
+      return null; // ranges/text/numbers keep their native drag/keyboard path
+    }
+    const label=el.closest?.('label');
+    if(label){
+      const control=controlForLabel(label);
+      if(control&&!control.disabled){
+        const type=control.tagName==='INPUT'?String(control.type||'text').toLowerCase():'';
+        if(control.tagName==='SELECT'||type==='file'||type==='color')return {kind:'picker',el:control,label};
+        if(type==='checkbox'||type==='radio')return {kind:'click',el:control,label};
+      }
+    }
+    const summary=el.closest?.('summary');
+    if(summary)return {kind:'click',el:summary};
+    return null;
+  }
+  function actionAtPoint(x,y){
+    const direct=actionForElement(document.elementFromPoint?.(x,y));
+    if(direct)return direct;
+    // Coordinate fallback is primarily for the two navigation rows, where an
+    // accidental composited layer may win hit-testing on Safari.
+    for(const el of document.querySelectorAll('#editorModeSwitch button,#layerModeButtons button,#circuitFileActions button')){
+      if(el.disabled||!el.isConnected||!inCircuitScope(el))continue;
+      const r=el.getBoundingClientRect();
+      if(r.width>0&&r.height>0&&x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return {kind:'click',el};
     }
     return null;
-  };
+  }
+  function openPicker(action){
+    const el=action?.el;if(!el||el.disabled)return false;
+    try{
+      if(typeof el.showPicker==='function'){el.showPicker();return true;}
+    }catch(_e){}
+    try{
+      el.focus?.({preventScroll:true});
+      el.click?.();
+      return true;
+    }catch(_e){return false;}
+  }
+  function clickAction(action){
+    const el=action?.el;if(!el||el.disabled||!el.isConnected)return false;
+    dispatching=true;recent.set(el,performance.now());
+    const modeId=el.closest?.('#layerModeButtons')?el.id:null;
+    if(modeId)root.__indyheatMobileCircuitModeIntent=modeId;
+    try{el.click();}
+    finally{
+      if(modeId&&root.__indyheatMobileCircuitModeIntent===modeId)delete root.__indyheatMobileCircuitModeIntent;
+      dispatching=false;
+    }
+    return true;
+  }
+
+  // Suppress the delayed trusted click Safari may emit after we have already
+  // handled the pointer gesture. Programmatic clicks issued above are allowed.
+  document.addEventListener('click',e=>{
+    if(dispatching||!e.isTrusted)return;
+    const action=actionForElement(e.target),el=action?.el,t=el?recent.get(el):null;
+    if(t!=null&&performance.now()-t<700){e.preventDefault();e.stopImmediatePropagation();}
+  },true);
+
   document.addEventListener('pointerdown',e=>{
     if(e.pointerType==='mouse'||e.button!==0)return;
-    const button=atPoint(e.clientX,e.clientY);if(!button)return;
-    gesture={pointerId:e.pointerId,button,x:e.clientX,y:e.clientY,moved:false};
-    // Own the tap before a stray canvas/overlay can start a drawing gesture.
-    if(e.cancelable)e.preventDefault();
-    e.stopImmediatePropagation();
+    const action=actionAtPoint(e.clientX,e.clientY);if(!action)return;
+    // Native pickers need transient user activation. Open them immediately from
+    // the trusted pointer event rather than waiting for Safari to synthesise click.
+    if(action.kind==='picker'){
+      if(openPicker(action)){recent.set(action.el,performance.now());if(e.cancelable)e.preventDefault();e.stopImmediatePropagation();}
+      return;
+    }
+    gesture={pointerId:e.pointerId,action,x:e.clientX,y:e.clientY,moved:false};
   },{capture:true,passive:false});
   document.addEventListener('pointermove',e=>{
     if(!gesture||e.pointerId!==gesture.pointerId)return;
-    if(Math.hypot(e.clientX-gesture.x,e.clientY-gesture.y)>12)gesture.moved=true;
-    if(e.cancelable)e.preventDefault();
-    e.stopImmediatePropagation();
-  },{capture:true,passive:false});
+    if(Math.hypot(e.clientX-gesture.x,e.clientY-gesture.y)>18)gesture.moved=true;
+  },{capture:true,passive:true});
   const cancel=e=>{if(!gesture||e?.pointerId==null||e.pointerId===gesture.pointerId)gesture=null;};
   document.addEventListener('pointercancel',cancel,{capture:true,passive:true});
   document.addEventListener('pointerup',e=>{
     const g=gesture;if(!g||e.pointerId!==g.pointerId)return;gesture=null;
-    if(e.cancelable)e.preventDefault();
-    e.stopImmediatePropagation();
-    if(g.moved||g.button.disabled||!g.button.isConnected)return;
-    const end=atPoint(e.clientX,e.clientY);
-    if(end!==g.button)return;
-    g.button.click();
+    if(g.moved)return;
+    const end=actionAtPoint(e.clientX,e.clientY);
+    if(!end||end.el!==g.action.el)return;
+    if(clickAction(g.action)){
+      if(e.cancelable)e.preventDefault();
+      e.stopImmediatePropagation();
+    }
   },{capture:true,passive:false});
 }
 
 function start(){
-  installMobileModePointerBridge();
+  installMobileCircuitPointerBridge();
   let tries=0;
   const tick=()=>{
     if(controlsReady()){applyPreferences();return;}
