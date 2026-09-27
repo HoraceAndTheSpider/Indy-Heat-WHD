@@ -28,6 +28,12 @@ function recordsFor(model){
 function currentRecord(){const model=primaryModel(),t=T();if(!model||!t)return null;const base=t.TRACK_BASE_IDS?.[Number($('trackSelect')?.value||0)];return recordsFor(model).find(r=>r.baseResourceId===base)||null;}
 function currentPreview(){const p=P(),model=primaryModel(),record=currentRecord();if(!p||!model||!record)return null;return p.resolvePreviewResource(model,record);}
 function miniActive(){return !!($('layerEditMini')?.classList.contains('active')&&!$('circuitPreviewControls')?.hidden);}
+function miniOverlay(){return $('circuitMiniHoverCanvas');}
+function syncMiniOverlay(){
+  const base=$('circuitAuxCanvas'),overlay=miniOverlay();if(!base||!overlay)return null;
+  if(overlay.width!==base.width)overlay.width=base.width;if(overlay.height!==base.height)overlay.height=base.height;
+  overlay.hidden=!miniActive();return overlay;
+}
 function sourceKey(q=currentPreview()){
   const o=$('trackSelect')?.selectedOptions?.[0],identity=o?.dataset?.indyheatPackageKey?`package:${o.dataset.indyheatPackageKey}`:`track:${o?.value??'?'}`;
   return q?`${identity}:resource:${q.resourceId}`:identity;
@@ -181,13 +187,13 @@ function beginDraw(e,pt){
 function moveDraw(e,pt){
   hover=pt?.inside?pt:null;if(gesture?.kind==='clickshape'){
     if(drawTool==='curve'){gesture.current={x:pt.x,y:pt.y};if(gesture.stage===2)gesture.bend={x:pt.x,y:pt.y};}
-    else gesture.current={x:pt.x,y:pt.y};redraw();return;
+    else gesture.current={x:pt.x,y:pt.y};drawOverlay();return;
   }
-  if(!gesture||gesture.kind!=='drag'||gesture.pointerId!==e.pointerId){redraw();return;}
+  if(!gesture||gesture.kind!=='drag'||gesture.pointerId!==e.pointerId){drawOverlay();return;}
   gesture.current={x:pt.x,y:pt.y};if(drawTool==='freehand'){
-    const q=currentPreview(),pts=L.linePoints(gesture.last.x,gesture.last.y,pt.x,pt.y),placed=applyPoints({pixels:gesture.workingPixels,transparent:gesture.transparent},pts,{erase:gesture.erase});gesture.workingPixels=placed.pixels;gesture.transparent=placed.transparent??gesture.transparent;gesture.last={x:pt.x,y:pt.y};writePreview(q,gesture.workingPixels,gesture.transparent);
+    const q=currentPreview(),pts=L.linePoints(gesture.last.x,gesture.last.y,pt.x,pt.y),placed=applyPoints({pixels:gesture.workingPixels,transparent:gesture.transparent},pts,{erase:gesture.erase});gesture.workingPixels=placed.pixels;gesture.transparent=placed.transparent??gesture.transparent;gesture.last={x:pt.x,y:pt.y};writePreview(q,gesture.workingPixels,gesture.transparent);redraw();return;
   }
-  redraw();
+  drawOverlay();
 }
 function endDraw(e,pt){
   if(!gesture||gesture.kind!=='drag'||gesture.pointerId!==e.pointerId)return;const g=gesture;try{$('circuitAuxCanvas')?.releasePointerCapture?.(e.pointerId);}catch(_e){}
@@ -224,10 +230,10 @@ function pointerMove(e){
     if(captureMode==='polygon'){
       hover=pt.inside?pt:null;
       if(gesture?.kind==='capture-poly')gesture.current={x:pt.x,y:pt.y};
-      redraw();return;
+      drawOverlay();return;
     }
-    if(!gesture||gesture.kind!=='capture'||gesture.pointerId!==e.pointerId){hover=pt.inside?pt:null;redraw();return;}
-    gesture.current={x:pt.x,y:pt.y};if(captureMode==='trace'){const last=gesture.path[gesture.path.length-1];if(!last||last.x!==pt.x||last.y!==pt.y)gesture.path.push({x:pt.x,y:pt.y});}redraw();return;
+    if(!gesture||gesture.kind!=='capture'||gesture.pointerId!==e.pointerId){hover=pt.inside?pt:null;drawOverlay();return;}
+    gesture.current={x:pt.x,y:pt.y};if(captureMode==='trace'){const last=gesture.path[gesture.path.length-1];if(!last||last.x!==pt.x||last.y!==pt.y)gesture.path.push({x:pt.x,y:pt.y});}drawOverlay();return;
   }
   moveDraw(e,pt);
 }
@@ -267,7 +273,9 @@ function drawGestureOverlay(ctx,l){
     if(brush)drawBrushAt(ctx,l,hover,.72,false);else drawNormalPoints(ctx,l,[[hover.x,hover.y]],false);
   }
 }
-function drawOverlay(){if(!miniActive())return;const c=$('circuitAuxCanvas'),l=layout();if(!c||!l)return;const ctx=c.getContext('2d');drawGestureOverlay(ctx,l);}
+function drawOverlay(){
+  const c=syncMiniOverlay();if(!c)return;const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);if(!miniActive())return;const l=layout();if(!l)return;drawGestureOverlay(ctx,l);
+}
 function redraw(){renderBase();syncUi();drawOverlay();}
 
 function drawLibraryThumbnail(canvas,entry){
@@ -290,6 +298,8 @@ function removeLegacyTemplateUi(controls){
 function installUi(){
   const controls=$('circuitPreviewControls'),canvas=$('circuitAuxCanvas');if(!controls||!canvas)return false;if($('circuitFreeBrushTools'))return true;
   const style=document.createElement('style');style.textContent=`
+    #circuitMiniHoverCanvas{position:absolute;inset:0;z-index:8;display:block;pointer-events:none;image-rendering:pixelated;background:transparent}
+    #circuitMiniHoverCanvas[hidden]{display:none}
     #circuitPreviewControls .miniDrawToolGrid,#circuitFreeBrushTools .miniCaptureGrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:6px 0}
     #circuitPreviewControls .miniDrawToolGrid button,#circuitFreeBrushTools .miniCaptureGrid button{min-width:0;height:31px;padding:4px;font-size:18px;line-height:1}
     #circuitPreviewControls .miniDrawToolGrid button.active,#circuitFreeBrushTools .miniCaptureGrid button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
@@ -303,6 +313,7 @@ function installUi(){
     #circuitPreviewPalette .transparentIndex{outline:2px solid #d6b54a!important;outline-offset:1px}
   `;document.head.appendChild(style);
 
+  let overlay=miniOverlay();if(!overlay){overlay=document.createElement('canvas');overlay.id='circuitMiniHoverCanvas';overlay.hidden=true;canvas.insertAdjacentElement('afterend',overlay);}syncMiniOverlay();
   const oldRow=controls.querySelector('.circuitToolRow');if(!oldRow)return false;bridgePick=oldRow.querySelector('[data-preview-tool="pick"]');if(bridgePick){bridgePick.click();const bridge=document.createElement('div');bridge.hidden=true;bridge.id='circuitPreviewToolBridge';bridge.appendChild(bridgePick);controls.appendChild(bridge);}
   oldRow.className='miniDrawToolGrid';oldRow.innerHTML=DRAW_TOOL_DEFS.map(d=>`<button type="button" data-mini-draw-tool="${d.value}" title="${d.title}" aria-label="${d.title}">${d.icon}</button>`).join('');
   oldRow.querySelectorAll('[data-mini-draw-tool]').forEach(b=>b.addEventListener('click',()=>selectDrawTool(b.dataset.miniDrawTool)));
@@ -323,10 +334,11 @@ function installUi(){
   slider?.addEventListener('input',()=>syncUi());
 
   canvas.addEventListener('pointerdown',pointerDown,true);canvas.addEventListener('pointermove',pointerMove,true);canvas.addEventListener('pointerup',pointerUp,true);canvas.addEventListener('pointercancel',pointerCancel,true);
-  canvas.addEventListener('pointerleave',e=>{if(!gesture){hover=null;redraw();}},true);canvas.addEventListener('contextmenu',e=>{e.preventDefault();e.stopImmediatePropagation();},true);
+  canvas.addEventListener('pointerleave',e=>{if(!gesture){hover=null;drawOverlay();}},true);canvas.addEventListener('contextmenu',e=>{e.preventDefault();e.stopImmediatePropagation();},true);
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&miniActive()&&gesture){e.preventDefault();cancelGesture();setState('Shape cancelled.');}});
-  $('trackSelect')?.addEventListener('change',()=>{gesture=null;hover=null;captureMode=null;transparencyPickArmed=false;safeUnderlyingPick();syncUi();setState(brush?`Brush ${brush.width}×${brush.height} retained; Pencil selected.`:'Standard pixel brush.');setTimeout(syncTransparencyUi,0);});
-  selectDrawTool('freehand');syncTransparencyUi();return true;
+  $('trackSelect')?.addEventListener('change',()=>{gesture=null;hover=null;captureMode=null;transparencyPickArmed=false;safeUnderlyingPick();syncUi();setState(brush?`Brush ${brush.width}×${brush.height} retained; Pencil selected.`:'Standard pixel brush.');setTimeout(()=>{syncTransparencyUi();drawOverlay();},0);});
+  $('layerModeButtons')?.addEventListener('click',()=>setTimeout(drawOverlay,0),true);if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>drawOverlay()).observe(canvas);
+  selectDrawTool('freehand');syncTransparencyUi();drawOverlay();return true;
 }
 function boot(){if(installUi())return;let tries=0;const timer=setInterval(()=>{if(installUi()||++tries>200)clearInterval(timer);},50);}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0));else setTimeout(boot,0);

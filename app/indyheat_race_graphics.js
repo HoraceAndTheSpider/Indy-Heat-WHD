@@ -283,7 +283,7 @@ root.IndyHeatRaceGraphics=api;
 if(typeof document==='undefined')return;
 if(document.querySelector('script[data-indyheat-race-graphics-inspector]'))return;
 const s=document.createElement('script');
-s.src='race-graphics-inspector.js?v=0148';
+s.src='race-graphics-inspector.js?v=0165';
 s.dataset.indyheatRaceGraphicsInspector='1';
 s.onerror=()=>console.warn('Indy Heat retail graphics inspector could not be loaded.');
 document.head.appendChild(s);

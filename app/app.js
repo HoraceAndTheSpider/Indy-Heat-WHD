@@ -714,7 +714,7 @@ function updateWaypointEditor(){
   controls.forEach(id=>{$(id).disabled=!p;});populateWaypointSelectList();
   const pick=$('pickWaypointTarget');if(pick)pick.disabled=!p;
   for(const id of ['waypointSequenceMinus','waypointSequencePlus']){const b=$(id);if(b)b.disabled=!p;}
-  if(!p){setLinkTargetPickMode(false);$('wpSelectedInfo').textContent=enabled.size?'Select or drag a visible waypoint.':'Turn on Waypoints and a route to edit.';$('editWpTarget').innerHTML='<option>—</option>';return;}
+  if(!p){setLinkTargetPickMode(false);$('wpSelectedInfo').textContent=enabled.size?'':'Turn on Waypoints and a route to edit.';$('editWpTarget').innerHTML='<option>—</option>';return;}
   EG?.setValue($('wpSelectList'),String(p.runtimeAddress))??($('wpSelectList').value=String(p.runtimeAddress));
   $('wpSelectedInfo').textContent=`Route ${'ABC'[p.setIndex]} · waypoint ${p.index} · sequence ${p.progress}`;
   for(const [id,value] of [['editWpX',p.x],['editWpY',p.y],['editWpProgress',p.progress],['editWpDelta',p.linkDelta]]){

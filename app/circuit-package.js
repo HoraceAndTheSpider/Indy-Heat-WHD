@@ -619,7 +619,7 @@ function setCurrentCircuitIndex(v){const value=clampInt(v,CIRCUIT_INDEX_MIN,CIRC
 function currentMapId(){return mapIds.get(selectionKey())??0;}
 function setCurrentMapId(id){mapIds.set(selectionKey(),mapById(id).id);}
 function download(bytes,name,type='application/octet-stream'){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
-function status(s){for(const id of ['circuitAuxStatus','circuitAuxStatusMini','circuitRaceHudStatus']){const e=$(id);if(e)e.textContent=s;}const top=$('circuitPackageTopStatus');if(top){top.textContent=String(s||'').split('\n')[0];top.title=String(s||'');top.classList.toggle('bad',String(s||'').startsWith('ERROR:'));}}
+function status(s){for(const id of ['circuitAuxStatus','circuitAuxStatusMini','circuitRaceHudStatus']){const e=$(id);if(e)e.textContent=s;}const text=String(s||''),routine=/^(?:Retail source|Retail slot|-custom- using retail template)\b/i.test(text);const top=$('circuitPackageTopStatus');if(top&&!routine){top.textContent=text.split('\n')[0];top.title=text;top.classList.toggle('bad',text.startsWith('ERROR:'));}}
 function ensureLapContract(){
   const e=$('raceLaps');if(!e)return;
   e.min=String(LAP_MIN);e.max=String(LAP_MAX);e.title='Runtime-proven authored range: 1–99';
@@ -649,7 +649,7 @@ function auxCanvas(){return $('circuitAuxCanvas');}
 function syncAuxSize(){const v=$('view'),c=auxCanvas();if(!v||!c)return;if(c.width!==v.width||c.height!==v.height){c.width=v.width;c.height=v.height;c.getContext('2d').imageSmoothingEnabled=false;}}
 function setCircuitHidden(hide){
   const stack=viewerStack(),aux=auxCanvas();if(!stack)return;
-  stack.querySelectorAll('canvas').forEach(c=>{if(c===aux)return;if(hide){if(c.dataset.preCircuitVisibility==null)c.dataset.preCircuitVisibility=c.style.visibility||'';c.style.visibility='hidden';}else if(c.dataset.preCircuitVisibility!=null){c.style.visibility=c.dataset.preCircuitVisibility;delete c.dataset.preCircuitVisibility;}});
+  stack.querySelectorAll('canvas').forEach(c=>{if(c===aux||c.id==='circuitMiniHoverCanvas')return;if(hide){if(c.dataset.preCircuitVisibility==null)c.dataset.preCircuitVisibility=c.style.visibility||'';c.style.visibility='hidden';}else if(c.dataset.preCircuitVisibility!=null){c.style.visibility=c.dataset.preCircuitVisibility;delete c.dataset.preCircuitVisibility;}});
   if(aux)aux.hidden=!hide;
 }
 function hideKnownEditorPanes(){['layerDrawingPane','layerWaypointHost','raceSetupPane','recoveryEditorPane','backdropEditorPane'].forEach(id=>{const e=$(id);if(e)e.hidden=true;});}

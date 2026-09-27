@@ -94,6 +94,9 @@ function drawLabelOnly(ctx,state,x,y,S,text,colour='#fff'){if(state.labels)label
 function pitCrewFrame(pit,playerIndex){const side=Number(pit?.slotWord)===1?'normal1':'normal0';return graphics.pitCrewFrameIndex(playerIndex,side,pitsFrame%32);}
 function pitBoardFrame(playerIndex){return graphics.pitBoardFrameIndex(playerIndex,checked('raceGraphicsPitBoardFemale',false)?'female':'male',pitsFrame%8);}
 function carFrame(heading16,screenY){return graphics.carNormalFrameFromHeading(heading16,screenY);}
+function horizontalCarHeading(heading16){
+  const h=Number(heading16)&0xffff;return h>=0x4000&&h<0xC000?0x8000:0x0000;
+}
 
 function drawPitlaneGeometry(ctx,R,s,S,state){
   const showZone=checked('raceShowPitlaneZone')||checked('circuitShowPitlaneZone');
@@ -173,7 +176,7 @@ function drawOverlay(){
     // Authentic draw order: car first, then pit crew. This guarantees the
     // retail crew artwork always appears in front of a car occupying the pit.
     if(showPitCars&&serviceQ&&pits.graphics){
-      const h=R.pitHeadingFromRoute(record,pit),heading=h==null?(s.startOrient&0xffff):h;
+      const h=R.pitHeadingFromRoute(record,pit),heading=horizontalCarHeading(h==null?(s.startOrient&0xffff):h);
       sprite(ctx,0x38,carFrame(heading,serviceQ.y),serviceQ.x,serviceQ.y,S,pit.index);
     }
 

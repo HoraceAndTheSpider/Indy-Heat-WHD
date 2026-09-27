@@ -1790,15 +1790,38 @@ else
 })(typeof globalThis!=='undefined'?globalThis:this);
 
 
-/* v0.44 — runtime UI copy/developer-export cleanup. */
+/* v0.45 — runtime UI copy, tooltip and status cleanup. */
 (function(root){
 'use strict';
 if(typeof document==='undefined')return;
 const $=id=>document.getElementById(id);
 let scheduled=false;
 
-function textContains(el,needle){
-  return !!el&&String(el.textContent||'').includes(needle);
+const MODE_TOOLTIPS=Object.freeze({
+  layerEditBackdrop:'Edit the 320×256 circuit artwork using the race palette, drawing tools and reusable brushes.',
+  layerEditMask:'Paint the Foreground/occlusion mask that controls which artwork appears in front of cars.',
+  layerEditSurface:'Paint track, collision and slowdown surface classes used by car movement and physics.',
+  layerModeWaypoints:'Edit AI route waypoints, sequence values, links and route structure.',
+  layerEditRecovery:'Edit recovery-direction cells used to turn/reset cars after leaving the route.',
+  layerEditRaceSetup:'Position race-start, pits, crews, boards, flag and HUD; edit laps and race setup.',
+  layerEditMini:'Edit the 78×51 MiniMap/race-preview image using the Garage palette.',
+  layerEditMap:'Choose the regional map and position the circuit marker shown before a race.',
+  layerEditCpuChoices:'Set Gasoline Alley CPU upgrade-family weights used before racing the selected circuit.'
+});
+
+function textContains(el,needle){return !!el&&String(el.textContent||'').includes(needle);}
+function firstLine(text){return String(text||'').split(/\r?\n/)[0].trim();}
+function isImportantStatus(text){
+  text=String(text||'').trim();
+  if(!text)return false;
+  return /^(?:ERROR:|Loading\b|Loaded\b|Imported\b|Exported\b|Online\b)/i.test(text)||
+    /\b(?:loading|missing|unavailable|could not|failed|not found|cannot open|unsupported|no active editor model)\b/i.test(text);
+}
+function statusIsBad(text){return /^(?:ERROR:)|\b(?:failed|could not|missing|unavailable|not found|cannot open|unsupported)\b/i.test(String(text||''));}
+function relayTopStatus(text){
+  text=String(text||'').trim();if(!isImportantStatus(text))return;
+  const top=$('circuitPackageTopStatus');if(!top)return;
+  top.textContent=firstLine(text);top.title=text;top.classList.toggle('bad',statusIsBad(text));
 }
 function removeEmptyActionRow(row){
   if(!row)return;
@@ -1806,69 +1829,125 @@ function removeEmptyActionRow(row){
   if(!useful)row.remove();
 }
 function devGroup(key,title){
-  const host=$('developerModeExports');
-  if(!host)return null;
+  const host=$('developerModeExports');if(!host)return null;
   let details=host.querySelector(`details[data-developer-group="${key}"]`);
   if(!details){
-    details=document.createElement('details');
-    details.className='smallDetails';
-    details.dataset.developerGroup=key;
-    details.innerHTML=`<summary>${title}</summary><div class="downloads"></div>`;
-    host.appendChild(details);
+    details=document.createElement('details');details.className='smallDetails';details.dataset.developerGroup=key;
+    details.innerHTML=`<summary>${title}</summary><div class="downloads"></div>`;host.appendChild(details);
   }
   return details.querySelector('.downloads');
 }
 function moveDeveloperButton(id,key,title,label){
-  const b=$(id),host=devGroup(key,title);
-  if(!b||!host)return false;
+  const b=$(id),host=devGroup(key,title);if(!b||!host)return false;
   if(label)b.textContent=label;
-  if(b.parentElement!==host){
-    const old=b.parentElement;
-    host.appendChild(b);
-    removeEmptyActionRow(old);
-  }
+  if(b.parentElement!==host){const old=b.parentElement;host.appendChild(b);removeEmptyActionRow(old);}
   return true;
 }
-function installStatusFilter(id,formatter){
+function installStatusFilter(id,formatter,{relay=true}={}){
   const el=$(id);if(!el||el.dataset.editorUiCopyFilter)return false;
   el.dataset.editorUiCopyFilter='1';
   const apply=()=>{
     const before=String(el.textContent||'');
+    if(relay)relayTopStatus(before);
     const after=formatter(before);
     if(after!==before)el.textContent=after;
   };
-  new MutationObserver(apply).observe(el,{childList:true,subtree:true,characterData:true});
-  apply();
-  return true;
+  new MutationObserver(apply).observe(el,{childList:true,subtree:true,characterData:true});apply();return true;
 }
 function compactRaceStatus(text){
-  if(!text)return text;
-  if(/^ERROR:/i.test(text))return text;
+  if(!text)return text;if(isImportantStatus(text))return '';
   if(/^Exported /i.test(text))return 'Developer export complete.';
   if(/restored to the loaded Disk\.1 data/i.test(text))return 'Race setup restored.';
   const marker=' · race record ';
   if(text.includes(marker)){
-    const name=text.split(marker)[0].trim();
-    const state=/\bModified\b/.test(text)?'Modified':'Unmodified';
-    return `${name} · ${state}`;
+    const name=text.split(marker)[0].trim(),state=/\bModified\b/.test(text)?'Modified':'Unmodified';return `${name} · ${state}`;
   }
   return text.replace(/\s*· compact export[^.\n]*/i,'').replace(/\n+/g,' · ').trim();
 }
 function compactBackdropStatus(text){
-  if(!text)return text;
-  if(/^ERROR:/i.test(text))return text;
-  if(/^Resource \$[0-9A-F]+/i.test(text)){
-    return `Backdrop · ${/\bModified\b/.test(text)?'Modified':'Unmodified'}`;
-  }
-  if(/^Exported /i.test(text))return 'Developer export complete.';
+  if(!text)return text;if(isImportantStatus(text))return '';
+  if(/^Resource \$[0-9A-F]+/i.test(text))return `Backdrop · ${/\bModified\b/.test(text)?'Modified':'Unmodified'}`;
   if(/Backdrop restored/i.test(text))return 'Backdrop restored.';
-  if(/^Imported /i.test(text))return text.split('\n')[0].replace(/\s*Exported runtime payload.*$/i,'').trim();
   return text;
 }
-function cleanRace(){
-  const pane=$('raceSetupPane');
-  if(!pane)return false;
+function compactRecoveryStatus(text){
+  if(!text)return text;if(isImportantStatus(text))return '';
+  if(!/^Recovery \+3/i.test(text))return text.replace(/\n+/g,' · ').trim();
+  const state=/\bModified\b/.test(text)?'Modified':'Unmodified';
+  const selected=text.match(/(?:Grab group active[^·]*·\s*)?(\d+) selected/i)||text.match(/(\d+) grouped arrows/i);
+  if(/hold to continue/i.test(text))return `Recovery · rotating${selected?` ${selected[1]} selected`:''} · ${state}`;
+  if(selected)return `Recovery · ${selected[1]} selected · ${state}`;
+  return `Recovery · ${state}`;
+}
+function compactLayerStatus(text){
+  if(!text)return text;if(isImportantStatus(text))return '';
+  if(/^Surface:/i.test(text))return `Surface · ${/\bModified\b/.test(text)?'Modified':'Unmodified'}${/stencil active/i.test(text)?' · Stencil ON':''}`;
+  if(/^Foreground:/i.test(text))return `Foreground · ${/\bModified\b/.test(text)?'Modified':'Unmodified'}${/stencil active/i.test(text)?' · Stencil ON':''}`;
+  return text;
+}
+function compactBrushState(text){
+  if(!text)return text;
+  relayTopStatus(text);
+  if(/\bwith standard pixel brush\.?$/i.test(text)||/^Standard pixel brush\.?$/i.test(text))return '';
+  return text;
+}
+function compactBrushDims(text){return /^Standard pixel brush\.?$/i.test(String(text||'').trim())?'':text;}
 
+function setTitle(id,title){const e=$(id);if(e&&e.title!==title)e.title=title;return !!e;}
+function setLabelTitle(id,title){
+  const input=$(id);if(!input)return false;const label=input.closest('label')||document.querySelector(`label[for="${id}"]`);if(label)label.title=title;return !!label;
+}
+function applyModeTooltips(){
+  for(const [id,title] of Object.entries(MODE_TOOLTIPS))setTitle(id,title);
+  setTitle('showCircuitEditor','Edit circuit artwork, masks, routes, race setup, MiniMap and map presentation.');
+  setTitle('showPlaylistEditor','Build or edit the championship race order, lap overrides and CPU Choices.');
+  setTitle('showBrushManager','Manage reusable brush files and their editor metadata.');
+}
+function applyControlTooltips(){
+  setTitle('autoCollisionRun','Rebuild Normal / Edge-Collision from the route-backed track area. Slowdown A/B are cleared.');
+  setTitle('layerInvert','Invert the complete Foreground mask: Background ↔ Foreground.');
+  setTitle('layerUndo','Undo the most recent edit to this Surface/Foreground layer.');
+  setTitle('layerRevert','Restore this Surface/Foreground layer to its loaded state.');
+  setLabelTitle('layerPaint_0',$('layerEditSurface')?.classList.contains('active')?'Paint Normal - Track cells. Right-click paints Normal regardless of the selected Surface class.':'Paint Foreground pixels.');
+  setLabelTitle('layerPaint_1',$('layerEditSurface')?.classList.contains('active')?'Paint Edge / collision cells.':'Paint Background pixels.');
+  setLabelTitle('layerPaint_2','Paint Slowdown A - Grass cells.');
+  setLabelTitle('layerPaint_3','Paint Slowdown B - Gravel Trap cells.');
+
+  setTitle('recoveryAuto','Calculate recovery directions across the whole map from the current Surface edge. No selection is required.');
+  setTitle('recoveryGrabGroup','Select multiple recovery cells so rotation applies to the whole group.');
+  setTitle('recoveryClearGroup','Clear the current recovery-cell group selection.');
+  setTitle('recoveryRotateLeft','Rotate the selected recovery cell/group left by the chosen Rotation step.');
+  setTitle('recoveryRotateRight','Rotate the selected recovery cell/group right by the chosen Rotation step.');
+  setTitle('recoveryUndo','Undo the most recent Recovery edit.');
+  setTitle('recoveryRevert','Restore Recovery +3 to the loaded circuit data.');
+
+  const iff=$('backdropIffInput')?.closest('.backdropFile');if(iff)iff.title='Import an ILBM/IFF backdrop. The image is cropped/padded from the top-left to 320×256; uncompressed and ByteRun1 data are supported.';
+  setLabelTitle('backdropRemap','When the IFF palette differs, remap used colours to the nearest Indy Heat race-palette entries.');
+  setTitle('backdropPaintRestore','Restore the Backdrop to the circuit state loaded into this editor session.');
+  setTitle('backdropPaintUndo','Undo the most recent Backdrop drawing operation.');
+  setTitle('backdropBrushLoad','Load an IHBR custom brush.');
+  setTitle('backdropBrushSave','Save the current custom brush as an IHBR file.');
+
+  setTitle('circuitMapId','Choose the regional map shown before a race. Retail USA comes from Disk.1; added regional maps are bundled with the editor.');
+  const arrows=$('circuitArrowChoices');if(arrows)arrows.title='Choose the game arrow frame. Drag the arrow directly on the GeoMap to position it.';
+  const raw=$('circuitMapControls')?.querySelector('details > summary');if(raw)raw.title='Optional raw game coordinates for the GeoMap arrow.';
+
+  setTitle('circuitPreviewBlank','Create a blank 78×51 MiniMap image.');
+  setTitle('circuitPreviewFromBackdrop','Build the MiniMap from the current Backdrop using the Race → MiniMap palette map.');
+  setTitle('circuitPreviewRevert','Restore the MiniMap loaded with the current circuit.');
+  setTitle('circuitPreviewUndo','Undo the most recent MiniMap edit.');
+}
+function removeTextNodeMatches(host,needles){
+  if(!host)return;
+  for(const el of [...host.querySelectorAll('.muted,.autoCollisionNote,.recoveryRow.muted')]){
+    const text=String(el.textContent||'');if(needles.some(n=>text.includes(n)))el.remove();
+  }
+}
+function hidePackagePanelStatuses(){
+  for(const id of ['circuitAuxStatus','circuitAuxStatusMini','circuitRaceHudStatus']){const e=$(id);if(e){e.hidden=true;e.style.display='none';}}
+}
+function cleanRace(){
+  const pane=$('raceSetupPane');if(!pane)return false;
   for(const el of pane.querySelectorAll('.muted')){
     if(textContains(el,'Pit/service and presentation positions are the real race/pit fields')||textContains(el,'The pickup zone is screen-space'))el.remove();
     else if(textContains(el,'Exported as the optional 18-byte name.bin package sidecar'))el.remove();
@@ -1877,51 +1956,66 @@ function cleanRace(){
   }
   for(const title of pane.querySelectorAll('.toolGroupTitle'))if(String(title.textContent||'').trim()==='Pit slot')title.remove();
   pane.querySelector('[data-editor-ui-hud-help]')?.remove();
-
   moveDeveloperButton('raceExport','race','Race setup raw exports','Race setup .bin');
   moveDeveloperButton('raceExportAll','race','Race setup raw exports','All race setup .bins');
   moveDeveloperButton('raceExportMain','race','Race setup raw exports','Modified main .bin');
-  installStatusFilter('raceSetupStatus',compactRaceStatus);
-  return true;
+  installStatusFilter('raceSetupStatus',compactRaceStatus);return true;
 }
 function cleanBackdrop(){
-  const pane=$('backdropEditorPane');
-  if(!pane)return false;
-  for(const el of pane.querySelectorAll('.muted')){
-    if(textContains(el,'Import a 320×256 ILBM/IFF backdrop'))el.remove();
-  }
+  const pane=$('backdropEditorPane');if(!pane)return false;
+  removeTextNodeMatches(pane,['Import a 320×256 ILBM/IFF backdrop','Import an ILBM/IFF backdrop']);
   moveDeveloperButton('backdropExport','backdrop','Backdrop raw export','Backdrop .bin');
   installStatusFilter('backdropStatus',compactBackdropStatus);
+  installStatusFilter('backdropPaintState',compactBrushState);
+  installStatusFilter('backdropBrushDims',compactBrushDims,{relay:false});
   return true;
 }
 function cleanRecovery(){
-  const pane=$('recoveryEditorPane');
-  if(!pane)return false;
-  for(const el of pane.querySelectorAll('.recoveryRow.muted')){
-    if(textContains(el,'One byte per 8×8 gameplay cell'))el.remove();
-  }
-  return true;
+  const pane=$('recoveryEditorPane');if(!pane)return false;
+  removeTextNodeMatches(pane,['One byte per 8×8 gameplay cell','Whole map · no selection required.']);
+  installStatusFilter('recoveryStatus',compactRecoveryStatus);return true;
+}
+function cleanLayerEditor(){
+  const pane=$('layerDrawingPane');if(!pane)return false;
+  pane.querySelector('.autoCollisionNote')?.remove();
+  installStatusFilter('layerEditorStatus',compactLayerStatus);return true;
+}
+function cleanGeoMap(){
+  const pane=$('circuitMapControls');if(!pane)return false;
+  removeTextNodeMatches(pane,['Retail USA is read directly from Disk.1']);
+  hidePackagePanelStatuses();return true;
+}
+function cleanMiniMap(){
+  installStatusFilter('circuitFreeBrushState',compactBrushState);
+  installStatusFilter('circuitFreeBrushDims',compactBrushDims,{relay:false});
+  hidePackagePanelStatuses();return true;
+}
+function installGeneralStatusRelays(){
+  for(const id of ['brushManagerScanStatus'])installStatusFilter(id,t=>t);
 }
 function clean(){
-  scheduled=false;
-  cleanRace();
-  cleanBackdrop();
-  cleanRecovery();
+  scheduled=false;applyModeTooltips();applyControlTooltips();cleanRace();cleanBackdrop();cleanRecovery();cleanLayerEditor();cleanGeoMap();cleanMiniMap();installGeneralStatusRelays();hidePackagePanelStatuses();
 }
-function schedule(){
-  if(scheduled)return;
-  scheduled=true;
-  setTimeout(clean,0);
-}
+function schedule(){if(scheduled)return;scheduled=true;setTimeout(clean,0);}
 function boot(){
   clean();
   const rootNode=document.body||document.documentElement;
-  if(rootNode)new MutationObserver(schedule).observe(rootNode,{subtree:true,childList:true});
-  setTimeout(clean,250);
-  setTimeout(clean,1000);
+  if(rootNode){
+    // UI panels are created/replaced dynamically, so re-apply the copy/tooltips
+    // when real ELEMENTS are added or removed. Do not react to text-node churn:
+    // status/readout text changes on every input/pointer update and caused the
+    // v0.163 cleanup pass to keep rescanning the whole editor during touch use.
+    const observer=new MutationObserver(records=>{
+      for(const record of records){
+        const changed=[...record.addedNodes,...record.removedNodes].some(node=>node.nodeType===1);
+        if(changed){schedule();break;}
+      }
+    });
+    observer.observe(rootNode,{subtree:true,childList:true});
+  }
+  setTimeout(clean,250);setTimeout(clean,1000);
 }
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});
-else boot();
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })(typeof globalThis!=='undefined'?globalThis:this);
 
 
