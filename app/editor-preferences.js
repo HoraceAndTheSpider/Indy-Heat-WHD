@@ -177,42 +177,55 @@ function installPersistence(){
 }
 
 
-// Mobile Safari can fail to synthesise a reliable click for buttons that have
-// been moved through complex/sticky editor layouts. Keep the normal click path
-// authoritative, but bridge a clean tap on the two mode-navigation rows into
-// that same click path. Preventing the touchend default suppresses the later
-// compatibility mouse/click event, so each tap activates only once.
-function installMobileModeTapBridge(){
-  if(document.documentElement.dataset.indyheatMobileModeTapBridge)return;
-  document.documentElement.dataset.indyheatMobileModeTapBridge='1';
+// Mobile mode navigation uses the same Pointer Events path as the canvas.
+// Do not depend on iOS/Safari synthesising a click from a touch.  Resolve a
+// clean pointer tap by SCREEN COORDINATES as well as event.target so navigation
+// still works if another composited layer is accidentally hit-tested above a
+// visible mode button.
+function installMobileModePointerBridge(){
+  if(document.documentElement.dataset.indyheatMobileModePointerBridge)return;
+  document.documentElement.dataset.indyheatMobileModePointerBridge='1';
   let gesture=null;
-  const modeButton=target=>target?.closest?.('#layerModeButtons button,#editorModeSwitch button')||null;
-  document.addEventListener('touchstart',e=>{
-    if(e.touches?.length!==1)return;
-    const button=modeButton(e.target);if(!button||button.disabled)return;
-    const t=e.touches[0];gesture={button,x:t.clientX,y:t.clientY,moved:false};
-  },{capture:true,passive:true});
-  document.addEventListener('touchmove',e=>{
-    if(!gesture||e.touches?.length!==1)return;
-    const t=e.touches[0];
-    if(Math.hypot(t.clientX-gesture.x,t.clientY-gesture.y)>12)gesture.moved=true;
-  },{capture:true,passive:true});
-  const cancel=()=>{gesture=null;};
-  document.addEventListener('touchcancel',cancel,{capture:true,passive:true});
-  document.addEventListener('touchend',e=>{
-    const g=gesture;gesture=null;if(!g||g.moved||g.button.disabled||!g.button.isConnected)return;
-    const t=e.changedTouches?.[0];
-    if(t){
-      const hit=document.elementFromPoint(t.clientX,t.clientY);
-      if(hit!==g.button&&!g.button.contains(hit))return;
+  const selector='#layerModeButtons button,#editorModeSwitch button';
+  const atPoint=(x,y)=>{
+    const direct=document.elementFromPoint?.(x,y)?.closest?.(selector);
+    if(direct&&!direct.disabled)return direct;
+    for(const button of document.querySelectorAll(selector)){
+      if(button.disabled||!button.isConnected)continue;
+      const r=button.getBoundingClientRect();
+      if(r.width>0&&r.height>0&&x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return button;
     }
+    return null;
+  };
+  document.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse'||e.button!==0)return;
+    const button=atPoint(e.clientX,e.clientY);if(!button)return;
+    gesture={pointerId:e.pointerId,button,x:e.clientX,y:e.clientY,moved:false};
+    // Own the tap before a stray canvas/overlay can start a drawing gesture.
     if(e.cancelable)e.preventDefault();
+    e.stopImmediatePropagation();
+  },{capture:true,passive:false});
+  document.addEventListener('pointermove',e=>{
+    if(!gesture||e.pointerId!==gesture.pointerId)return;
+    if(Math.hypot(e.clientX-gesture.x,e.clientY-gesture.y)>12)gesture.moved=true;
+    if(e.cancelable)e.preventDefault();
+    e.stopImmediatePropagation();
+  },{capture:true,passive:false});
+  const cancel=e=>{if(!gesture||e?.pointerId==null||e.pointerId===gesture.pointerId)gesture=null;};
+  document.addEventListener('pointercancel',cancel,{capture:true,passive:true});
+  document.addEventListener('pointerup',e=>{
+    const g=gesture;if(!g||e.pointerId!==g.pointerId)return;gesture=null;
+    if(e.cancelable)e.preventDefault();
+    e.stopImmediatePropagation();
+    if(g.moved||g.button.disabled||!g.button.isConnected)return;
+    const end=atPoint(e.clientX,e.clientY);
+    if(end!==g.button)return;
     g.button.click();
   },{capture:true,passive:false});
 }
 
 function start(){
-  installMobileModeTapBridge();
+  installMobileModePointerBridge();
   let tries=0;
   const tick=()=>{
     if(controlsReady()){applyPreferences();return;}
