@@ -6,21 +6,32 @@
 // actively manipulating it, and coalesces expensive post-edit refresh work to
 // one animation frame.
 const CONTROL_SELECTOR='input,select,textarea';
+const TEXT_EDIT_TYPES=new Set(['text','search','number','email','tel','url','password']);
 let activeControl=null;
 const frameTasks=new Map();
 const idleTasks=new Map();
 
 function isControl(el){return !!el?.matches?.(CONTROL_SELECTOR);}
+function focusKeepsEditing(el){
+  if(!isControl(el))return false;
+  if(el.tagName==='TEXTAREA')return true;
+  if(el.tagName!=='INPUT')return false;
+  return TEXT_EDIT_TYPES.has(String(el.type||'text').toLowerCase());
+}
+function focusedEditingControl(){
+  const el=document.activeElement;
+  return focusKeepsEditing(el)?el:null;
+}
 function editing(el=null){
   const current=(isControl(activeControl)&&activeControl.isConnected)?activeControl:null;
-  const focused=isControl(document.activeElement)?document.activeElement:null;
+  const focused=focusedEditingControl();
   if(el)return el===current||el===focused;
   return !!(current||focused);
 }
 function within(node){
   if(!node)return false;
   const current=(isControl(activeControl)&&activeControl.isConnected)?activeControl:null;
-  const focused=isControl(document.activeElement)?document.activeElement:null;
+  const focused=focusedEditingControl();
   return !!((current&&node.contains(current))||(focused&&node.contains(focused)));
 }
 function setValue(el,value,{force=false}={}){
@@ -62,8 +73,35 @@ function release(control){
   for(const [key,fn] of queued)frame(`idle:${key}`,fn);
 }
 
+function inputType(el){return el?.tagName==='INPUT'?String(el.type||'text').toLowerCase():'';}
+function releaseOnChange(el){
+  if(!isControl(el))return false;
+  if(el.tagName==='SELECT')return true;
+  if(el.tagName!=='INPUT')return false;
+  return ['checkbox','radio','color','date','datetime-local','month','time','week','file'].includes(inputType(el));
+}
+function releaseOnPointerUp(el){return isControl(el)&&el.tagName==='INPUT'&&inputType(el)==='range';}
+
 document.addEventListener('focusin',e=>{if(isControl(e.target))activeControl=e.target;},true);
-document.addEventListener('pointerdown',e=>{if(isControl(e.target))activeControl=e.target;},true);
+document.addEventListener('pointerdown',e=>{
+  const target=isControl(e.target)?e.target:null;
+  if(activeControl&&activeControl!==target&&!focusKeepsEditing(activeControl))release(activeControl);
+  if(target)activeControl=target;
+},true);
+document.addEventListener('pointerup',e=>{
+  const control=(isControl(activeControl)&&activeControl.isConnected)?activeControl:null;
+  if(control&&releaseOnPointerUp(control))setTimeout(()=>release(control),0);
+},true);
+document.addEventListener('pointercancel',()=>{
+  const control=(isControl(activeControl)&&activeControl.isConnected)?activeControl:null;
+  if(control&&!focusKeepsEditing(control))setTimeout(()=>release(control),0);
+},true);
+document.addEventListener('change',e=>{
+  if(releaseOnChange(e.target))setTimeout(()=>release(e.target),0);
+},true);
+document.addEventListener('cancel',e=>{
+  if(isControl(e.target))setTimeout(()=>release(e.target),0);
+},true);
 document.addEventListener('focusout',e=>{
   if(!isControl(e.target))return;
   setTimeout(()=>{if(document.activeElement!==e.target)release(e.target);},0);
@@ -71,6 +109,6 @@ document.addEventListener('focusout',e=>{
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&isControl(e.target))setTimeout(()=>release(e.target),0);},true);
 
 root.IndyHeatEditGuard=Object.freeze({
-  VERSION:'0.159',editing,within,setValue,setChecked,frame,whenIdle
+  VERSION:'0.167',editing,within,setValue,setChecked,frame,whenIdle
 });
 })(typeof globalThis!=='undefined'?globalThis:this);

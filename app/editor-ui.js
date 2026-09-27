@@ -1190,6 +1190,7 @@ const $=id=>document.getElementById(id);
 const EG=root.IndyHeatEditGuard;
 const TRACK_W=320,TRACK_H=256;
 const PREVIEW_W=78,PREVIEW_H=51,TRACK_GAME_H=224;
+const AUTHORED_LAP_MIN=2,AUTHORED_LAP_MAX=20;
 
 // Explicit lookup supplied by the project owner.
 // Source = Race palette index. Destination = Garage / Gasoline Alley palette index.
