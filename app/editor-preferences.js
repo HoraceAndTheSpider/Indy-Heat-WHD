@@ -175,7 +175,44 @@ function installPersistence(){
     resizeObserver.observe(viewport);
   }
 }
+
+
+// Mobile Safari can fail to synthesise a reliable click for buttons that have
+// been moved through complex/sticky editor layouts. Keep the normal click path
+// authoritative, but bridge a clean tap on the two mode-navigation rows into
+// that same click path. Preventing the touchend default suppresses the later
+// compatibility mouse/click event, so each tap activates only once.
+function installMobileModeTapBridge(){
+  if(document.documentElement.dataset.indyheatMobileModeTapBridge)return;
+  document.documentElement.dataset.indyheatMobileModeTapBridge='1';
+  let gesture=null;
+  const modeButton=target=>target?.closest?.('#layerModeButtons button,#editorModeSwitch button')||null;
+  document.addEventListener('touchstart',e=>{
+    if(e.touches?.length!==1)return;
+    const button=modeButton(e.target);if(!button||button.disabled)return;
+    const t=e.touches[0];gesture={button,x:t.clientX,y:t.clientY,moved:false};
+  },{capture:true,passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!gesture||e.touches?.length!==1)return;
+    const t=e.touches[0];
+    if(Math.hypot(t.clientX-gesture.x,t.clientY-gesture.y)>12)gesture.moved=true;
+  },{capture:true,passive:true});
+  const cancel=()=>{gesture=null;};
+  document.addEventListener('touchcancel',cancel,{capture:true,passive:true});
+  document.addEventListener('touchend',e=>{
+    const g=gesture;gesture=null;if(!g||g.moved||g.button.disabled||!g.button.isConnected)return;
+    const t=e.changedTouches?.[0];
+    if(t){
+      const hit=document.elementFromPoint(t.clientX,t.clientY);
+      if(hit!==g.button&&!g.button.contains(hit))return;
+    }
+    if(e.cancelable)e.preventDefault();
+    g.button.click();
+  },{capture:true,passive:false});
+}
+
 function start(){
+  installMobileModeTapBridge();
   let tries=0;
   const tick=()=>{
     if(controlsReady()){applyPreferences();return;}

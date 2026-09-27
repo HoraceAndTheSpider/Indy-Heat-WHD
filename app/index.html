@@ -95,7 +95,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   .playlistCircuit,.playlistCircuitName,.playlistLapSelect,.playlistCpuMode{grid-column:2}
   .playlistCpuChoices{grid-column:1/-1}
   body.indyheatMobileUi .mobileDiagnostic{display:none!important}
-  body.indyheatMobileUi #layerModeButtons{position:sticky;top:0;z-index:20;background:#101217;padding:4px 0}
+  body.indyheatMobileUi #layerModeButtons{position:static!important;top:auto!important;z-index:auto!important;background:#101217;padding:4px 0;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+  body.indyheatMobileUi #layerModeButtons button,body.indyheatMobileUi #editorModeSwitch button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 }
 </style>
 
@@ -104,7 +105,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.167';
+  const EDITOR_VERSION='0.168';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -387,7 +388,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script src="backdrop-brush-ui.js?v=0154"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
 <script src="editor-ui.js?v=0167"></script>
-<script src="editor-preferences.js?v=0161"></script>
+<script src="editor-preferences.js?v=0168"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */
