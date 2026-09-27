@@ -401,8 +401,8 @@ function setPaintChoices(mode){
     ].join('');
   }else{
     ui.paintChoices.innerHTML=[
-      paintChoice(1,'Foreground','paint-fg',true),
-      paintChoice(0,'Clear','paint-clear')
+      paintChoice(1,'Background','paint-fg',true),
+      paintChoice(0,'Foreground','paint-clear')
     ].join('');
   }
   ui.paintChoices.dataset.mode=mode;
@@ -445,7 +445,7 @@ function updateToolbar(){
   if(editMode==='surface'){
     setLayerStatus(`Surface: each brush unit is one native 2×2px cell. Right-click always paints Normal with the current tool and brush. 1px hatch is Foreground-only.${dirty?' · Modified':''}`);
   }else{
-    setLayerStatus(`Foreground: native 1px bitmap. Hatched keeps a fixed 1px on / 1px off pattern while brush size changes only its area. Right-click always paints the opposite of the selected value: Foreground ↔ Clear. Invert layer flips the complete 320×256 mask.${dirty?' · Modified':''}`);
+    setLayerStatus(`Foreground: native 1px bitmap. Hatched keeps a fixed 1px on / 1px off pattern while brush size changes only its area. Right-click always paints the opposite of the selected value: Background ↔ Foreground. Invert layer flips the complete 320×256 mask.${dirty?' · Modified':''}`);
   }
 }
 
@@ -557,14 +557,29 @@ function drawPreview(){
 }
 
 function researchWaypointProjection(p){
+  let x=p.x,y=p.y;
+  // app.js writes the selected waypoint's live drag coordinates into these
+  // fields on every pointer move. Prefer them for the selected address so a
+  // non-default route-link arrow follows either its source or destination
+  // immediately while that waypoint is dragged.
+  const selectedAddress=Number($('wpSelectList')?.value),liveX=Number($('editWpX')?.value),liveY=Number($('editWpY')?.value);
+  if(Number(p.runtimeAddress)===selectedAddress&&Number.isFinite(liveX)&&Number.isFinite(liveY)){
+    x=liveX;y=liveY;
+  }else{
+    try{
+      if(typeof state!=='undefined'&&state?.drag?.preview&&state.drag.pointAddress===p.runtimeAddress){
+        x=state.drag.preview.x;y=state.drag.preview.y;
+      }
+    }catch(_e){}
+  }
   const mode=$('wpProjectionMode')?.value||'a082';
   if(mode==='a082'){
-    const q=T.projectWaypointA082(p.x,p.y);
+    const q=T.projectWaypointA082(x,y);
     if(q)return q;
   }
   const sx=Number($('wpScaleX')?.value??2),ox=Number($('wpOffsetX')?.value??338);
   const sy=Number($('wpScaleY')?.value??-1.5),oy=Number($('wpOffsetY')?.value??142.5);
-  return {x:p.x*sx+ox,y:p.y*sy+oy};
+  return {x:x*sx+ox,y:y*sy+oy};
 }
 function waypointOverlaySets(){
   // app.js owns the live waypoint model and refreshes it after every edit.
@@ -624,26 +639,26 @@ function resetResearchWaypointsFromLayerModel(){
   researchWaypoints=raceRecords.find(r=>r.baseResourceId===base)?.waypointDescriptors||null;
   queueRedraw(true);
 }
-function drawCyanArrow(a,b,label,S){
+function drawRouteLinkArrow(a,b,label,S){
   const ax=a.x*S,ay=a.y*S,bx=b.x*S,by=b.y*S,dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy);
   if(len<2*S)return;
   const ux=dx/len,uy=dy/len;
   const startPad=2.1*S,endPad=3.0*S;
   const x1=ax+ux*startPad,y1=ay+uy*startPad,x2=bx-ux*endPad,y2=by-uy*endPad;
   const head=Math.max(5,2.1*S),wing=.55;
-  const cyan='#25e7ff';
+  const linkColour='#ffd84a';
 
   octx.save();
   octx.lineCap='round';octx.lineJoin='round';
   octx.strokeStyle='rgba(0,0,0,.86)';octx.lineWidth=Math.max(3,1.45*S);
   octx.beginPath();octx.moveTo(x1,y1);octx.lineTo(x2,y2);octx.stroke();
-  octx.strokeStyle=cyan;octx.lineWidth=Math.max(1.4,.62*S);
+  octx.strokeStyle=linkColour;octx.lineWidth=Math.max(1.4,.62*S);
   octx.beginPath();octx.moveTo(x1,y1);octx.lineTo(x2,y2);octx.stroke();
 
   const angle=Math.atan2(y2-y1,x2-x1);
   const hx1=x2-Math.cos(angle-wing)*head,hy1=y2-Math.sin(angle-wing)*head;
   const hx2=x2-Math.cos(angle+wing)*head,hy2=y2-Math.sin(angle+wing)*head;
-  octx.fillStyle=cyan;octx.strokeStyle='rgba(0,0,0,.86)';octx.lineWidth=Math.max(2,.8*S);
+  octx.fillStyle=linkColour;octx.strokeStyle='rgba(0,0,0,.86)';octx.lineWidth=Math.max(2,.8*S);
   octx.beginPath();octx.moveTo(x2,y2);octx.lineTo(hx1,hy1);octx.lineTo(hx2,hy2);octx.closePath();octx.stroke();octx.fill();
 
   if(label){
@@ -651,7 +666,7 @@ function drawCyanArrow(a,b,label,S){
     octx.font=`600 ${fontPx}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;
     octx.textAlign='center';octx.textBaseline='bottom';
     octx.strokeStyle='rgba(0,0,0,.95)';octx.lineWidth=Math.max(2,1.05*S);
-    octx.strokeText(label,mx,my);octx.fillStyle=cyan;octx.fillText(label,mx,my);
+    octx.strokeText(label,mx,my);octx.fillStyle=linkColour;octx.fillText(label,mx,my);
   }
   octx.restore();
 }
@@ -674,7 +689,7 @@ function drawWaypointResearchOverlays(){
         const a=researchWaypointProjection(p),b=researchWaypointProjection(target);
         if(!a||!b||a.x<0||a.x>=320||a.y<0||a.y>=224||b.x<0||b.x>=320||b.y<0||b.y>=224)continue;
         const d=Number(p.linkDelta),label=`${d>=0?'+':''}${d}`;
-        drawCyanArrow(a,b,label,S);
+        drawRouteLinkArrow(a,b,label,S);
       }
     }
   }
@@ -728,7 +743,7 @@ function primitiveAllowsOutside(tool){
 function paintValue(){return currentPaint();}
 function secondaryPaintValue(){
   // Right-click is the secondary paint action:
-  // Foreground: always the opposite of the selected value (Foreground <-> Clear).
+  // Foreground/background mask: right-click paints the opposite value (Background <-> Foreground).
   // Surface: always class 0 / Normal, regardless of the selected surface class.
   if(editMode==='mask')return paintValue()===0?1:0;
   return 0;
@@ -1103,8 +1118,17 @@ view.addEventListener('pointermove',patchNormalCursor);
 view.addEventListener('pointermove',()=>{
   if(!editMode&&$('showWaypoints')?.checked&&syncSelectedResearchPointFromEditor())queueRedraw();
 });
+view.addEventListener('pointermove',()=>{
+  // The main waypoint renderer previews drags continuously; keep the secondary
+  // Turbo/link overlay on the same frame while a waypoint is moving.
+  try{if(typeof state!=='undefined'&&state?.drag)queueRedraw();}catch(_e){}
+});
 view.addEventListener('pointerup',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
 view.addEventListener('pointercancel',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
+// AI Turbo is toggled by waypoint-actions.js on contextmenu, after pointer-up.
+// Capture the gesture and redraw on the next turn so the marker reflects the
+// newly toggled live waypoint flag immediately.
+view.addEventListener('contextmenu',()=>setTimeout(()=>queueRedraw(true),0),true);
 $('applyWaypoint')?.addEventListener('click',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
 $('revertWaypoint')?.addEventListener('click',()=>setTimeout(()=>{if(syncSelectedResearchPointFromEditor())queueRedraw(true);},0));
 $('revertAll')?.addEventListener('click',()=>setTimeout(resetResearchWaypointsFromLayerModel,0));

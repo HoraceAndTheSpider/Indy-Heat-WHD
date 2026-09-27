@@ -18,6 +18,7 @@
 if(typeof document==='undefined')return;
 
 const $=id=>document.getElementById(id);
+const EG=root.IndyHeatEditGuard;
 const TRACK_W=320,TRACK_H=256,TRACK_GAME_H=224,PREVIEW_W=78,PREVIEW_H=51;
 const AUTHORED_LAP_MIN=2,AUTHORED_LAP_MAX=20;
 const HUD_LAYOUT=Object.freeze({
@@ -181,6 +182,8 @@ function installStyle(){
     .indyheatViewToggleBody label,.circuitViewToggleBody label{margin:5px 0}
     .recoveryViewColourLabel{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center}
     .recoveryViewColourLabel span{min-width:0}
+    .raceHudFieldsRow{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px}
+    .raceHudFieldsRow label{min-width:0}
     @media(max-width:1050px){#layerEditorColumn{width:100%!important;min-width:0!important;max-width:none!important;overflow-y:visible!important;scrollbar-gutter:auto!important}}
   `;
   document.head.appendChild(s);
@@ -610,14 +613,20 @@ function restoreLeftFoldContainers(){
     ['circuitShowTotalLaps','Total laps'],
     ['circuitShowTimer','Timer']
   ]){
-    if($(id))continue;
-    const l=document.createElement('label');
-    l.innerHTML=`<input id="${id}" type="checkbox" checked> ${label}`;
-    l.querySelector('input').addEventListener('change',()=>{
-      syncFoldMasters();
-      renderHud();
-    });
-    rh.appendChild(l);
+    let box=$(id);
+    if(!box){
+      const l=document.createElement('label');
+      l.innerHTML=`<input id="${id}" type="checkbox" checked> ${label}`;
+      rh.appendChild(l);
+      box=l.querySelector('input');
+    }
+    if(box&&!box.dataset.editorUiHudToggle){
+      box.dataset.editorUiHudToggle='1';
+      box.addEventListener('change',()=>{
+        syncFoldMasters();
+        renderHud();
+      });
+    }
   }
 
   return !!(surface.closest('details[data-circuit-fold]')&&
@@ -953,8 +962,7 @@ function renderHud(){
   ctx.restore();
 
   syncHudDragHit(p);
-  if($('circuitHudX'))$('circuitHudX').value=String(p.lapDisplayX);
-  if($('circuitHudY'))$('circuitHudY').value=String(p.lapDisplayY);
+  if(EG){EG.setValue($('circuitHudX'),p.lapDisplayX);EG.setValue($('circuitHudY'),p.lapDisplayY);}else{if($('circuitHudX'))$('circuitHudX').value=String(p.lapDisplayX);if($('circuitHudY'))$('circuitHudY').value=String(p.lapDisplayY);}
 }
 function writeHud(x,y){
   const P=packageTools();
@@ -965,46 +973,48 @@ function writeHud(x,y){
     const r=recordForModel(m);
     if(r)P.writePresentation(m.main,r.offset,{lapDisplayX:x,lapDisplayY:y});
   }
-  if($('circuitHudX'))$('circuitHudX').value=String(x);
-  if($('circuitHudY'))$('circuitHudY').value=String(y);
+  if(EG){EG.setValue($('circuitHudX'),x);EG.setValue($('circuitHudY'),y);}else{if($('circuitHudX'))$('circuitHudX').value=String(x);if($('circuitHudY'))$('circuitHudY').value=String(y);}
   renderHud();
 }
 function ensureHudControls(){
   const pane=$('raceSetupPane'),grid=$('raceLaps')?.closest('.raceSetupGrid');
   if(!pane||!grid)return false;
 
-  // v0.116: HUD coordinates are ordinary Race setup fields. Keep exactly one
-  // pair directly below the Laps / Grid X direction row. Earlier v0.115 refresh
-  // passes could leave duplicate IDs in the DOM, so rebuild only when the pair
-  // is missing, duplicated or attached to the wrong container.
+  // Keep the HUD coordinate pair inside one stable full-width row. The old
+  // repeated insertBefore() pass alternated X/Y because its reference node was
+  // sometimes one of the HUD labels themselves, causing the two controls to
+  // swap columns on successive refreshes.
   $('circuitRaceHudControls')?.remove();
 
   let xs=[...document.querySelectorAll('#circuitHudX')];
   let ys=[...document.querySelectorAll('#circuitHudY')];
+  let row=$('editorUiHudFields');
   let x=xs[0]||null,y=ys[0]||null;
-  const invalid=xs.length!==1||ys.length!==1||!x||!y||x.closest('.raceSetupGrid')!==grid||y.closest('.raceSetupGrid')!==grid;
+  const invalid=xs.length!==1||ys.length!==1||!x||!y||!row||x.closest('#editorUiHudFields')!==row||y.closest('#editorUiHudFields')!==row;
   if(invalid){
+    row?.remove();
     const labels=new Set([...xs,...ys].map(input=>input.closest('label')).filter(Boolean));
     for(const label of labels)label.remove();
     for(const input of [...xs,...ys])if(input.isConnected&&!input.closest('label'))input.remove();
 
+    row=document.createElement('div');
+    row.id='editorUiHudFields';
+    row.className='raceHudFieldsRow';
     const xLabel=document.createElement('label');
     xLabel.dataset.editorUiHudField='x';
     xLabel.innerHTML='HUD X <input id="circuitHudX" type="number">';
-    grid.appendChild(xLabel);
     const yLabel=document.createElement('label');
     yLabel.dataset.editorUiHudField='y';
     yLabel.innerHTML='HUD Y <input id="circuitHudY" type="number">';
-    grid.appendChild(yLabel);
-    x=$('circuitHudX');y=$('circuitHudY');
+    row.append(xLabel,yLabel);
+    x=xLabel.querySelector('input');y=yLabel.querySelector('input');
   }
 
-  const xLabel=x?.closest('label'),yLabel=y?.closest('label');
   const orientLabel=$('raceStartOrient')?.closest('label');
-  if(orientLabel&&xLabel&&yLabel){
-    const anchor=orientLabel.nextSibling;
-    grid.insertBefore(xLabel,anchor);
-    grid.insertBefore(yLabel,anchor);
+  if(orientLabel&&orientLabel.parentElement===grid){
+    if(orientLabel.nextElementSibling!==row)orientLabel.insertAdjacentElement('afterend',row);
+  }else if(row.parentElement!==grid){
+    grid.appendChild(row);
   }
 
   const commit=()=>{if(!x||!y||x.value===''||y.value==='')return;const xv=Number(x.value),yv=Number(y.value);if(Number.isFinite(xv)&&Number.isFinite(yv))writeHud(xv,yv);};
@@ -1013,8 +1023,7 @@ function ensureHudControls(){
   const q=presentation();
   if(q){
     const safe=safeHudAnchor(q.p);
-    if(x)x.value=String(safe.x);
-    if(y)y.value=String(safe.y);
+    if(EG){EG.setValue(x,safe.x);EG.setValue(y,safe.y);}else{if(x)x.value=String(safe.x);if(y)y.value=String(safe.y);}
     if(safe.x!==Number(q.p.lapDisplayX)||safe.y!==Number(q.p.lapDisplayY))writeHud(safe.x,safe.y);
   }
   return true;
@@ -1101,6 +1110,8 @@ function installUiEvents(){
   return true;
 }
 
+document.addEventListener('indyheat-edit-finished',e=>{const id=String(e.detail?.control?.id||'');if(id==='circuitHudX'||id==='circuitHudY')EG?.frame('editor-ui-hud-finished',()=>{ensureHudControls();renderHud();});});
+
 function tick(){
   document.body?.setAttribute('data-indyheat-editor-ui','1');
   installStyle();
@@ -1159,6 +1170,7 @@ else
 if(typeof document==='undefined')return;
 
 const $=id=>document.getElementById(id);
+const EG=root.IndyHeatEditGuard;
 const TRACK_W=320,TRACK_H=256;
 const PREVIEW_W=78,PREVIEW_H=51,TRACK_GAME_H=224;
 
@@ -1407,10 +1419,11 @@ function lapSliderValue(){
   let v=Math.round(Number(e.value));
   if(!Number.isFinite(v))v=AUTHORED_LAP_MIN;
   v=Math.max(AUTHORED_LAP_MIN,Math.min(AUTHORED_LAP_MAX,v));
-  if(String(v)!==e.value)e.value=String(v);
-  out.value=String(v);
-  out.textContent=String(v);
-  out.setAttribute('aria-label',`${v} laps`);
+  if(String(v)!==e.value){if(EG)EG.setValue(e,v);else e.value=String(v);}
+  const text=`${v} laps`;
+  out.value=text;
+  out.textContent=text;
+  out.setAttribute('aria-label',text);
   return true;
 }
 function installLapSlider(){
@@ -1444,9 +1457,9 @@ function installLapSlider(){
     const style=document.createElement('style');
     style.id='indyheatLapSliderStyle';
     style.textContent=`
-      .raceLapSliderRow{display:flex;align-items:center;gap:8px;width:100%}
-      .raceLapSliderRow #raceLaps{flex:1 1 auto;width:auto!important;min-width:0;margin:0}
-      .raceLapSliderValue{flex:0 0 2ch;min-width:2ch;text-align:right;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
+      .raceLapSliderRow{display:flex;align-items:center;gap:4px;width:100%;min-width:0;white-space:nowrap}
+      .raceLapSliderRow #raceLaps{flex:1 1 auto;width:auto!important;max-width:none;min-width:58px;margin:0}
+      .raceLapSliderValue{flex:0 0 5.5ch;min-width:5.5ch;text-align:left;white-space:nowrap;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
     `;
     document.head.appendChild(style);
   }
@@ -1560,8 +1573,7 @@ function writeHud(x,y){
   }
   if(!wrote)return false;
   const X=$('circuitHudX'),Y=$('circuitHudY');
-  if(X)X.value=String(x);
-  if(Y)Y.value=String(y);
+  if(EG){EG.setValue(X,x);EG.setValue(Y,y);}else{if(X)X.value=String(x);if(Y)Y.value=String(y);}
   redrawHud();
   return true;
 }
@@ -1711,6 +1723,8 @@ function installPaletteMap(){
 
   return true;
 }
+
+document.addEventListener('indyheat-edit-finished',e=>{if(e.detail?.control?.id==='raceLaps')EG?.frame('editor-ui-lap-finished',lapSliderValue);});
 
 function tick(){
   setVersion();

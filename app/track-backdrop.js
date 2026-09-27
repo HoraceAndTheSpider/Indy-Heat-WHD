@@ -37,7 +37,6 @@ function parseIlbm(bytes){
     width:be16(d,0),height:be16(d,2),x:(be16(d,4)&0x8000)?be16(d,4)-0x10000:be16(d,4),y:(be16(d,6)&0x8000)?be16(d,6)-0x10000:be16(d,6),
     planes:d[8],masking:d[9],compression:d[10],transparentColor:be16(d,12),xAspect:d[14],yAspect:d[15],pageWidth:be16(d,16),pageHeight:be16(d,18)
   };
-  if(bmhd.width!==TRACK_WIDTH||bmhd.height!==TRACK_HEIGHT)throw new Error(`Track IFF must be exactly ${TRACK_WIDTH}×${TRACK_HEIGHT}; got ${bmhd.width}×${bmhd.height}`);
   if(bmhd.planes<1||bmhd.planes>TRACK_PLANES)throw new Error(`Track IFF must use 1–${TRACK_PLANES} bitplanes; got ${bmhd.planes}`);
   if(bmhd.masking!==0&&bmhd.masking!==1&&bmhd.masking!==2)throw new Error(`Unsupported ILBM masking mode ${bmhd.masking}`);
   if(bmhd.compression!==0&&bmhd.compression!==1)throw new Error(`Unsupported ILBM compression ${bmhd.compression}; expected none or ByteRun1`);
@@ -90,9 +89,11 @@ function prepareTrackPixels(parsed,gameWords,{remap=true}={}){
   if(!paletteExact&&remap){
     for(let i=0;i<32;i++)if(used[i]){const n=nearestColourIndex(amigaWordToRgb(sourceWords[i]),gameRgb);mapping[i]=n.index;if(n.index!==i)changedIndices++;totalSq+=n.d2;maxSq=Math.max(maxSq,n.d2);mappedColours++;}
   }
-  let pixels=src;
-  if(!paletteExact&&remap){pixels=new Uint8Array(src.length);for(let i=0;i<src.length;i++){pixels[i]=mapping[src[i]];mappedPixels++;}}
-  return {pixels,sourcePixels:src,mapping,paletteExact,remapped:!paletteExact&&remap,changedIndices,mappedPixels,meanRgbDistance:mappedColours?Math.sqrt(totalSq/mappedColours):0,maxRgbDistance:Math.sqrt(maxSq),sourceWords};
+  let mapped=src;
+  if(!paletteExact&&remap){mapped=new Uint8Array(src.length);for(let i=0;i<src.length;i++){mapped[i]=mapping[src[i]];mappedPixels++;}}
+  const pixels=new Uint8Array(TRACK_WIDTH*TRACK_HEIGHT),copyW=Math.min(TRACK_WIDTH,parsed.bmhd.width),copyH=Math.min(TRACK_HEIGHT,parsed.bmhd.height);
+  for(let y=0;y<copyH;y++)pixels.set(mapped.subarray(y*parsed.bmhd.width,y*parsed.bmhd.width+copyW),y*TRACK_WIDTH);
+  return {pixels,sourcePixels:src,mapping,paletteExact,remapped:!paletteExact&&remap,changedIndices,mappedPixels,meanRgbDistance:mappedColours?Math.sqrt(totalSq/mappedColours):0,maxRgbDistance:Math.sqrt(maxSq),sourceWords,sourceWidth:parsed.bmhd.width,sourceHeight:parsed.bmhd.height,cropped:parsed.bmhd.width>TRACK_WIDTH||parsed.bmhd.height>TRACK_HEIGHT,padded:parsed.bmhd.width<TRACK_WIDTH||parsed.bmhd.height<TRACK_HEIGHT};
 }
 function encodeTrackPlanar(pixels){
   if(!pixels||pixels.length!==TRACK_WIDTH*TRACK_HEIGHT)throw new Error(`Track pixel buffer must be ${TRACK_WIDTH*TRACK_HEIGHT} bytes`);
@@ -204,7 +205,8 @@ async function importIff(file){
     const synced=syncBackdropResource(b,result.trackBytes);
     if(!synced)throw new Error('No active editor model accepted the imported backdrop resource');
     imports.set(b,{name:file.name,paletteExact:result.paletteExact,changedIndices:result.changedIndices,remapped:result.remapped});redrawTrack(result.pixels);
-    setStatus(`Imported ${file.name}. ${result.paletteExact?'CMAP matches the Indy Heat game palette.':result.remapped?`Palette remapped to the nearest game colours (${result.changedIndices} used indices changed).`:'Source indices kept without remapping.'}\nExported runtime payload remains exactly $C800 bytes.`);
+    const sizeNote=result.cropped?` Source ${result.sourceWidth}×${result.sourceHeight} cropped to ${TRACK_WIDTH}×${TRACK_HEIGHT}.`:result.padded?` Source ${result.sourceWidth}×${result.sourceHeight} placed at top-left; uncovered area uses colour 0.`:'';
+    setStatus(`Imported ${file.name}.${sizeNote} ${result.paletteExact?'CMAP matches the Indy Heat game palette.':result.remapped?`Palette remapped to the nearest game colours (${result.changedIndices} used indices changed).`:'Source indices kept without remapping.'}\nExported runtime payload remains exactly $C800 bytes.`);
   }catch(e){setStatus(`ERROR: ${e.message}`);}
 }
 function inject(){
@@ -224,7 +226,7 @@ function inject(){
   const mode=document.createElement('button');mode.id='layerEditBackdrop';mode.type='button';mode.textContent='Backdrop';buttons.appendChild(mode);
   const pane=document.createElement('div');pane.id='backdropEditorPane';pane.hidden=true;pane.innerHTML=`
     <div class="toolGroup"><div class="toolGroupTitle">Track backdrop</div>
-      <div class="muted" style="font-size:11px;line-height:1.35">Import a 320×256 ILBM/IFF backdrop. Uncompressed and ByteRun1 BODY data are supported. The editor converts row-interleaved ILBM planes into Indy Heat's $C800 plane-major background resource.</div>
+      <div class="muted" style="font-size:11px;line-height:1.35">Import an ILBM/IFF backdrop; images are cropped from the top-left to 320×256. Uncompressed and ByteRun1 BODY data are supported. The editor converts row-interleaved ILBM planes into Indy Heat's $C800 plane-major background resource.</div>
       <label style="display:block;margin:8px 0"><input id="backdropRemap" type="checkbox" checked> Remap a differing IFF palette to the nearest Indy Heat game colours</label>
       <label class="backdropFile">Import IFF backdrop<input id="backdropIffInput" type="file" accept=".iff,.ilbm,.lbm,image/x-ilbm,application/octet-stream"></label>
       <div class="backdropActions"><button id="backdropExport" type="button">Export backdrop .bin</button><button id="backdropRevert" type="button">Revert backdrop</button></div>

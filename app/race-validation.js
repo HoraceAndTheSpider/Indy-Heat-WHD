@@ -12,6 +12,7 @@ const $=id=>document.getElementById(id);
 const C=root.IndyHeatRaceSetupCapture;
 const T=root.IndyHeatTools;
 const R=root.IndyHeatRaceSetupTools;
+const EG=root.IndyHeatEditGuard;
 if(!C||!T||!R)return;
 
 const GRID_PLUS_X=0;
@@ -76,7 +77,7 @@ function updateStartDirection(){
   const raw=$('raceStartOrient');
   if(button){
     const v=liveInteger('raceStartOrient',currentSetup()?.startOrient??0);
-    button.textContent=`Grid X direction: ${v<0?'−X':' +X'}`;
+    button.textContent=v<0?'−X / Left':'+X / Right';
     button.setAttribute('aria-pressed',v<0?'true':'false');
   }
   if(raw)raw.title='Raw race+$6A mirror word: retail uses 0 (+X) or -32768 / $8000 (-X).';
@@ -193,7 +194,11 @@ function alignCrewToPitBox(){
   const st=$('raceSetupStatus');if(st)st.textContent=`P${c.sel+1} pit crew aligned to the retail-derived pit-box relationship (${c.want.x}, ${c.want.y}).`;
 }
 
-function updateAll(){updateStartDirection();updatePitSide();updateCrewValidation();}
+function updateAll(force=false){
+  const pane=$('raceSetupPane');
+  if(!force&&EG?.within(pane)){EG.whenIdle('race-validation',()=>updateAll(true));return false;}
+  updateStartDirection();updatePitSide();updateCrewValidation();return true;
+}
 
 function renameLabel(inputId,text){
   const input=$(inputId),label=input?.closest('label');if(!label)return null;
@@ -209,7 +214,7 @@ function installUi(){
     .raceValidationBad{color:#ff6b6b!important;font-size:10px;line-height:1.25;margin-top:2px}
     .raceValidationMuted{color:#8e97a6!important;font-size:10px;line-height:1.25;margin-top:2px}
     .raceValidationLine{grid-column:1/-1;min-height:0}
-    #raceGridDirectionToggle{width:100%;font-size:11px;padding:6px}
+    #raceGridDirectionToggle{width:88px;min-width:88px;justify-self:start;font-size:11px;padding:6px 7px;white-space:nowrap;line-height:1.2}
   `;document.head.appendChild(style);
 
   const startLabel=renameLabel('raceStartOrient','Grid X direction');
@@ -230,15 +235,17 @@ function installUi(){
   actions.append(fix,align);pitGrid.insertAdjacentElement('afterend',actions);fix.addEventListener('click',fixPitSides);align.addEventListener('click',alignCrewToPitBox);
 
   const watched=['raceStartX','raceStartY','raceStartOrient','raceServiceX','raceServiceY','raceScreenX','raceScreenY','raceSlotWord','racePitSlot'];
-  for(const id of watched){const el=$(id);el?.addEventListener('input',()=>setTimeout(updateAll,0));el?.addEventListener('change',()=>setTimeout(updateAll,0));}
+  const queueValidation=()=>{if(EG)EG.frame('race-validation-input',()=>updateAll());else setTimeout(updateAll,0);};
+  for(const id of watched){const el=$(id);el?.addEventListener('input',queueValidation);el?.addEventListener('change',queueValidation);}
   $('trackSelect')?.addEventListener('change',()=>setTimeout(updateAll,0));
   $('raceApply')?.addEventListener('click',()=>setTimeout(updateAll,0));
   $('raceRevert')?.addEventListener('click',()=>setTimeout(updateAll,0));
   $('raceExport')?.addEventListener('click',()=>updateAll(),true);
   $('raceExportAll')?.addEventListener('click',()=>updateAll(),true);
-  $('raceSetupCanvas')?.addEventListener('pointermove',()=>setTimeout(updateAll,0));
-  $('raceSetupCanvas')?.addEventListener('pointerup',()=>setTimeout(updateAll,0));
+  $('raceSetupCanvas')?.addEventListener('pointermove',()=>{if(EG)EG.frame('race-validation-canvas',()=>updateAll());else setTimeout(updateAll,0);});
+  $('raceSetupCanvas')?.addEventListener('pointerup',()=>{if(EG)EG.frame('race-validation-canvas',()=>updateAll());else setTimeout(updateAll,0);});
   document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(updateAll,0));
+  document.addEventListener('indyheat-edit-finished',e=>{if($('raceSetupPane')?.contains(e.detail?.control))EG?.frame('race-validation-finished',()=>updateAll(true));});
 
   // Export/save should always refresh the advisory checks first, without blocking export.
   document.addEventListener('click',e=>{

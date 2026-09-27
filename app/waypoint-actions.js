@@ -235,6 +235,25 @@ function insertionCandidate(pos){
   return best;
 }
 
+function incrementalAddEnabled(){return !!document.getElementById('incrementalWaypointAdd')?.checked;}
+function incrementalInsertionCandidate(pos){
+  if(!waypointModeActive()||!state?.waypoints)return null;
+  const enabled=visibleWaypointSetIndices();let best=null;
+  for(const set of state.waypoints){
+    if(!enabled.has(set.index)||!set.points?.length)continue;
+    const byAddress=new Map(set.points.map(p=>[p.runtimeAddress,p]));
+    if(set.boundaryPoint)byAddress.set(set.boundaryPoint.runtimeAddress,set.boundaryPoint);
+    for(const p of set.points){
+      const q=wpScreen(p),dx=q.x-pos.x,dy=q.y-pos.y,d2=dx*dx+dy*dy;
+      if(best&&d2>=best.d2)continue;
+      const target=p.__ihLinkTarget||byAddress.get(p.linkTarget)||null;
+      best={setIndex:set.index,sourceIndex:p.index,targetIndex:target&&!target.boundaryOnly?target.index:null,targetBoundary:!!target?.boundaryOnly,a:q,b:pos,d2,pos};
+    }
+  }
+  return best;
+}
+function addInsertionCandidate(pos){return incrementalAddEnabled()?incrementalInsertionCandidate(pos):insertionCandidate(pos);}
+
 function logicalSequenceRun(points,startIndex){
   const run=[];let previous=null;
   for(let i=startIndex;i<points.length;i++){
@@ -332,12 +351,51 @@ function cleanRouteData(){
   }catch(e){setStatus('ERROR: '+e.message);return null;}
 }
 
-function addWaypointAt(pos,candidate=insertionCandidate(pos)){
+function addWaypointAt(pos,candidate=addInsertionCandidate(pos)){
   if(!candidate)throw new Error('Turn on Waypoints and at least one Route A/B/C layer before adding a waypoint.');
   const ov=ensureOverride(),set=ov.sets[candidate.setIndex];
   if(!set)throw new Error('The selected waypoint route is unavailable.');
-  const source=set.points[candidate.sourceIndex],target=set.points[candidate.targetIndex];
-  if(!source||!target)throw new Error('The detected waypoint link changed; move the pointer and try again.');
+  const source=set.points[candidate.sourceIndex];
+  if(!source)throw new Error('The detected waypoint changed; move the pointer and try again.');
+
+  if(incrementalAddEnabled()){
+    const target=source.__ihLinkTarget||null;
+    if(!target)throw new Error(`Route ${'ABC'[set.index]} waypoint ${source.index} has no resolved onward link to inherit. Repair its link target first.`);
+    const newSequence=Number(source.progress)+1;
+    if(newSequence>127)throw new Error(`Route ${'ABC'[set.index]} cannot add an incremental segment after sequence 127.`);
+    const insertIndex=source.index+1,inv=inverseDisplayPoint(pos.x,pos.y,source);
+    if(!inv)throw new Error('The clicked map position cannot be represented as a waypoint coordinate.');
+
+    // If this is a conventional in-line insertion (e.g. 4 -> 5), advance only
+    // that existing physical/logical run so the new point can become sequence 5.
+    // A closing link such as 4 -> 0 is left alone, which makes repeated clicks
+    // naturally extend 4 -> 5 -> 6 -> ... -> 0 while preserving the lap wrap.
+    let shifted=0;
+    if(!target.boundaryOnly&&target.setIndex===set.index&&Number(target.progress)===newSequence&&target.index>source.index){
+      const future=logicalSequenceRun(set.points,target.index);
+      if(future.some(p=>p.progress>=127))throw new Error(`Route ${'ABC'[set.index]} cannot resequence the onward run because it already reaches 127.`);
+      for(const p of future){p.progress+=1;shifted++;}
+    }
+
+    const encoded=T.encodeRuntimeWaypoint({x:inv.x,y:inv.y,progress:newSequence,progressFlag:false,linkDelta:6});
+    const point={
+      index:insertIndex,setIndex:set.index,runtimeAddress:0,fileOffset:null,storedBytes:encoded.storedBytes,runtimeBytes:encoded.runtimeBytes,
+      x:inv.x,y:inv.y,progress:newSequence,progressByte:newSequence,progressFlag:false,linkDelta:6,linkAligned:true,linkRecords:1,
+      __ihVirtual:true,__ihLinkTarget:target,__ihUnresolvedDelta:6
+    };
+    // Forward-chain behaviour: previous nearest point -> new point -> previous
+    // onward target. Inserting directly after the source also makes that first
+    // link the natural +6 record displacement after normalisation.
+    source.__ihLinkTarget=point;
+    set.points.splice(insertIndex,0,point);normaliseOverride(ov);
+    state.selectedWaypoint=point;updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();updateEditExportButtons();render();
+    const shiftedText=shifted?` ${shifted} onward sequence value${shifted===1?' was':'s were'} advanced by 1.`:'';
+    setStatus(`Added Route ${'ABC'[set.index]} waypoint ${point.index} as incremental sequence ${point.progress}: waypoint ${source.index} → new waypoint → previous onward target.${shiftedText}`);
+    return point;
+  }
+
+  const target=set.points[candidate.targetIndex];
+  if(!target)throw new Error('The detected waypoint link changed; move the pointer and try again.');
   // Insert immediately before the logical link target. This keeps the new
   // physical ID next to its successor even when the selected edge was a
   // non-default jump or the route-closing last->first link.
@@ -382,7 +440,7 @@ function deleteWaypoint(best){
 function updateActionHover(ev){
   if(!actionMode||!waypointModeActive()){actionHover=null;return;}
   const pos=eventCanvasXY(ev);
-  actionHover=actionMode==='add'?{mode:'add',candidate:insertionCandidate(pos),pos}:{mode:'delete',best:nearestWaypointAt(pos.x,pos.y,144),pos};
+  actionHover=actionMode==='add'?{mode:'add',candidate:addInsertionCandidate(pos),pos}:{mode:'delete',best:nearestWaypointAt(pos.x,pos.y,144),pos};
 }
 function drawActionHover(){
   if(!actionMode||!actionHover||!waypointModeActive())return;
@@ -403,14 +461,16 @@ function setActionMode(mode,announce=true){
   for(const [id,value] of [['addWaypointMode','add'],['deleteWaypointMode','delete']]){const b=document.getElementById(id);if(b){const on=actionMode===value;b.classList.toggle('active',on);b.setAttribute('aria-pressed',String(on));}}
   view.style.cursor=actionMode?'crosshair':'';render();
   if(announce){
-    if(actionMode==='add')setStatus('Add waypoint mode: hover the circuit for a (+) on the nearest logical route link, then click to insert.');
+    if(actionMode==='add')setStatus(incrementalAddEnabled()
+      ?'Add waypoint mode · Incremental segments ON: click to extend from the nearest visible waypoint (previous → new → previous target).'
+      :'Add waypoint mode: hover the circuit for a (+) on the nearest logical route link, then click to insert.');
     else if(actionMode==='delete')setStatus(`Delete waypoint mode: hover a waypoint for a (−), then click to remove it. Each route must keep at least ${MIN_ROUTE_WAYPOINTS}.`);
     else setStatus('Waypoint add/delete mode off.');
   }
 }
 function syncActionButtons(){
   let ready=false;try{ready=!!(selected&&model&&state?.waypoints?.some(set=>set.points?.length));}catch(_e){}
-  for(const id of ['addWaypointMode','deleteWaypointMode','cleanWaypointRoutes','flipWaypointsLR']){const b=document.getElementById(id);if(b)b.disabled=!ready;}
+  for(const id of ['addWaypointMode','deleteWaypointMode','cleanWaypointRoutes','flipWaypointsLR','incrementalWaypointAdd']){const b=document.getElementById(id);if(b)b.disabled=!ready;}
 }
 
 function mainWaypointButtonRow(){
@@ -424,9 +484,14 @@ function installActionControls(){
   }
   const row=document.createElement('div');row.className='wpBtns';
   const add=document.createElement('button');add.id='addWaypointMode';add.type='button';add.className='wpActionToggle';add.textContent='Add waypoint (+)';add.setAttribute('aria-pressed','false');add.title='Insert a waypoint on the nearest visible logical route link and renumber following IDs/sequences.';
+  const incrementalLabel=document.createElement('label');incrementalLabel.id='incrementalWaypointAddLabel';incrementalLabel.title='When adding: use the nearest visible waypoint as the previous point, assign previous sequence +1, then link previous → new → previous onward target.';incrementalLabel.style.cssText='display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-size:12px';
+  const incremental=document.createElement('input');incremental.id='incrementalWaypointAdd';incremental.type='checkbox';incremental.checked=false;incrementalLabel.append(incremental,document.createTextNode('Incremental segments'));
   const del=document.createElement('button');del.id='deleteWaypointMode';del.type='button';del.className='wpActionToggle';del.textContent='Delete waypoint (−)';del.setAttribute('aria-pressed','false');del.title=`Delete a visible waypoint, repair links to the next waypoint and keep at least ${MIN_ROUTE_WAYPOINTS} per route.`;
   const clean=document.createElement('button');clean.id='cleanWaypointRoutes';clean.type='button';clean.textContent='Clean route data';clean.title='Rebuild physical waypoint IDs and resolved link displacements. Sequence values are compacted only when an ordinal is unused by Routes A, B and C together; route-specific branch gaps/duplicates are preserved.';
-  row.append(add,del,clean);anchor.insertAdjacentElement('afterend',row);add.addEventListener('click',()=>setActionMode('add'));del.addEventListener('click',()=>setActionMode('delete'));clean.addEventListener('click',cleanRouteData);syncActionButtons();
+  row.append(add,incrementalLabel,del,clean);anchor.insertAdjacentElement('afterend',row);
+  add.addEventListener('click',()=>setActionMode('add'));
+  incremental.addEventListener('change',()=>{actionHover=null;render();if(actionMode==='add')setStatus(incremental.checked?'Add waypoint mode · Incremental segments ON: click to extend from the nearest visible waypoint (previous → new → previous target).':'Add waypoint mode: hover the circuit for a (+) on the nearest logical route link, then click to insert.');});
+  del.addEventListener('click',()=>setActionMode('delete'));clean.addEventListener('click',cleanRouteData);syncActionButtons();
 }
 
 /*

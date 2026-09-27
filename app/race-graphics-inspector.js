@@ -240,7 +240,13 @@ function scheduleOverlayRefresh(){
 }
 function decoratePitSlots(){
   const select=$('racePitSlot');if(!select)return false;
-  PLAYER_MAPPING.forEach((p,i)=>{const o=select.options?.[i];if(o)o.textContent=`Pit ${i+1} · ${p.colour}`;});
+  // Native select menus are browser-owned while open. Rewriting their option
+  // nodes during a selection can make the menu close/rebuild and visibly
+  // flicker, so decorate only when a label actually needs changing.
+  PLAYER_MAPPING.forEach((p,i)=>{
+    const o=select.options?.[i],label=`Pit ${i+1} · ${p.colour}`;
+    if(o&&o.textContent!==label)o.textContent=label;
+  });
   return true;
 }
 function syncPitSideButton(){
@@ -254,7 +260,7 @@ function installPitSideToggle(){
     button=document.createElement('button');button.type='button';button.id='racePitSideToggle';button.className='racePitSideToggle';
     button.addEventListener('click',()=>{
       const next=Number(input.value)===1?0:1;input.value=String(next);syncPitSideButton();
-      $('raceApply')?.click();scheduleOverlayRefresh();
+      input.dispatchEvent(new Event('input',{bubbles:true}));scheduleOverlayRefresh();
     });
     input.insertAdjacentElement('afterend',button);input.hidden=true;
   }
@@ -279,7 +285,10 @@ function installListeners(){
   const pitFields=new Set(['racePitSlot','raceServiceX','raceServiceY','raceBoardX','raceBoardY','raceScreenX','raceScreenY','raceSlotWord']);
   document.addEventListener('change',e=>{
     const id=e.target?.id;if(watched.has(id)){setTimeout(drawOverlay,0);return;}
-    if(pitFields.has(id)){setTimeout(()=>{enhancePitEditor();scheduleOverlayRefresh();},0);}
+    // Do not rebuild/decorate the native Pit slot select in response to its own
+    // change event. The Race panel owns the selected value; the graphics layer
+    // only needs to redraw against it.
+    if(pitFields.has(id))setTimeout(scheduleOverlayRefresh,0);
   });
   document.addEventListener('input',e=>{if(pitFields.has(e.target?.id))setTimeout(scheduleOverlayRefresh,0);});
   document.addEventListener('pointermove',e=>{if(e.target?.id==='raceSetupCanvas')setTimeout(scheduleOverlayRefresh,0);});

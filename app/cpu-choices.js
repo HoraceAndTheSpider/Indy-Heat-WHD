@@ -3,6 +3,7 @@
 
 if(typeof document==='undefined')return;
 const $=id=>document.getElementById(id);
+const EG=root.IndyHeatEditGuard;
 const FIELD_IDS=Object.freeze({
   turbos:'cpuChoiceTurbos',brakes:'cpuChoiceBrakes',tyres:'cpuChoiceTyres',
   crew:'cpuChoiceCrew',mpg:'cpuChoiceMpg',engine:'cpuChoiceEngine'
@@ -68,7 +69,7 @@ function refresh({forceBaseline=false}={}){
   const values=readValues();
   if(!values){setStatus('');return;}
   seedBaseline(key,values,forceBaseline);
-  for(const f of R().CPU_CHOICES){const el=$(FIELD_IDS[f.key]),out=$(`${FIELD_IDS[f.key]}Value`);if(el&&document.activeElement!==el){const value=Number(values[f.key]);el.max=String(Math.max(255,value));el.value=String(value);if(out)out.value=String(value);}}
+  for(const f of R().CPU_CHOICES){const el=$(FIELD_IDS[f.key]),out=$(`${FIELD_IDS[f.key]}Value`);if(el){const value=Number(values[f.key]);el.max=String(Math.max(255,value));if(EG)EG.setValue(el,value);else if(document.activeElement!==el)el.value=String(value);if(out)out.value=String(value);}}
   const dirty=!same(values,baseline.get(key));
   setStatus('');
   const b=$('cpuChoicesRevert');if(b)b.disabled=!dirty;
@@ -85,6 +86,8 @@ function revert(){
   const key=sourceKey(),values=baseline.get(key);if(!values)return;
   authored.delete(key);writeValues(values);refresh();
 }
+document.addEventListener('indyheat-edit-finished',e=>{if(/^cpuChoice/.test(String(e.detail?.control?.id||'')))EG?.frame('cpu-choice-edit-finished',()=>refresh());});
+
 function deactivate(){
   if(!active)return;active=false;$('layerEditCpuChoices')?.classList.remove('active');
   const pane=$('cpuChoicesPane');if(pane)pane.hidden=true;

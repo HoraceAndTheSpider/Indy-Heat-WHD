@@ -3,16 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Indy Heat Amiga – Circuit Editor</title>
+<title>Circuit Editor (Amiga)</title>
 <link rel="stylesheet" href="style.css">
 
 <style>
-#appIdentity{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-#appIdentity h1{margin:0}
-#editorModeSwitch{display:flex;gap:5px}
+header#appHeader{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"brand notice" "brand tools";align-items:start;column-gap:20px;row-gap:6px;padding:10px 14px}
+#appIdentity{grid-area:brand;display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
+#appLogo{display:block;width:307px;max-width:42vw;height:auto;object-fit:contain}
+#appIdentity h1{margin:0;font-size:15px;font-weight:600;line-height:1.2;white-space:nowrap}
+#headerNotice{grid-area:notice;justify-self:start;display:flex;align-items:center;width:min(100%,1080px);min-width:0;min-height:22px;padding-top:1px}
+#headerTools{grid-area:tools;justify-self:start;display:flex;align-items:center;justify-content:space-between;gap:18px;width:min(100%,1080px);min-width:0}
+#editorModeSwitch{display:flex;align-items:center;justify-content:flex-start;gap:5px;white-space:nowrap;flex:0 0 auto}
 #editorModeSwitch button{padding:7px 11px;white-space:nowrap}
 #editorModeSwitch button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
-body.playlistMode #dropZone,body.playlistMode main,body.playlistMode #circuitFileActions{display:none!important}
+#circuitFileActions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0;max-width:100%;margin-left:auto}
+#circuitFileActions>.filebtn,#dropZone,#circuitPackageHeader,#circuitPackageHeader>*{flex:0 0 auto}
+#circuitFileActions>.filebtn,#dropZone,#circuitPackageHeader button{min-height:34px;display:flex;align-items:center}
+#dropZone{margin:0;padding:7px 10px;border:1px dashed #657087;border-radius:6px;text-align:center;color:#b8c0ce;white-space:nowrap;background:#242a34;cursor:default}
+#dropZone.drag{background:#30394a;border-color:#a7bde9}
+#circuitPackageHeader{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+#circuitPackageHeader label{display:flex;align-items:center;gap:5px;margin:0;font-size:12px;white-space:nowrap}
+#circuitPackageHeader input[type=number]{width:58px;height:30px;background:#222730;color:#fff;border:1px solid #495162;border-radius:4px;padding:5px}
+#circuitPackageHeader button{padding:7px 9px;white-space:nowrap}
+#circuitPackageTopStatus{font-size:10px;color:#9aa1ad;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#circuitPackageTopStatus.bad{color:#ff8585}
+body.playlistMode #dropZone,body.playlistMode main,body.playlistMode #circuitFileActions,body.playlistMode #headerNotice{display:none!important}
 body:not(.playlistMode) #playlistWorkspace{display:none!important}
 #playlistWorkspace{max-width:980px;margin:18px auto;padding:0 18px 28px;box-sizing:border-box}
 #playlistWorkspace .playlistCard{background:#181b21;border:1px solid #30343d;border-radius:8px;padding:16px}
@@ -58,8 +73,22 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 #cursorInfo{box-sizing:border-box!important;width:310px!important;min-width:310px!important;max-width:310px!important;height:58px!important;min-height:58px!important;max-height:58px!important;overflow:hidden!important}
 @media(max-width:1050px){main{grid-template-columns:1fr!important}}
 
+@media(max-width:1120px){
+  #headerTools{flex-wrap:wrap;justify-content:flex-start;gap:8px 14px}
+  #circuitFileActions{margin-left:0;justify-content:flex-start;width:100%}
+}
+@media(min-width:1121px){aside{top:145px;max-height:calc(100vh - 160px)}}
+@media(min-width:761px) and (max-width:1120px){aside{top:185px;max-height:calc(100vh - 200px)}}
 @media(max-width:760px){
-  #appIdentity{gap:8px}
+  header#appHeader{grid-template-columns:1fr;grid-template-areas:"brand" "notice" "tools";align-items:start;gap:7px;padding:8px 10px}
+  #appIdentity{gap:3px}
+  #appLogo{width:307px;max-width:60vw}
+  #appIdentity h1{font-size:13px}
+  #headerNotice,#headerTools{width:100%;max-width:100%}
+  #headerTools{display:flex;flex-direction:column;align-items:flex-start;gap:7px}
+  #editorModeSwitch{justify-content:flex-start;width:100%;max-width:100%;overflow-x:auto}
+  #editorModeSwitch button{padding:6px 8px;font-size:11px}
+  #circuitFileActions{justify-content:flex-start;width:100%;max-width:100%;margin-left:0;overflow:visible}
   .playlistHead{display:none}
   .playlistRow{grid-template-columns:56px minmax(0,1fr);gap:6px}
   .playlistRace{grid-row:1/5}
@@ -73,7 +102,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.124';
+  const EDITOR_VERSION='0.153';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -81,10 +110,10 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     set:()=>{}
   });
   const syncEditorIdentity=()=>{
-    const title=`Indy Heat Amiga – Circuit Editor v${EDITOR_VERSION}`;
+    const title=`Circuit Editor (Amiga) V${EDITOR_VERSION}`;
     if(document.title!==title)document.title=title;
     const h=document.querySelector('#appIdentity h1')||document.querySelector('header h1');
-    const heading=`Indy Heat Amiga — Circuit Editor v${EDITOR_VERSION}`;
+    const heading=`Circuit Editor (Amiga) V${EDITOR_VERSION}`;
     if(h&&h.textContent!==heading)h.textContent=heading;
   };
   globalThis.IndyHeatSyncEditorIdentity=syncEditorIdentity;
@@ -93,17 +122,25 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   new MutationObserver(syncEditorIdentity).observe(document.documentElement,{subtree:true,childList:true,characterData:true});
 })();
 </script>
-<header>
+<header id="appHeader">
   <div id="appIdentity">
-    <h1>Indy Heat Amiga — Circuit Editor</h1>
+    <img id="appLogo" src="indy-heat-logo.png" alt="Indy Heat">
+    <h1>Circuit Editor (Amiga)</h1>
+  </div>
+  <div id="headerNotice" aria-live="polite">
+    <span id="circuitPackageTopStatus" title="Circuit package status"></span>
+  </div>
+  <div id="headerTools">
     <nav id="editorModeSwitch" aria-label="Editor mode">
       <button id="showCircuitEditor" class="active" type="button" aria-pressed="true">Circuit Editor</button>
       <button id="showPlaylistEditor" type="button" aria-pressed="false" title="Create a custom indyheat_playlist.bin including retail and custom circuits">Playlist Editor</button>
     </nav>
+    <div id="circuitFileActions" aria-label="Circuit file actions">
+      <label class="filebtn">Open Disk.1 / ADF<input id="fileInput" type="file" accept=".adf,.ADF,.1,application/octet-stream"></label>
+      <div id="dropZone" aria-label="Drop Disk.1 or ADF file here">Drop File Here</div>
+    </div>
   </div>
-  <label class="filebtn">Open Disk.1 / ADF<input id="fileInput" type="file" accept=".adf,.ADF,.1,application/octet-stream"></label>
 </header>
-<div id="dropZone">Repository <b>whdload/data/Disk.1</b> loads automatically. Drop a different Disk.1 here or use <b>Open Disk.1 / ADF</b> to override it.</div>
 <section id="playlistWorkspace" aria-label="Championship playlist editor">
   <div class="playlistCard">
     <h2>Championship Playlist</h2>
@@ -213,10 +250,9 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
           <label>Route B minimum previous sequence <input id="routeLapGuard1" type="number" min="0" max="63" step="1" value="0"></label>
           <label>Route C minimum previous sequence <input id="routeLapGuard2" type="number" min="0" max="63" step="1" value="0"></label>
         </div>
-        <div class="wpBtns"><button id="applyRouteLapGuards" type="button">Apply lap settings</button></div>
         <div id="routeLapGuardStatus" class="mini statusLine"></div>
       </details>
-      <div class="wpBtns"><button id="applyWaypoint" type="button" disabled>Apply fields</button><button id="revertWaypoint" type="button" disabled>Revert selected</button></div>
+      <div class="wpBtns"><button id="applyWaypoint" type="button" hidden aria-hidden="true" tabindex="-1">Apply fields</button><button id="revertWaypoint" type="button" disabled style="grid-column:1/-1">Revert selected</button></div>
       <div id="editStatus" class="mini statusLine"></div>
       <div id="editCount" class="mini">0 modified waypoints</div>
     </section>
@@ -324,26 +360,29 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   </div>
 </main>
 <script src="indyheat.js?v=0114"></script>
+<script src="edit-guard.js?v=0147"></script>
 <script src="recovery-hook.js"></script>
 <script src="layer-tools.js?v=050"></script>
-<script src="indyheat_race_graphics.js?v=0115"></script>
-<script src="app.js"></script>
-<script src="layer-editor.js?v=052"></script>
-<script src="waypoint-actions.js?v=070"></script>
+<script src="indyheat_race_graphics.js?v=0148"></script>
+<script src="app.js?v=0152"></script>
+<script src="layer-editor.js?v=0134"></script>
+<script src="waypoint-actions.js?v=071"></script>
 <script src="recovery-editor.js?v=049"></script>
-<script src="race-setup.js?v=0124"></script>
-<script src="cpu-choices.js?v=0122"></script>
-<script src="race-validation.js?v=058"></script>
-<script src="track-backdrop.js"></script>
-<script src="circuit-package.js?v=0114"></script>
+<script src="race-setup.js?v=0151"></script>
+<script src="cpu-choices.js?v=0147"></script>
+<script src="race-validation.js?v=0147"></script>
+<script src="track-backdrop.js?v=0131"></script>
+<script src="palette-control.js?v=0145"></script>
+<script src="circuit-package.js?v=0150"></script>
 <script src="route-ab-assignment.js?v=0124"></script>
-<script src="circuit-library.js?v=069"></script>
+<script src="circuit-library.js?v=0147"></script>
 <script src="brush-tools.js?v=078"></script>
 <script src="brush-library.js?v=0111"></script>
-<script src="minimap-brush-ui.js?v=078"></script>
-<script src="backdrop-brush-ui.js?v=078"></script>
+<script src="foreground-auto.js?v=0132"></script>
+<script src="minimap-brush-ui.js?v=0145"></script>
+<script src="backdrop-brush-ui.js?v=0145"></script>
 <script src="backdrop-ilbm-export.js?v=079"></script>
-<script src="editor-ui.js?v=0122"></script>
+<script src="editor-ui.js?v=0147"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */

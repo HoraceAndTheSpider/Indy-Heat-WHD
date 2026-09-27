@@ -1,5 +1,6 @@
 'use strict';
 const T=globalThis.IndyHeatTools;
+const EG=globalThis.IndyHeatEditGuard;
 let model=null, selected=null, raceRecords=[], originalMain=null, paletteSet=null;
 const ONLINE_DISK_URL='https://raw.githubusercontent.com/HoraceAndTheSpider/Indy-Heat-WHD/master/whdload/data/Disk.1';
 let manualDiskRequested=false;
@@ -88,20 +89,62 @@ function circuitOptionMatches(option,identity){
 function currentCircuitIdentity(){
   const select=$('trackSelect');return circuitOptionIdentity(select?.selectedOptions?.[0]||null);
 }
+function currentWaypointAuthoringKey(){
+  const o=$('trackSelect')?.selectedOptions?.[0];if(!o)return null;
+  if(o.dataset?.indyheatPackageKey)return `package:${o.dataset.indyheatPackageKey}`;
+  if(o.dataset?.indyheatCustom==='1')return `custom:${o.value}`;
+  const retail=o.dataset?.indyheatRetailIndex;return `retail:${retail==null?o.value:retail}`;
+}
+function currentRaceSetupSnapshot(){
+  const R=globalThis.IndyHeatRaceSetupTools,C=globalThis.IndyHeatRaceSetupCapture;
+  if(!R?.makeCompactBin||!T?.parseRaceRecords)return null;
+  const selectedIndex=Number($('trackSelect')?.value||0);
+  const base=T.TRACK_BASE_IDS?.[selectedIndex];
+  if(base==null)return null;
+  const candidates=[],seen=new Set();
+  for(const m of [C?.model,C?.coreModel,C?.layerModel,...(C?.models||[]),model]){
+    if(!m?.main||seen.has(m))continue;seen.add(m);candidates.push(m);
+  }
+  for(const m of candidates){
+    try{
+      const records=T.parseRaceRecords(m.main);
+      for(const r of records)r.baseResourceId=T.raceBaseResourceId(r,m.resourceTableOffset+0x1000);
+      const r=records.find(q=>q.baseResourceId===base);if(r)return R.makeCompactBin(m.main,r).slice();
+    }catch(_e){}
+  }
+  return null;
+}
+function snapshotCircuitCompare(identity){
+  const q={...identity,waypointsBin:null,raceSetupBin:null};
+  try{
+    const P=globalThis.IndyHeatCircuitPackage;
+    if(P?.encodeWaypointsBin&&Array.isArray(state.waypoints)&&state.waypoints.length>=3)
+      q.waypointsBin=P.encodeWaypointsBin({waypointDescriptors:state.waypoints},model?.main).slice();
+  }catch(_e){}
+  try{q.raceSetupBin=currentRaceSetupSnapshot();}catch(_e){}
+  return q;
+}
+function compareSlotIsCurrent(slot){
+  const q=circuitCompareSlots[slot],o=$('trackSelect')?.selectedOptions?.[0];
+  return !!(q&&o&&circuitOptionMatches(o,q));
+}
 function circuitCompareLabel(slot){
   const q=circuitCompareSlots[slot];
   return q?.label||'Not set';
 }
 function syncCircuitCompareUi(){
   for(const slot of ['A','B']){
-    const label=$(`circuitCompareLabel${slot}`),show=$(`circuitCompareShow${slot}`);
+    const q=circuitCompareSlots[slot],same=compareSlotIsCurrent(slot);
+    const label=$(`circuitCompareLabel${slot}`),show=$(`circuitCompareShow${slot}`),copy=$(`waypointCopy${slot}`);
     if(label)label.textContent=circuitCompareLabel(slot);
-    if(show)show.disabled=!circuitCompareSlots[slot];
+    if(show)show.disabled=!q;
+    if(copy)copy.disabled=!q||same||!q.waypointsBin;
   }
+  document.dispatchEvent(new CustomEvent('indyheat-circuit-compare-changed'));
 }
 function setCircuitCompareSlot(slot){
   const q=currentCircuitIdentity();if(!q)return;
-  circuitCompareSlots[slot]=q;syncCircuitCompareUi();
+  circuitCompareSlots[slot]=snapshotCircuitCompare(q);syncCircuitCompareUi();
 }
 function showCircuitCompareSlot(slot){
   const q=circuitCompareSlots[slot],select=$('trackSelect');if(!q||!select)return;
@@ -114,6 +157,15 @@ function showCircuitCompareSlot(slot){
   select.selectedIndex=options.indexOf(target);
   select.dispatchEvent(new Event('change',{bubbles:true}));
 }
+function compareSlotSnapshot(slot){
+  const q=circuitCompareSlots[String(slot||'').toUpperCase()];if(!q)return null;
+  return {...q,waypointsBin:q.waypointsBin?.slice()||null,raceSetupBin:q.raceSetupBin?.slice()||null};
+}
+globalThis.IndyHeatCircuitCompare=Object.freeze({
+  getSlot:compareSlotSnapshot,
+  isCurrent:compareSlotIsCurrent,
+  sync:syncCircuitCompareUi
+});
 function installCircuitCompareUi(){
   const select=$('trackSelect');if(!select)return false;
   const disk=$('diskStatus')?.closest('section');if(disk)disk.hidden=true;
@@ -142,6 +194,32 @@ function installCircuitCompareUi(){
   syncDiskStatusToTop();
   return true;
 }
+function copyWaypointsFromCompare(slot){
+  slot=String(slot||'').toUpperCase();const q=circuitCompareSlots[slot];
+  try{
+    if(!q?.waypointsBin)throw new Error(`Comparison ${slot} has no waypoint data. Use Set ${slot} on the source circuit first.`);
+    if(compareSlotIsCurrent(slot))throw new Error(`Comparison ${slot} is the current circuit.`);
+    const A=globalThis.IndyHeatWaypointAuthoring,key=currentWaypointAuthoringKey();
+    if(!A?.installPackageRoutes||!key)throw new Error('Waypoint copy tools are not ready.');
+    A.installPackageRoutes(key,q.waypointsBin.slice(),state.waypoints||[]);
+    state.selectedWaypoint=null;
+    const finish=()=>{updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();updateEditExportButtons();render();};
+    if(EG)EG.frame('copy-compare-waypoints',finish);else finish();
+    $('editStatus').textContent=`Copied all waypoint routes from ${slot} · ${q.label}.`;
+  }catch(e){$('editStatus').textContent='ERROR: '+e.message;}
+  syncCircuitCompareUi();
+}
+function installWaypointCompareCopyUi(){
+  if($('waypointCompareCopy'))return true;
+  const revert=$('revertWaypoint'),anchor=revert?.closest('.wpBtns');if(!anchor)return false;
+  const row=document.createElement('div');row.id='waypointCompareCopy';row.className='wpBtns';
+  for(const slot of ['A','B']){
+    const b=document.createElement('button');b.id=`waypointCopy${slot}`;b.type='button';b.textContent=`Copy ${slot} waypoints`;b.disabled=true;b.title=`Copy all waypoint routes from comparison ${slot}`;
+    b.addEventListener('click',()=>copyWaypointsFromCompare(slot));row.appendChild(b);
+  }
+  anchor.insertAdjacentElement('afterend',row);syncCircuitCompareUi();return true;
+}
+
 function setEnabled(on){
   $('trackSelect').disabled=!on; $('savePng').disabled=!on; $('saveJson').disabled=!on;
   document.querySelectorAll('[data-dl]').forEach(b=>b.disabled=!on);
@@ -215,7 +293,7 @@ function selectTrack(index){
     $('trackMeta').textContent=state.race?'Routes A, B and C available':'';
     const palTech=state.paletteSource?`<p class="mini muted">Track palette: verified 32-colour r1.iff CMAP · ${esc(state.paletteSource.sourceLabel||'reference')}</p>`:`<p class="mini muted">Track palette unavailable.</p>`;
     $('resourceTable').innerHTML=`<table><thead><tr><th>Role</th><th>ID</th><th>sector</th><th>unpacked</th><th>packed</th><th>type</th></tr></thead><tbody>${resourceRow(rs[0],'5-plane bitmap')}${resourceRow(rs[1],'+1 1bpp')}${resourceRow(rs[2],'+2 2bpp surface')}${resourceRow(rs[3],'+3 heading grid')}</tbody></table>${palTech}`;
-    updateStats(); updateWaypointFitStats(); updateWaypointValidation(); updateWaypointEditor(); render();
+    updateStats(); updateWaypointFitStats(); updateWaypointValidation(); updateWaypointEditor(); render(); updateRouteRefactorButton();
   }catch(e){console.error(e); log('Track load error: '+e.stack);}
 }
 
@@ -615,7 +693,8 @@ function updateEditExportButtons(){
   $('editCount').textContent=`${edits.size} modified waypoint${edits.size===1?'':'s'}`;
 }
 function populateWaypointSelectList(){
-  const sel=$('wpSelectList');sel.innerHTML='';
+  const sel=$('wpSelectList');if(!sel||EG?.editing(sel))return;
+  sel.innerHTML='';
   const none=document.createElement('option');none.value='';none.textContent='— choose waypoint —';sel.appendChild(none);
   const enabled=visibleWaypointSetIndices();
   if(!state.waypoints||!enabled.size){sel.disabled=true;return;}
@@ -636,14 +715,21 @@ function updateWaypointEditor(){
   const pick=$('pickWaypointTarget');if(pick)pick.disabled=!p;
   for(const id of ['waypointSequenceMinus','waypointSequencePlus']){const b=$(id);if(b)b.disabled=!p;}
   if(!p){setLinkTargetPickMode(false);$('wpSelectedInfo').textContent=enabled.size?'Select or drag a visible waypoint.':'Turn on Waypoints and a route to edit.';$('editWpTarget').innerHTML='<option>—</option>';return;}
-  $('wpSelectList').value=String(p.runtimeAddress);
+  EG?.setValue($('wpSelectList'),String(p.runtimeAddress))??($('wpSelectList').value=String(p.runtimeAddress));
   $('wpSelectedInfo').textContent=`Route ${'ABC'[p.setIndex]} · waypoint ${p.index} · sequence ${p.progress}`;
-  $('editWpX').value=p.x;$('editWpY').value=p.y;$('editWpProgress').value=p.progress;$('editWpFlag').checked=p.progressFlag;$('editWpDelta').value=p.linkDelta;
-  const sel=$('editWpTarget');sel.innerHTML='';
-  const keep=document.createElement('option');keep.value='';keep.textContent=`Current · ${p.linkDelta} → ${hx(p.linkTarget,4)}${p.linkResolved?'':' (unresolved)'}`;sel.appendChild(keep);
+  for(const [id,value] of [['editWpX',p.x],['editWpY',p.y],['editWpProgress',p.progress],['editWpDelta',p.linkDelta]]){
+    const el=$(id);if(EG)EG.setValue(el,value);else if(el)el.value=value;
+  }
+  const flag=$('editWpFlag');if(EG)EG.setChecked(flag,p.progressFlag);else if(flag)flag.checked=p.progressFlag;
+  const sel=$('editWpTarget');
+  const targetEditing=!!EG?.editing(sel);
+  if(!targetEditing)sel.innerHTML='';
   const route=state.waypoints?.find(set=>set.index===p.setIndex);
-  for(const q of route?.points||[]){const o=document.createElement('option');o.value=q.runtimeAddress;o.textContent=`${'ABC'[p.setIndex]} ${q.index} · ${hx(q.runtimeAddress,4)}${q.runtimeAddress===p.linkTarget?' ← current':''}`;sel.appendChild(o);}
-  if(p.linkResolved&&!p.linkTargetBoundary&&(route?.points||[]).some(q=>q.runtimeAddress===p.linkTarget))sel.value=String(p.linkTarget);
+  if(!targetEditing){
+    const keep=document.createElement('option');keep.value='';keep.textContent=`Current · ${p.linkDelta} → ${hx(p.linkTarget,4)}${p.linkResolved?'':' (unresolved)'}`;sel.appendChild(keep);
+    for(const q of route?.points||[]){const o=document.createElement('option');o.value=q.runtimeAddress;o.textContent=`${'ABC'[p.setIndex]} ${q.index} · ${hx(q.runtimeAddress,4)}${q.runtimeAddress===p.linkTarget?' ← current':''}`;sel.appendChild(o);}
+    if(p.linkResolved&&!p.linkTargetBoundary&&(route?.points||[]).some(q=>q.runtimeAddress===p.linkTarget))sel.value=String(p.linkTarget);
+  }
   if(pick)pick.disabled=false;
 }
 function noteEdit(point){
@@ -668,8 +754,9 @@ function applyWaypointEdit(){
       linkDelta=addr-p.runtimeAddress;
     }
     T.writeWaypoint(model.main,p,{x:Number($('editWpX').value),y:Number($('editWpY').value),progress:Number($('editWpProgress').value),progressFlag:$('editWpFlag').checked,linkDelta});
-    noteEdit(p);const addr=p.runtimeAddress;refreshWaypointModels(addr);updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();render();
-    $('editStatus').textContent=`Updated ${hx(addr,4)}.`;
+    noteEdit(p);const addr=p.runtimeAddress;refreshWaypointModels(addr);
+    const finish=()=>{updateWaypointEditor();render();$('editStatus').textContent=`Updated ${hx(addr,4)}.`;if(EG?.within($('layerWaypointHost')))EG.whenIdle('waypoint-validation',()=>{updateWaypointValidation();updateWaypointFitStats();});else{updateWaypointValidation();updateWaypointFitStats();}};
+    if(EG)EG.frame('waypoint-live-refresh',finish);else finish();
   }catch(e){$('editStatus').textContent='ERROR: '+e.message;}
 }
 function revertSelectedWaypoint(){
@@ -709,15 +796,16 @@ function linkTargetPickPointerDown(ev){
 }
 function installLinkTargetPicker(){
   if($('pickWaypointTarget'))return true;
-  const apply=$('applyWaypoint'),revert=$('revertWaypoint'),row=apply?.parentElement||revert?.parentElement;if(!row)return false;
+  const revert=$('revertWaypoint'),row=revert?.parentElement;if(!row)return false;
   const button=document.createElement('button');button.id='pickWaypointTarget';button.type='button';button.textContent='Pick link target';button.disabled=true;
-  row.insertBefore(button,revert||apply||row.firstChild);
-  if(apply)apply.hidden=true;
+  row.insertBefore(button,revert||row.firstChild);
   button.addEventListener('click',()=>setLinkTargetPickMode(!linkTargetPickMode));
   return true;
 }
-function applyWaypointFieldChange(){
+function applyWaypointFieldInput(e){
   if(!state.selectedWaypoint)return;
+  const input=e?.target;
+  if(input?.type==='number'&&(input.value===''||input.validity?.valid===false))return;
   applyWaypointEdit();
 }
 function stepWaypointSequence(delta){
@@ -813,6 +901,199 @@ function queuePerRouteSequenceSquashUi(){
   let tries=0;const timer=setInterval(()=>{if(installPerRouteSequenceSquashUi()||++tries>240)clearInterval(timer);},50);
 }
 
+/* -------------------------------------------------------------------------
+ * Route ID refactor.
+ *
+ * Sequence/progress values and logical point-to-point targets are immutable.
+ * Only the physical six-byte record order changes.  The planner builds the
+ * largest useful set of source -> next-record links it can, breaks unavoidable
+ * cycles at their weakest sequence edge (normally the last -> first wrap), and
+ * then orders the remaining chains to reduce the residual link spans.
+ * ---------------------------------------------------------------------- */
+function routeRefactorTargetResolver(set){
+  const points=Array.isArray(set?.points)?set.points:[],byAddress=new Map();
+  for(const p of points)byAddress.set(Number(p.runtimeAddress),p);
+  if(set?.boundaryPoint)byAddress.set(Number(set.boundaryPoint.runtimeAddress),set.boundaryPoint);
+  return p=>p?.__ihLinkTarget||byAddress.get(Number(p?.linkTarget))||null;
+}
+function routeRefactorEdgeScore(source,target,incoming=null){
+  const ds=Number(target?.progress)-Number(source?.progress),step=Number(target?.index)-Number(source?.index);
+  let score=0;
+  // Sequence continuity identifies the main route before existing physical IDs
+  // are considered. This prevents an already-adjacent branch from displacing the
+  // 0,1,2,3... chain merely because the old record order happened to favour it.
+  if(ds===1)score+=1000000;
+  else if(ds===0)score+=500000;
+  else if(ds>1)score+=Math.max(10000,150000-Math.min(100,ds)*1000);
+  else score-=100000+Math.min(100000,Math.abs(ds)*1000);
+  const prior=incoming?.get(source)||[];
+  if(prior.some(p=>Number(source.progress)-Number(p.progress)===1))score+=100000;
+  if(step===1)score+=10000;
+  score-=Math.abs(step-1);
+  return score;
+}
+function routeRefactorCycles(points,out){
+  const done=new Set(),cycles=[];
+  for(const start of points){
+    if(done.has(start))continue;
+    const path=[],at=new Map();let cur=start;
+    while(cur&&out.has(cur)&&!done.has(cur)){
+      if(at.has(cur)){cycles.push(path.slice(at.get(cur)));break;}
+      at.set(cur,path.length);path.push(cur);cur=out.get(cur);
+    }
+    for(const p of path)done.add(p);
+  }
+  return cycles;
+}
+function routeRefactorMetrics(set,order,targetOf,originalIndex=null){
+  const index=new Map(order.map((p,i)=>[p,i]));
+  let natural=0,sumAbs=0,maxAbs=0,resolved=0,backtrack=0,sequenceGap=0,moved=0;
+  for(const p of order){
+    const target=targetOf(p);let ti=null;
+    if(index.has(target))ti=index.get(target);
+    else if(target&&target===set.boundaryPoint)ti=order.length;
+    if(ti==null)continue;
+    const d=ti-index.get(p);resolved++;if(d===1)natural++;sumAbs+=Math.abs(d);maxAbs=Math.max(maxAbs,Math.abs(d));
+  }
+  for(let i=1;i<order.length;i++){
+    const a=Number(order[i-1].progress),b=Number(order[i].progress),d=b-a;
+    sequenceGap+=Math.abs(d);if(d<0)backtrack+=-d;
+  }
+  if(originalIndex)for(let i=0;i<order.length;i++)moved+=Math.abs(i-(originalIndex.get(order[i])??i));
+  return {natural,sumAbs,maxAbs,resolved,backtrack,sequenceGap,moved};
+}
+function compareRouteRefactorMetrics(a,b){
+  if(a.natural!==b.natural)return a.natural>b.natural?-1:1;
+  // Once the maximum practical +6 count is fixed, keep physical IDs as close
+  // as possible to sequence order before chasing smaller residual link spans.
+  if(a.backtrack!==b.backtrack)return a.backtrack<b.backtrack?-1:1;
+  if(a.sumAbs!==b.sumAbs)return a.sumAbs<b.sumAbs?-1:1;
+  if(a.maxAbs!==b.maxAbs)return a.maxAbs<b.maxAbs?-1:1;
+  if(a.sequenceGap!==b.sequenceGap)return a.sequenceGap<b.sequenceGap?-1:1;
+  if(a.moved!==b.moved)return a.moved<b.moved?-1:1;
+  return 0;
+}
+function routeRefactorFlatten(paths){const out=[];for(const path of paths)out.push(...path);return out;}
+function routeRefactorOptimisePathOrder(set,paths,targetOf,originalIndex){
+  let best=[...paths].sort((a,b)=>{
+    const ap=Number(a[0]?.progress??0),bp=Number(b[0]?.progress??0);if(ap!==bp)return ap-bp;
+    if(a.length!==b.length)return b.length-a.length;
+    return (originalIndex.get(a[0])??0)-(originalIndex.get(b[0])??0);
+  });
+  let bestMetrics=routeRefactorMetrics(set,routeRefactorFlatten(best),targetOf,originalIndex);
+  // Chain count is normally small. Repeated insertion moves are enough to place
+  // branch chains near their targets and to put a boundary-linked chain last.
+  for(let pass=0;pass<64&&best.length>1;pass++){
+    let improved=null;
+    for(let from=0;from<best.length;from++)for(let to=0;to<best.length;to++){
+      if(from===to)continue;
+      const candidate=best.slice(),moved=candidate.splice(from,1)[0];candidate.splice(to,0,moved);
+      const metrics=routeRefactorMetrics(set,routeRefactorFlatten(candidate),targetOf,originalIndex);
+      if(compareRouteRefactorMetrics(metrics,bestMetrics)<0&&(!improved||compareRouteRefactorMetrics(metrics,improved.metrics)<0))improved={paths:candidate,metrics};
+    }
+    if(!improved)break;best=improved.paths;bestMetrics=improved.metrics;
+  }
+  return {paths:best,metrics:bestMetrics};
+}
+function planRouteRefactor(set){
+  const points=Array.isArray(set?.points)?set.points:[];
+  if(points.length<2)return {set,order:points.slice(),before:null,after:null,changed:0,improved:false};
+  const targetOf=routeRefactorTargetResolver(set),pointSet=new Set(points),originalIndex=new Map(points.map((p,i)=>[p,i]));
+  for(const p of points){
+    const target=targetOf(p);
+    if(!target)throw new Error(`Route ${'ABC'[set.index]||set.index} waypoint ${p.index} has an unresolved link; refactor cancelled.`);
+    if(target!==set.boundaryPoint&&!pointSet.has(target))throw new Error(`Route ${'ABC'[set.index]||set.index} waypoint ${p.index} links outside its route; refactor cancelled.`);
+  }
+  const before=routeRefactorMetrics(set,points,targetOf,originalIndex),incoming=new Map();
+  for(const source of points){
+    const target=targetOf(source);if(target===source||!pointSet.has(target))continue;
+    if(!incoming.has(target))incoming.set(target,[]);incoming.get(target).push(source);
+  }
+  const out=new Map();
+  for(const [target,sources] of incoming){
+    sources.sort((a,b)=>routeRefactorEdgeScore(b,target,incoming)-routeRefactorEdgeScore(a,target,incoming)||(originalIndex.get(a)-originalIndex.get(b)));
+    out.set(sources[0],target);
+  }
+  // A linear record list cannot preserve every +6 edge in a closed route. Break
+  // one edge per cycle at the weakest sequence transition -- normally the final
+  // sequence -> 0 wrap -- rather than substituting a branch predecessor merely
+  // to gain one extra +6 at the expense of readable sequence/ID ordering.
+  for(let guard=0;guard<points.length*2;guard++){
+    const cycles=routeRefactorCycles(points,out);if(!cycles.length)break;
+    const cycle=cycles[0];let drop=cycle[0],dropScore=routeRefactorEdgeScore(drop,out.get(drop),incoming);
+    for(const source of cycle){const score=routeRefactorEdgeScore(source,out.get(source),incoming);if(score<dropScore||(score===dropScore&&(originalIndex.get(source)??0)>(originalIndex.get(drop)??0))){drop=source;dropScore=score;}}
+    out.delete(drop);
+  }
+  if(routeRefactorCycles(points,out).length)throw new Error(`Route ${'ABC'[set.index]||set.index} refactor could not linearise its link graph safely.`);
+
+  const selectedIn=new Set(out.values()),visited=new Set(),paths=[];
+  const starts=points.filter(p=>!selectedIn.has(p)).sort((a,b)=>Number(a.progress)-Number(b.progress)||(originalIndex.get(a)-originalIndex.get(b)));
+  const follow=start=>{const path=[];let cur=start;while(cur&&!visited.has(cur)){visited.add(cur);path.push(cur);cur=out.get(cur)||null;}if(path.length)paths.push(path);};
+  for(const p of starts)follow(p);for(const p of points)if(!visited.has(p))follow(p);
+  const optimised=routeRefactorOptimisePathOrder(set,paths,targetOf,originalIndex),order=routeRefactorFlatten(optimised.paths),after=optimised.metrics;
+  const changed=order.reduce((n,p,i)=>n+(p!==points[i]?1:0),0),improved=changed>0&&compareRouteRefactorMetrics(after,before)<0;
+  return {set,order:improved?order:points.slice(),before,after:improved?after:before,changed:improved?changed:0,improved};
+}
+function ensureRouteRefactorAuthoring(){
+  const A=globalThis.IndyHeatWaypointAuthoring,P=globalThis.IndyHeatCircuitPackage,key=currentWaypointAuthoringKey();
+  if(!A||!key)throw new Error('Waypoint structural tools are not ready.');
+  const existing=A.currentRoutes?.();if(Array.isArray(existing)&&existing.length)return existing;
+  if(!P?.encodeWaypointsBin||!A.installPackageRoutes)throw new Error('Waypoint package bridge is not ready.');
+  const bytes=P.encodeWaypointsBin({waypointDescriptors:state.waypoints},model?.main),ov=A.installPackageRoutes(key,bytes,state.waypoints||[]);
+  if(ov)ov.importedPackageBaseline=false;
+  const routes=A.currentRoutes?.()||ov?.sets;if(!Array.isArray(routes)||!routes.length)throw new Error('Could not create editable waypoint routes.');
+  return routes;
+}
+function refactorWaypointRoutes(){
+  try{
+    if(!selected||!model||!Array.isArray(state?.waypoints)||!state.waypoints.length)throw new Error('Load a circuit before refactoring route IDs.');
+    // Plan once against the live route so an already-optimal circuit does not
+    // create a structural override merely by pressing the button.
+    const preview=state.waypoints.map(planRouteRefactor);
+    if(!preview.some(p=>p.improved)){$('editStatus').textContent='Route IDs already compact: no refactor improves the +6 link count or residual link spans.';return {changed:false,routes:preview};}
+    const selectedIdentity=state.selectedWaypoint?{setIndex:Number(state.selectedWaypoint.setIndex),index:Number(state.selectedWaypoint.index)}:null;
+    const routes=ensureRouteRefactorAuthoring(),selectedPoint=selectedIdentity?routes?.[selectedIdentity.setIndex]?.points?.[selectedIdentity.index]||null:null;
+    const plans=routes.map(planRouteRefactor),targets=new Map(),sequences=new Map();
+    for(const set of routes)for(const p of set.points||[]){targets.set(p,p.__ihLinkTarget||null);sequences.set(p,Number(p.progress));}
+    for(const plan of plans)if(plan.improved)plan.set.points=plan.order.slice();
+    // waypoint-actions owns normalisation: the wrapped refresh rebuilds physical
+    // IDs/runtime addresses and recalculates each resolved link from its target object.
+    refreshWaypointModels(null);
+    let changedTargets=0,changedSequences=0;
+    for(const set of state.waypoints||[])for(const p of set.points||[]){if(targets.get(p)!==p.__ihLinkTarget)changedTargets++;if(sequences.get(p)!==Number(p.progress))changedSequences++;}
+    if(selectedPoint&&(state.waypoints?.[selectedPoint.setIndex]?.points||[]).includes(selectedPoint))state.selectedWaypoint=selectedPoint;
+    updateWaypointValidation();updateWaypointEditor();updateWaypointFitStats();updateEditExportButtons();render();updateRouteRefactorButton();
+    const summaries=plans.map(plan=>{
+      const route='ABC'[Number(plan.set.index)]||String(plan.set.index);
+      if(!plan.improved)return `${route} unchanged`;
+      const afterSet=state.waypoints?.[Number(plan.set.index)]||plan.set,targetOf=routeRefactorTargetResolver(afterSet),after=routeRefactorMetrics(afterSet,afterSet.points,targetOf);
+      return `${route} +6 ${plan.before.natural}→${after.natural}, link span ${plan.before.sumAbs}→${after.sumAbs}`;
+    });
+    $('editStatus').textContent=`Route IDs refactored · ${summaries.join(' · ')}. Sequence values and point-to-point links preserved.${changedTargets||changedSequences?` WARNING: verification found ${changedTargets} target / ${changedSequences} sequence changes.`:''}`;
+    return {changed:true,routes:plans,changedTargets,changedSequences};
+  }catch(e){$('editStatus').textContent='ERROR: '+e.message;return null;}
+}
+function updateRouteRefactorButton(){
+  const b=$('refactorWaypointRoutes');if(!b)return;b.disabled=!(selected&&model&&state?.waypoints?.some(set=>set.points?.length));
+}
+function installRouteRefactorUi(forceFallback=false){
+  if($('refactorWaypointRoutes')){updateRouteRefactorButton();return true;}
+  const clean=$('cleanWaypointRoutes'),cleanRow=clean?.closest('.wpBtns');
+  let row=cleanRow;
+  if(!row&&forceFallback){
+    const anchor=$('perRouteSequenceSquashRow')||$('waypointCompareCopy')||$('revertWaypoint')?.closest('.wpBtns');if(!anchor)return false;
+    row=document.createElement('div');row.id='routeRefactorRow';row.className='wpBtns';anchor.insertAdjacentElement('afterend',row);
+  }
+  if(!row)return false;
+  const button=document.createElement('button');button.id='refactorWaypointRoutes';button.type='button';button.textContent='Refactor route IDs';button.title='Reorder physical waypoint IDs to maximise +6 next-record links while preserving sequence values and logical link targets.';
+  button.addEventListener('click',refactorWaypointRoutes);row.appendChild(button);updateRouteRefactorButton();return true;
+}
+function queueRouteRefactorUi(){
+  if(installRouteRefactorUi())return;let tries=0;
+  const timer=setInterval(()=>{tries++;if(installRouteRefactorUi(tries>20)||tries>240)clearInterval(timer);},50);
+}
+
+
 function installWaypointInstantControls(){
   const input=$('editWpProgress');if(!input)return false;
   if(!$('waypointSequenceStepControls')){
@@ -833,8 +1114,8 @@ function installWaypointInstantControls(){
     }
   }
   for(const id of ['editWpX','editWpY','editWpProgress','editWpDelta'])
-    $(id)?.addEventListener('change',applyWaypointFieldChange);
-  $('editWpFlag')?.addEventListener('change',applyWaypointFieldChange);
+    $(id)?.addEventListener('input',applyWaypointFieldInput);
+  $('editWpFlag')?.addEventListener('change',applyWaypointFieldInput);
   return true;
 }
 function renderRaceRecords(){
@@ -903,6 +1184,8 @@ $('savePatch').addEventListener('click',()=>downloadBlob(new Blob([JSON.stringif
 $('saveMain').addEventListener('click',()=>downloadBytes(model.main,'indyheat_main_modified_v011.bin'));
 document.querySelectorAll('[data-dl]').forEach(b=>b.addEventListener('click',()=>{const i=Number(b.dataset.dl),r=state.resources[i];downloadBytes(r.data,`indyheat_${hx(r.id,2).slice(1)}_${['background','bitmap1','surface2bpp','heading'][i]}.bin`)}));
 
+installWaypointCompareCopyUi();
+
 async function preloadOnlineDisk(){
   installCircuitCompareUi();
   const startManualState=manualDiskRequested;
@@ -921,5 +1204,6 @@ async function preloadOnlineDisk(){
   }
 }
 
-installCircuitCompareUi();installLinkTargetPicker();installWaypointInstantControls();queuePerRouteSequenceSquashUi();syncProjectionControls();resizeEditorCanvas();ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+document.addEventListener('indyheat-edit-finished',e=>{const id=e.detail?.control?.id;if(/^editWp/.test(String(id||''))||id==='wpSelectList')EG?.frame('waypoint-edit-finished',()=>{updateWaypointEditor();updateWaypointValidation();updateWaypointFitStats();render();});});
+installCircuitCompareUi();installLinkTargetPicker();installWaypointInstantControls();queuePerRouteSequenceSquashUi();queueRouteRefactorUi();syncProjectionControls();resizeEditorCanvas();ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
 preloadOnlineDisk();

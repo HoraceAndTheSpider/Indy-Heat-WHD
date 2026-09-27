@@ -46,10 +46,10 @@ function eventPoint(e,{clamped=false}={}){const c=$('circuitAuxCanvas'),l=layout
 function setState(text,bad=false){const e=$('circuitFreeBrushState');if(!e)return;e.textContent=text||'';e.classList.toggle('bad',!!bad);}
 function renderBase(){if(miniActive())$('layerEditMini')?.click();}
 function safeUnderlyingPick(){if(bridgePick){bridgePick.click();}}
-function currentPaintColour(){const b=document.querySelector('#circuitPreviewPalette [data-colour].selected');return b?Number(b.dataset.colour):12;}
+function currentPaintColour(){const b=document.querySelector('#circuitPreviewPalette [data-palette-index].selected');return b?Number(b.dataset.paletteIndex):12;}
 function secondaryPaintAction(e){return !!e&&(e.button===2||(e.button===0&&e.ctrlKey));}
 function primaryPaintAction(e){return !!e&&e.button===0&&!e.ctrlKey;}
-function setPaintColour(v){document.querySelector(`#circuitPreviewPalette [data-colour="${Number(v)}"]`)?.click();}
+function setPaintColour(v){const palette=$('circuitPreviewPalette'),PC=root.IndyHeatPaletteControl;if(palette&&PC)PC.choose(palette,Number(v),'primary');}
 function brushSize(){return Math.max(1,Number($('circuitPreviewBrush')?.value)||1);}
 function decodedPreview(q=currentPreview()){const p=P();return p&&q?p.decodePreviewBob(q.resource.data):null;}
 function writePreview(q,pixels,transparent){const p=P();q.resource.data.set(p.encodePreviewPixels(pixels,q.resource.data,transparent));}
@@ -109,21 +109,16 @@ function brushTransparencyIndex(){
   const key=sourceKey();if(!brushTransparencyBySource.has(key)){const d=decodedPreview();brushTransparencyBySource.set(key,Number.isInteger(d?.transparent)?d.transparent:0);}
   return brushTransparencyBySource.get(key);
 }
+function configurePaletteControl(){const palette=$('circuitPreviewPalette'),PC=root.IndyHeatPaletteControl;if(!palette||!PC)return false;return PC.configure(palette,{secondary:brushTransparencyIndex,primaryTarget:()=>transparencyPickArmed?'secondary':'primary',onSecondary:i=>{transparencyPickArmed=false;setTransparencyIndex(i);},secondaryTitle:'brush transparency index · right-click to keep/set'});}
 function updatePaletteTransparency(transparent=brushTransparencyIndex()){
-  transparent=Number(transparent);for(const b of document.querySelectorAll('#circuitPreviewPalette [data-colour]')){const i=Number(b.dataset.colour),word=P()?.PRESENTATION_PALETTE_WORDS?.[i];b.title=i===transparent?`${i} · brush transparency index · right-click to keep/set`:`${i} · $${Number(word||0).toString(16).toUpperCase().padStart(3,'0')} · right-click to set brush transparency`;b.classList.toggle('transparentIndex',i===transparent);}
+  transparent=Number(transparent);configurePaletteControl();
   const value=$('circuitPreviewTransparentValue');if(value)value.textContent=String(transparent);const swatch=$('circuitPreviewTransparentSwatch'),rgb=P()?.PRESENTATION_PALETTE_RGB?.[transparent];if(swatch&&rgb)swatch.style.background=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
   const arm=$('circuitPreviewSetTransparent');if(arm)arm.classList.toggle('active',transparencyPickArmed);
 }
 function syncTransparencyUi(){updatePaletteTransparency(brushTransparencyIndex());}
 function setTransparencyPickArmed(on){
-  transparencyPickArmed=!!on;const b=$('circuitPreviewSetTransparent');if(b)b.classList.toggle('active',transparencyPickArmed);
+  transparencyPickArmed=!!on;configurePaletteControl();const b=$('circuitPreviewSetTransparent');if(b)b.classList.toggle('active',transparencyPickArmed);
   if(transparencyPickArmed)setState('Set transparent armed · choose the editor brush-transparency colour from the palette. Right-click also sets it directly.');
-}
-function paletteColourFromTarget(target){const b=target?.closest?.('#circuitPreviewPalette [data-colour]');return b?Number(b.dataset.colour):null;}
-function palettePointerChoice(e){
-  const colour=paletteColourFromTarget(e.target);if(colour==null)return;
-  if(e.type==='contextmenu'||e.button===2){e.preventDefault();e.stopImmediatePropagation();transparencyPickArmed=false;setTransparencyIndex(colour);return;}
-  if(e.type==='click'&&e.button===0&&transparencyPickArmed){e.preventDefault();e.stopImmediatePropagation();transparencyPickArmed=false;setTransparencyIndex(colour);}
 }
 function setTransparencyIndex(target){
   target=Number(target);if(!Number.isInteger(target)||target<0||target>31)return;brushTransparencyBySource.set(sourceKey(),target);updatePaletteTransparency(target);
@@ -319,7 +314,7 @@ function installUi(){
 
   const slider=$('circuitPreviewBrush'),sizeLabel=slider?.closest('label');if(sizeLabel&&!$('circuitMiniBrushSizeRow')){const row=document.createElement('div');row.id='circuitMiniBrushSizeRow';sizeLabel.parentNode.insertBefore(row,sizeLabel);row.appendChild(sizeLabel);const clear=document.createElement('button');clear.id='circuitCustomBrushClear';clear.type='button';clear.textContent='Clear brush';clear.disabled=true;clear.addEventListener('click',clearCustomBrush);row.appendChild(clear);}
 
-  const palette=$('circuitPreviewPalette');if(palette&&!$('circuitTransparencyControl')){const trans=document.createElement('div');trans.id='circuitTransparencyControl';trans.innerHTML=`<button id="circuitPreviewSetTransparent" type="button" title="Set the editor brush-transparency index used by brush capture and right-click mask painting">Set transparent</button><span id="circuitPreviewTransparentReadout" title="Editor brush/mask transparency index; separate from game transparency">Index <b id="circuitPreviewTransparentValue">–</b></span><span id="circuitPreviewTransparentSwatch" aria-hidden="true"></span>`;palette.insertAdjacentElement('beforebegin',trans);$('circuitPreviewSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));palette.addEventListener('click',palettePointerChoice,true);palette.addEventListener('contextmenu',palettePointerChoice,true);new MutationObserver(()=>queueMicrotask(syncTransparencyUi)).observe(palette,{childList:true});}
+  const palette=$('circuitPreviewPalette');if(palette&&!$('circuitTransparencyControl')){const trans=document.createElement('div');trans.id='circuitTransparencyControl';trans.innerHTML=`<button id="circuitPreviewSetTransparent" type="button" title="Set the editor brush-transparency index used by brush capture and right-click mask painting">Set transparent</button><span id="circuitPreviewTransparentReadout" title="Editor brush/mask transparency index; separate from game transparency">Index <b id="circuitPreviewTransparentValue">–</b></span><span id="circuitPreviewTransparentSwatch" aria-hidden="true"></span>`;palette.insertAdjacentElement('beforebegin',trans);$('circuitPreviewSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));configurePaletteControl();}
 
   for(const id of ['circuitPreviewBlank','circuitPreviewFromBackdrop','circuitPreviewRevert'])$(id)?.addEventListener('click',()=>{clearMiniUndo();gesture=null;hover=null;setTimeout(()=>{syncTransparencyUi();syncUi();},0);},true);
   $('circuitPreviewUndo')?.addEventListener('click',e=>{const q=currentPreview(),st=q?stackFor(q):[];if(st.length){e.preventDefault();e.stopImmediatePropagation();undoMini();}},true);

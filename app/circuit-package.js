@@ -4,9 +4,9 @@
 /*
  * Indy Heat circuit package / regional-presentation bridge.
  *
- * race_setup.bin is now an authored $70-byte package file. The appended eight
- * bytes carry the proved race-level Pitlane controls at race+$2C/+2E/+30/+60.
- * Legacy $68 packages remain editor-importable and are upgraded on export; the
+ * race_setup.bin is now an authored $74-byte package file. Bytes +$68..+$6F
+ * carry the proved Pitlane controls; +$70..+$73 carries the Route A/B starting
+ * assignment. Legacy $68/$70 packages remain editor-importable and are upgraded on export; the
  * current WHDLoad runtime will be updated separately rather than carrying dual
  * runtime-format checks.
  */
@@ -35,6 +35,12 @@ const PREVIEW_PLANE_BYTES=PREVIEW_ROW_BYTES*PREVIEW_HEIGHT;
 const PREVIEW_SIZE=12+PREVIEW_PLANE_BYTES*PREVIEW_PLANES; // $0A02
 const MINIMAP_TEMPLATE_TRANSPARENT=8;
 const MINIMAP_ALLOWED_TRANSPARENT=Object.freeze(Array.from({length:32},(_,i)=>i));
+// Explicit Race/backdrop palette index -> Garage/MiniMap palette index map.
+// This is the project-approved hand-matched conversion used by From backdrop.
+const RACE_TO_GARAGE=Object.freeze([
+  14,0,19,3,12,13,14,15,29,27,17,31,20,21,22,23,
+  25,25,26,19,28,31,30,31,24,8,9,10,4,6,5,7
+]);
 const MINIMAP_TEMPLATES=Object.freeze([
   Object.freeze({key:"arrow",name:"Arrow",width:9,height:7,hotspotX:4,hotspotY:3,transparent:8,pixels:Object.freeze([8,8,8,12,12,12,8,8,8,8,8,8,12,3,3,12,8,8,12,12,12,12,12,3,3,12,8,12,3,3,3,3,3,3,3,12,12,12,12,12,12,3,3,12,8,8,8,8,12,3,3,12,8,8,8,8,8,12,12,12,8,8,8])}),
   Object.freeze({key:"pitbox_blue",name:"Pit box Blue",width:6,height:2,hotspotX:3,hotspotY:1,transparent:8,pixels:Object.freeze([8,25,25,25,25,25,25,25,25,25,25,8])}),
@@ -49,7 +55,9 @@ const TRACK_FOREGROUND_SIZES=Object.freeze([0x2800,0x2804]);
 const TRACK_SURFACE_SIZE=0x1180;
 const TRACK_RECOVERY_SIZE=0x0460;
 const LEGACY_RACE_SETUP_SIZE=0x68;
-const RACE_SETUP_SIZE=0x70;
+const LEGACY_RACE_SETUP_SIZE_V70=0x70;
+const RACE_SETUP_SIZE=0x74;
+const SUPPORTED_RACE_SETUP_SIZES=Object.freeze([LEGACY_RACE_SETUP_SIZE,LEGACY_RACE_SETUP_SIZE_V70,RACE_SETUP_SIZE]);
 const RESOURCE_ENTRY_SIZE=22;
 const RUNTIME_MAIN_BASE=0x1000;
 const REGIONAL_MAP_SCREEN_X=240;
@@ -318,9 +326,10 @@ function resolvePreviewResource(model,record){
   const resourceId=delta/RESOURCE_ENTRY_SIZE,resource=model.getResource(resourceId);validatePreviewBob(resource.data);
   return {descriptor,descriptorOffset,entryPtr,resourceId,resource};
 }
-function previewPixelsFromBackdrop(source,{sourceWidth=320,sourceHeight=256,cropHeight=224,zeroReplacement=12,transparent=PREVIEW_TRANSPARENT}={}){
+function previewPixelsFromBackdrop(source,{sourceWidth=320,sourceHeight=256,cropHeight=224,zeroReplacement=12,transparent=PREVIEW_TRANSPARENT,paletteMap=null}={}){
   if(!(source instanceof Uint8Array))source=new Uint8Array(source||[]);
   if(source.length<sourceWidth*sourceHeight)throw new Error('Backdrop pixel buffer is too short');
+  if(paletteMap&&paletteMap.length<32)throw new Error('Backdrop palette map must contain 32 entries');
   cropHeight=Math.max(1,Math.min(sourceHeight,Math.floor(cropHeight)));
   transparent=clampInt(transparent,0,31,'Miniature transparency');zeroReplacement=clampInt(zeroReplacement,0,31,'Backdrop replacement');if(zeroReplacement===transparent)zeroReplacement=nearestPreviewColour(transparent,new Set([transparent]));
   const out=new Uint8Array(PREVIEW_WIDTH*PREVIEW_HEIGHT);
@@ -328,14 +337,20 @@ function previewPixelsFromBackdrop(source,{sourceWidth=320,sourceHeight=256,crop
     const sy0=Math.floor(dy*cropHeight/PREVIEW_HEIGHT),sy1=Math.max(sy0+1,Math.floor((dy+1)*cropHeight/PREVIEW_HEIGHT));
     for(let dx=0;dx<PREVIEW_WIDTH;dx++){
       const sx0=Math.floor(dx*sourceWidth/PREVIEW_WIDTH),sx1=Math.max(sx0+1,Math.floor((dx+1)*sourceWidth/PREVIEW_WIDTH)),counts=new Uint16Array(32);
-      for(let sy=sy0;sy<sy1;sy++)for(let sx=sx0;sx<sx1;sx++)counts[source[sy*sourceWidth+sx]&31]++;
+      for(let sy=sy0;sy<sy1;sy++)for(let sx=sx0;sx<sx1;sx++){const sourceIndex=source[sy*sourceWidth+sx]&31,mapped=paletteMap?paletteMap[sourceIndex]:sourceIndex;counts[mapped]++;}
       let best=0,bestN=-1;for(let i=0;i<32;i++)if(counts[i]>bestN){best=i;bestN=counts[i];}
-      // Preserve the preview's declared transparency index.  Authored MiniMaps use
-      // colour 8 for transparency so colour 0 remains available as visible black.
-      out[dy*PREVIEW_WIDTH+dx]=best===transparent?zeroReplacement:best;
+      // Generic callers retain the historical transparency replacement.  The
+      // explicit palette-map path chooses an unused transparency after remapping,
+      // so mapped palette colours (including colour 8) remain visible.
+      out[dy*PREVIEW_WIDTH+dx]=paletteMap?best:(best===transparent?zeroReplacement:best);
     }
   }
   return out;
+}
+function chooseUnusedPreviewTransparency(pixels,currentTransparent){
+  const used=new Set(pixels);if(!used.has(currentTransparent))return currentTransparent;
+  for(let i=0;i<32;i++)if(!used.has(i))return i;
+  throw new Error('The generated MiniMap uses all 32 palette indices; no unused transparency index is available.');
 }
 
 function encodePresentationBin({mapId=0,presentation={}}={}){
@@ -526,7 +541,7 @@ function parseCircuitZip(bytes){
   if(!TRACK_FOREGROUND_SIZES.includes(resources.foreground.length))throw new Error('foreground.bin must be exactly $2800 or $2804 bytes');
   if(resources.surface.length!==TRACK_SURFACE_SIZE)throw new Error(`surface.bin must be exactly ${hex(TRACK_SURFACE_SIZE)} bytes`);
   if(resources.recovery.length!==TRACK_RECOVERY_SIZE)throw new Error(`recovery.bin must be exactly ${hex(TRACK_RECOVERY_SIZE)} bytes`);
-  validatePreviewBob(previewBin);const waypointRoutes=decodeWaypointsBin(waypointsBin);if(raceSetupBin.length!==LEGACY_RACE_SETUP_SIZE&&raceSetupBin.length!==RACE_SETUP_SIZE)throw new Error(`race_setup.bin must be ${hex(LEGACY_RACE_SETUP_SIZE)} or ${hex(RACE_SETUP_SIZE)} bytes`);const presentation=decodePresentationBin(presentationBin),routeSettings=decodeRouteSettingsBin(routeSettingsBin);
+  validatePreviewBob(previewBin);const waypointRoutes=decodeWaypointsBin(waypointsBin);if(!SUPPORTED_RACE_SETUP_SIZES.includes(raceSetupBin.length))throw new Error(`race_setup.bin must be ${hex(LEGACY_RACE_SETUP_SIZE)}, ${hex(LEGACY_RACE_SETUP_SIZE_V70)} or ${hex(RACE_SETUP_SIZE)} bytes`);const presentation=decodePresentationBin(presentationBin),routeSettings=decodeRouteSettingsBin(routeSettingsBin);
   const legacyRaceSetup=raceSetupBin.length===LEGACY_RACE_SETUP_SIZE;
   return {circuitIndex,folder,resources,previewBin,waypointsBin,raceSetupBin,legacyRaceSetup,presentationBin,presentation,routeSettingsBin,routeSettings,routeLapGuards:routeSettings.lapGuards.slice(),waypointRoutes,routeCounts:waypointRoutes.map(r=>r.points.length)};
 }
@@ -553,7 +568,7 @@ function makePackageFiles({circuitIndex,resources={},previewBin=null,waypointsBi
   return files;
 }
 
-const api={VERSION,LEGACY_RACE_SETUP_SIZE,RACE_SETUP_SIZE,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
+const api={VERSION,LEGACY_RACE_SETUP_SIZE,LEGACY_RACE_SETUP_SIZE_V70,RACE_SETUP_SIZE,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
   PREVIEW_WIDTH,PREVIEW_HEIGHT,PREVIEW_ORIGIN_X,PREVIEW_ORIGIN_Y,PREVIEW_TRANSPARENT,PREVIEW_PLANES,PREVIEW_SIZE,MINIMAP_TEMPLATE_TRANSPARENT,MINIMAP_TEMPLATES,REGIONAL_MAP_SCREEN_X,REGIONAL_MAP_SCREEN_Y,
   PRESENTATION_MAGIC,PRESENTATION_VERSION,PRESENTATION_SIZE,WAYPOINT_MAGIC,WAYPOINT_VERSION,WAYPOINT_ROUTE_COUNT,ROUTE_SETTINGS_MAGIC,ROUTE_SETTINGS_VERSION,ROUTE_SETTINGS_SIZE,ROUTE_LAP_GUARD_MIN,ROUTE_LAP_GUARD_MAX,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,
   PRESENTATION_PALETTE_WORDS,PRESENTATION_PALETTE_RGB,PLAYLIST_V1,PLAYLIST_V2,HUD_LAYOUT,HUD_DIGITS,GAME_HUD_DIGITS,HUD_CAR_COLOURS,
@@ -568,6 +583,7 @@ if(typeof document==='undefined')return;
 
 /* ---------------- Browser/editor integration ---------------- */
 const $=id=>document.getElementById(id);
+const EG=root.IndyHeatEditGuard;
 const mapIds=new Map(),circuitNumbers=new Map(),mapCache=new Map(),previewOriginals=new Map(),previewUndo=new Map();
 let markerGraphics=null,auxMode=null,auxLayout=null,dragMarker=false,previewGesture=null,previewTemplateHover=null,previewPaintHover=null,previewColour=12,previewTool='pencil',previewBrush=1,previewTemplateKey='arrow',previewTemplateRotation=0,previewTemplateFlipH=false,previewTemplateFlipV=false,raceHudDrag=null;
 const packageSlots=new Map();
@@ -607,17 +623,6 @@ function status(s){for(const id of ['circuitAuxStatus','circuitAuxStatusMini','c
 function ensureLapContract(){
   const e=$('raceLaps');if(!e)return;
   e.min=String(LAP_MIN);e.max=String(LAP_MAX);e.title='Runtime-proven authored range: 1–99';
-  const apply=$('raceApply');
-  if(apply&&!apply.dataset.circuitLapGuard){
-    apply.dataset.circuitLapGuard='1';
-    apply.addEventListener('click',ev=>{
-      const v=Number(e.value);
-      if(!Number.isInteger(v)||v<LAP_MIN||v>LAP_MAX){
-        ev.preventDefault();ev.stopImmediatePropagation();
-        status(`ERROR: Lap total must be ${LAP_MIN}–${LAP_MAX}.`);e.focus();
-      }
-    },true);
-  }
 }
 
 async function loadMap(id){
@@ -672,6 +677,13 @@ function syncPreviewToolButtons(){
 function deactivateAux(){auxMode=null;previewGesture=null;previewTemplateHover=null;previewPaintHover=null;dragMarker=false;setCircuitHidden(false);setOverlayOpacityVisible(true);$('circuitAuxPane')&&($('circuitAuxPane').hidden=true);$('circuitMapControls')&&($('circuitMapControls').hidden=true);$('circuitPreviewControls')&&($('circuitPreviewControls').hidden=true);$('layerEditMap')?.classList.remove('active');$('layerEditMini')?.classList.remove('active');}
 function activateAux(mode){
   if(auxMode===mode){const buttonId=mode==='map'?'layerEditMap':'layerEditMini';setExclusiveModeButton(buttonId);syncPreviewToolButtons();renderAux();return;}deactivateAux();
+  // Race owns an internal active flag as well as its visible pane.  Hiding the
+  // pane directly leaves that flag set, so returning from Map/MiniMap to Race
+  // can be mistaken for an already-active Race mode and reopen no controls.
+  // Route through the existing Waypoints hand-off so Race deactivates itself
+  // before the auxiliary editor hides the normal editor panes.
+  const racePane=$('raceSetupPane'),raceCanvas=$('raceSetupCanvas');
+  if((racePane&&!racePane.hidden)||raceCanvas?.classList.contains('editing'))$('layerModeWaypoints')?.click();
   const wp=$('showWaypoints');if(wp?.checked){wp.checked=false;wp.dispatchEvent(new Event('change',{bubbles:true}));}
   hideKnownEditorPanes();auxMode=mode;setCircuitHidden(true);setOverlayOpacityVisible(false);$('circuitAuxPane').hidden=false;const buttonId=mode==='map'?'layerEditMap':'layerEditMini';setExclusiveModeButton(buttonId);$('circuitMapControls').hidden=mode!=='map';$('circuitPreviewControls').hidden=mode!=='mini';syncPreviewToolButtons();refreshUi();
 }
@@ -701,7 +713,9 @@ function currentPreview(){const model=primaryModel(),r=currentRecord();if(!model
 function pushPreviewUndo(q){const key=previewStateKey(q),stack=previewUndo.get(key)||[];stack.push(q.resource.data.slice());if(stack.length>30)stack.shift();previewUndo.set(key,stack);}
 function writePreviewPixels(q,pixels,transparentOverride=null){q.resource.data.set(encodePreviewPixels(pixels,q.resource.data,transparentOverride));}
 function previewPixels(){const q=currentPreview();return q?decodePreviewBob(q.resource.data).pixels:null;}
-function renderPreviewPalette(){const h=$('circuitPreviewPalette');if(!h)return;let transparent=PREVIEW_TRANSPARENT;try{const q=currentPreview();if(q)transparent=decodePreviewBob(q.resource.data).transparent;}catch(_e){}h.innerHTML='';for(let i=0;i<32;i++){const b=document.createElement('button');b.type='button';b.className='previewSwatch'+(i===previewColour?' selected':'');b.title=i===transparent?`${i} · transparent`:`${i} · $${PRESENTATION_PALETTE_WORDS[i].toString(16).toUpperCase().padStart(3,'0')}`;const c=PRESENTATION_PALETTE_RGB[i];b.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;b.dataset.colour=String(i);b.addEventListener('click',()=>{previewColour=i;renderPreviewPalette();});h.appendChild(b);}}
+function previewPaletteRecords(){let transparent=PREVIEW_TRANSPARENT;try{const q=currentPreview();if(q)transparent=decodePreviewBob(q.resource.data).transparent;}catch(_e){}return Array.from({length:32},(_,i)=>({rgb:PRESENTATION_PALETTE_RGB[i],title:i===transparent?`${i} · $${PRESENTATION_PALETTE_WORDS[i].toString(16).toUpperCase().padStart(3,'0')} · MiniMap game transparency`:`${i} · $${PRESENTATION_PALETTE_WORDS[i].toString(16).toUpperCase().padStart(3,'0')}`}));}
+function configurePreviewPaletteControl(){const h=$('circuitPreviewPalette'),PC=root.IndyHeatPaletteControl;if(!h||!PC)return false;return PC.configure(h,{records:previewPaletteRecords,legacyDataKey:'colour',swatchClass:'previewSwatch',primary:()=>previewColour,onPrimary:i=>{previewColour=Number(i);}});}
+function renderPreviewPalette(){configurePreviewPaletteControl();}
 function drawPreviewTemplateHover(ctx,x,y,scale){
   if(previewTool!=='template'||!previewTemplateHover?.inside)return;
   const source=MINIMAP_TEMPLATES.find(t=>t.key===previewTemplateKey);if(!source)return;
@@ -771,7 +785,7 @@ function renderRaceHudOverlay(){
   // race+$24/+26 is the true top-left origin used by the current-lap tower.
   const ax=p.lapDisplayX*S,ay=p.lapDisplayY*S;ctx.strokeStyle='#ffd84a';ctx.lineWidth=Math.max(1,.6*S);ctx.beginPath();ctx.moveTo(ax-5*S,ay);ctx.lineTo(ax+5*S,ay);ctx.moveTo(ax,ay-5*S);ctx.lineTo(ax,ay+5*S);ctx.stroke();ctx.restore();
 }
-function writeHudAnchorAll(x,y){for(const model of allAuthoringModels()){const r=recordForTrackIndex(sourceTrackIndex(),model);if(r)writePresentation(model.main,r.offset,{lapDisplayX:Math.round(x),lapDisplayY:Math.round(y)});}const X=$('circuitHudX'),Y=$('circuitHudY');if(X)X.value=String(Math.round(x));if(Y)Y.value=String(Math.round(y));renderRaceHudOverlay();}
+function writeHudAnchorAll(x,y){for(const model of allAuthoringModels()){const r=recordForTrackIndex(sourceTrackIndex(),model);if(r)writePresentation(model.main,r.offset,{lapDisplayX:Math.round(x),lapDisplayY:Math.round(y)});}const X=$('circuitHudX'),Y=$('circuitHudY'),hx=Math.round(x),hy=Math.round(y);if(EG){EG.setValue(X,hx);EG.setValue(Y,hy);}else{if(X)X.value=String(hx);if(Y)Y.value=String(hy);}renderRaceHudOverlay();}
 function raceCanvasPoint(e){const c=$('raceSetupCanvas');if(!c)return null;const r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*320/r.width,y:(e.clientY-r.top)*256/r.height};}
 function installRaceHudPointerBridge(){const c=$('raceSetupCanvas');if(!c||c.dataset.circuitHudBridge)return false;c.dataset.circuitHudBridge='1';
   c.addEventListener('pointerdown',e=>{if(!raceModeActive()||e.button!==0)return;const q=raceCanvasPoint(e),r=currentRecord(),C=currentCapture();if(!q||!r||!C?.model)return;const p=readPresentation(C.model.main,r.offset),dx=q.x-p.lapDisplayX,dy=q.y-p.lapDisplayY;if(dx*dx+dy*dy>14*14)return;e.preventDefault();e.stopImmediatePropagation();raceHudDrag={pointerId:e.pointerId};c.setPointerCapture?.(e.pointerId);writeHudAnchorAll(q.x,q.y);},true);
@@ -840,24 +854,41 @@ function previewRevert(){const q=currentPreview();if(!q)return;const b=previewOr
 function previewBlank(){const q=currentPreview();if(!q)return;pushPreviewUndo(q);const px=new Uint8Array(PREVIEW_WIDTH*PREVIEW_HEIGHT);px.fill(MINIMAP_TEMPLATE_TRANSPARENT);writePreviewPixels(q,px,MINIMAP_TEMPLATE_TRANSPARENT);renderPreviewPalette();renderPreviewMode();}
 function previewFromBackdrop(){
   const q=currentPreview(),T=root.IndyHeatTools,TB=root.IndyHeatTrackBackdropTools,model=resourceModel(),record=recordForTrackIndex(sourceTrackIndex(),model);if(!q||!T||!model||!record)return;
-  try{const bg=model.getResource(record.baseResourceId),source=TB?.decodeTrackPlanar?TB.decodeTrackPlanar(bg.data):T.decodePlanar(bg.data,320,256,5,0),transparent=MINIMAP_TEMPLATE_TRANSPARENT,replacement=previewColour===transparent?nearestPreviewColour(transparent,new Set([transparent])):previewColour,pixels=previewPixelsFromBackdrop(source,{zeroReplacement:replacement,transparent});pushPreviewUndo(q);writePreviewPixels(q,pixels,transparent);renderPreviewPalette();renderPreviewMode();status(`Miniature rebuilt from the current 320×224 gameplay backdrop. MiniMap transparency is colour ${transparent}; colour 0 remains available as black.`);}catch(e){status(`ERROR: ${e.message}`);}
+  try{const bg=model.getResource(record.baseResourceId),source=TB?.decodeTrackPlanar?TB.decodeTrackPlanar(bg.data):T.decodePlanar(bg.data,320,256,5,0),pixels=previewPixelsFromBackdrop(source,{paletteMap:RACE_TO_GARAGE}),transparent=chooseUnusedPreviewTransparency(pixels,decodePreviewBob(q.resource.data).transparent);pushPreviewUndo(q);writePreviewPixels(q,pixels,transparent);renderPreviewPalette();renderPreviewMode();status(`Miniature rebuilt from the current 320×224 gameplay backdrop using the Race → MiniMap palette map. Transparency is colour ${transparent}.`);}catch(e){status(`ERROR: ${e.message}`);}
 }
 
 function refreshUi(){
   ensureLapContract();const r=currentRecord(),C=currentCapture();if(!r||!C?.model)return;const p=readPresentation(C.model.main,r.offset),id=currentMapId();
-  $('circuitMapId')&&($('circuitMapId').value=String(id));$('circuitMarkerX')&&($('circuitMarkerX').value=String(p.markerX));$('circuitMarkerY')&&($('circuitMarkerY').value=String(p.markerY));$('circuitMarkerFrame')&&($('circuitMarkerFrame').value=String(Math.max(0,Math.min(3,p.markerFrame))));$('circuitNumber')&&($('circuitNumber').value=String(currentCircuitIndex()));$('circuitHudX')&&($('circuitHudX').value=String(p.lapDisplayX));$('circuitHudY')&&($('circuitHudY').value=String(p.lapDisplayY));
-  const routeLapGuards=readRouteLapGuards(C.model.main,r.offset);for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++){const e=$(`routeLapGuard${i}`);if(e)e.value=String(routeLapGuards[i]);}
-  const folder=circuitFolder(currentCircuitIndex()),stock=stockTrackIdForCircuit(currentCircuitIndex()),logical=logicalRetailIndex(),source=customSelected()?`-custom- using retail template ${sourceTrackIndex()}`:packageSlots.has(selectionKey())?`Retail slot ${logical} overlay using template ${sourceTrackIndex()}`:`Retail source ${sourceTrackIndex()+1}`;status(`${source} → ${folder}${stock?` · direct stock slot ${stock}`:' · custom library circuit'}\nMap ${mapById(id).name} · arrow (${p.markerX},${p.markerY}) frame ${p.markerFrame} · HUD (${p.lapDisplayX},${p.lapDisplayY}) · total laps ${p.laps}.`);drawArrowChoiceButtons();renderPreviewPalette();syncPreviewToolButtons();renderAux();renderRaceHudOverlay();
+  const put=(el,value)=>{if(!el)return;if(EG)EG.setValue(el,value);else el.value=String(value??'');};
+  put($('circuitMapId'),id);put($('circuitMarkerX'),p.markerX);put($('circuitMarkerY'),p.markerY);put($('circuitMarkerFrame'),Math.max(0,Math.min(3,p.markerFrame)));put($('circuitNumber'),currentCircuitIndex());
+  const routeLapGuards=readRouteLapGuards(C.model.main,r.offset);for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++)put($(`routeLapGuard${i}`),routeLapGuards[i]);
+  const folder=circuitFolder(currentCircuitIndex()),stock=stockTrackIdForCircuit(currentCircuitIndex()),logical=logicalRetailIndex(),source=customSelected()?`-custom- using retail template ${sourceTrackIndex()}`:packageSlots.has(selectionKey())?`Retail slot ${logical} overlay using template ${sourceTrackIndex()}`:`Retail source ${sourceTrackIndex()+1}`;status(`${source} → ${folder}${stock?` · direct stock slot ${stock}`:' · custom library circuit'}
+Map ${mapById(id).name} · arrow (${p.markerX},${p.markerY}) frame ${p.markerFrame} · HUD (${p.lapDisplayX},${p.lapDisplayY}) · total laps ${p.laps}.`);drawArrowChoiceButtons();renderPreviewPalette();syncPreviewToolButtons();renderAux();renderRaceHudOverlay();
 }
-function applyMapFields(){const r=currentRecord(),C=currentCapture();if(!r||!C?.model)return;try{setCurrentMapId(Number($('circuitMapId').value));writePresentation(C.model.main,r.offset,{markerX:Number($('circuitMarkerX').value),markerY:Number($('circuitMarkerY').value),markerFrame:Number($('circuitMarkerFrame').value)});refreshUi();}catch(e){status(`ERROR: ${e.message}`);}}
-function applyHudFields(){try{writeHudAnchorAll(Number($('circuitHudX').value),Number($('circuitHudY').value));refreshUi();}catch(e){status(`ERROR: ${e.message}`);}}
-function applyRouteLapGuardFields(){
+
+function commitMapRawField(e){
+  const input=e?.target,r=currentRecord(),C=currentCapture();if(!input||!r||!C?.model)return;
+  if(input.value===''||input.validity?.valid===false)return;
+  const key={circuitMarkerX:'markerX',circuitMarkerY:'markerY',circuitMarkerFrame:'markerFrame'}[input.id];if(!key)return;
   try{
-    const guards=[];for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++)guards.push(routeLapGuardValue(Number($(`routeLapGuard${i}`)?.value),`Route ${'ABC'[i]} minimum previous sequence`));
+    const value=Number(input.value);if(!Number.isFinite(value))return;
+    writePresentation(C.model.main,r.offset,{[key]:value});
+    const finish=()=>{const p=readPresentation(C.model.main,r.offset);drawArrowChoiceButtons();renderMapMode();status(`Map ${mapById(currentMapId()).name} · arrow (${p.markerX},${p.markerY}) frame ${p.markerFrame}. Changes are live.`);};
+    if(EG)EG.frame('map-raw-live',finish);else finish();
+  }catch(err){status(`ERROR: ${err.message}`);}
+}
+function applyHudFields(){try{writeHudAnchorAll(Number($('circuitHudX').value),Number($('circuitHudY').value));refreshUi();}catch(e){status(`ERROR: ${e.message}`);}}
+function applyRouteLapGuardFields(e){
+  const input=e?.target;if(input?.type==='number'&&(input.value===''||input.validity?.valid===false))return;
+  try{
+    const guards=[];
+    for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++){
+      const field=$(`routeLapGuard${i}`);if(!field||field.value===''||field.validity?.valid===false)return;
+      guards.push(routeLapGuardValue(Number(field.value),`Route ${'ABC'[i]} minimum previous sequence`));
+    }
     for(const model of allAuthoringModels()){const r=recordForTrackIndex(sourceTrackIndex(),model);if(r)writeRouteLapGuards(model.main,r.offset,guards);}
-    const note=$('routeLapGuardStatus');if(note)note.textContent=`Saved A/B/C ${guards.join('/')} · exported explicitly in route_settings.bin. Current WHDLoad runtime support is pending.`;
-    refreshUi();
-  }catch(e){const note=$('routeLapGuardStatus');if(note)note.textContent=`ERROR: ${e.message}`;status(`ERROR: ${e.message}`);}
+    const note=$('routeLapGuardStatus');if(note)note.textContent=`A/B/C ${guards.join('/')} · changes are live and export in route_settings.bin.`;
+  }catch(err){const note=$('routeLapGuardStatus');if(note)note.textContent=`ERROR: ${err.message}`;status(`ERROR: ${err.message}`);}
 }
 function packageFromTrack(index,key,circuitIndexOverride=null){
   const RST=root.IndyHeatRaceSetupTools,T=root.IndyHeatTools,pm=primaryModel(),rm=resourceModel(),wm=waypointModel();if(!pm||!rm||!wm||!RST||!T)throw new Error('Circuit data is not ready');
@@ -946,10 +977,18 @@ function setupLeftViewToggles(){
   const rc=document.createElement('details');rc.id='circuitViewRaceControl';rc.open=true;rc.innerHTML='<summary>Race control</summary><div class="circuitViewToggleBody"></div>';const rh=rc.querySelector('div');makeMirrorToggle(rh,'circuitShowStart','Start / grid anchor','raceShowStart');makeMirrorToggle(rh,'circuitShowGridCars','Cars on grid','raceShowGridCars');makeMirrorToggle(rh,'circuitShowFlag','Flag man','raceShowFlag');for(const [id,label] of [['circuitShowCurrentLaps','Current-lap tower'],['circuitShowTotalLaps','Total laps'],['circuitShowTimer','Timer']]){const l=document.createElement('label');l.innerHTML=`<input id="${id}" type="checkbox" checked> ${label}`;l.querySelector('input').addEventListener('change',renderRaceHudOverlay);rh.appendChild(l);}viewSection.append(pits,rc);return true;
 }
 function setupRaceIntegration(){
-  const pane=$('raceSetupPane'),raceBtn=$('layerEditRaceSetup'),raceCanvas=$('raceSetupCanvas'),stack=viewerStack();if(!pane||!raceBtn||!raceCanvas||!stack)return false;
-  if(!$('circuitRaceHudControls')){const controls=document.createElement('div');controls.id='circuitRaceHudControls';controls.className='toolGroup';controls.innerHTML=`<div class="toolGroupTitle">Race HUD / lap tower</div><div class="circuitAuxGrid"><label>HUD X <input id="circuitHudX" type="number"></label><label>HUD Y <input id="circuitHudY" type="number"></label></div><button id="circuitHudApply" type="button">Apply HUD anchor</button><div id="circuitRaceHudStatus" class="muted"></div><div class="muted">The yellow cursor is race+$24/+26: the true top-left of the 1/2/3/4 lap tower. Total laps previews 99 at -4,+43; timer digits use -8/0/+8,+47. Drag the yellow origin directly in Race mode.</div>`;const checks=pane.querySelector('.raceSetupChecks');if(checks)checks.style.display='none';const grid=pane.querySelector('.raceSetupGrid');pane.insertBefore(controls,grid||pane.firstChild);$('circuitHudApply').addEventListener('click',applyHudFields);}
-  if(!$('circuitRaceHudCanvas')){const c=document.createElement('canvas');c.id='circuitRaceHudCanvas';c.hidden=true;stack.appendChild(c);}
-  installRaceHudPointerBridge();setupLeftViewToggles();if(!raceBtn.dataset.circuitHudMode){raceBtn.dataset.circuitHudMode='1';raceBtn.addEventListener('click',()=>setTimeout(()=>{setOverlayOpacityVisible(true);refreshUi();renderRaceHudOverlay();},0));$('layerModeButtons')?.addEventListener('click',()=>setTimeout(renderRaceHudOverlay,0));$('opacity')?.addEventListener('input',renderRaceHudOverlay);$('editorScale')?.addEventListener('change',()=>setTimeout(renderRaceHudOverlay,0));}
+  const pane=$('raceSetupPane'),raceBtn=$('layerEditRaceSetup');if(!pane||!raceBtn)return false;
+  // editor-ui.js is the sole owner of the Race HUD fields, renderer and drag
+  // interaction. Retire any legacy package-owned HUD DOM left by an earlier
+  // setup pass so duplicate IDs/snapshots cannot fight over HUD X/Y.
+  $('circuitRaceHudControls')?.remove();
+  $('circuitRaceHudCanvas')?.remove();
+  const checks=pane.querySelector('.raceSetupChecks');if(checks)checks.style.display='none';
+  setupLeftViewToggles();
+  if(!raceBtn.dataset.circuitHudMode){
+    raceBtn.dataset.circuitHudMode='1';
+    raceBtn.addEventListener('click',()=>setTimeout(()=>{setOverlayOpacityVisible(true);refreshUi();},0));
+  }
   return true;
 }
 
@@ -961,8 +1000,7 @@ function injectUi(){
     #circuitArrowChoices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin:6px 0} .circuitArrowChoice{display:grid;grid-template-columns:48px 1fr;align-items:center;gap:4px;min-width:0}.circuitArrowChoice canvas{image-rendering:pixelated;background:#161a21}.circuitArrowChoice.selected{outline:2px solid #ffd84a}
     #circuitPreviewPalette{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:7px 0}.previewSwatch{height:22px;min-width:0;border:1px solid #555}.previewSwatch.selected{outline:2px solid #fff;outline-offset:1px} .circuitTemplateGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:5px 0}.circuitTemplateGrid button,.circuitTemplateTransform button{min-width:0;padding:5px 4px;font-size:10px}.circuitTemplateGrid button.active,.circuitTemplateTransform button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}.circuitTemplateTransform button:disabled{opacity:.35;cursor:default}.circuitTemplateTransform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:5px 0}#circuitTemplateState{font-size:10px;color:#aeb5c0;margin:4px 0 8px}
     .circuitAuxGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.circuitAuxGrid label{display:grid;gap:2px}.circuitAuxWide{grid-column:1/-1}.circuitToolRow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:6px 0}.circuitToolRow button{min-width:0;padding:6px 3px;font-size:11px}.circuitToolRow button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}#circuitRaceHudCanvas{position:absolute;inset:0;z-index:4;display:block;pointer-events:none;image-rendering:pixelated}.circuitViewToggleBody{padding:3px 0 4px 12px}.circuitViewToggleBody label{margin:5px 0}
-    #circuitFileActions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-left:auto}#circuitPackageHeader{display:flex;align-items:center;gap:6px;flex-wrap:wrap}#circuitPackageHeader label{display:flex;align-items:center;gap:5px;margin:0;font-size:12px}#circuitPackageHeader input[type=number]{width:58px;background:#222730;color:#fff;border:1px solid #495162;border-radius:4px;padding:7px 5px}#circuitPackageHeader button{padding:8px 10px;white-space:nowrap}#circuitPackageTopStatus{font-size:10px;color:#9aa1ad;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#circuitPackageTopStatus.bad{color:#ff8585}
-    @media(max-width:900px){#circuitFileActions{margin-left:0}}
+    #circuitPackageHeader{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
   `;document.head.appendChild(style);
 
   // Mode navigation is always the first block in the right-hand editor column.
@@ -971,21 +1009,23 @@ function injectUi(){
   const mapBtn=document.createElement('button');mapBtn.id='layerEditMap';mapBtn.type='button';mapBtn.textContent='Map';buttons.appendChild(mapBtn);
   const miniBtn=document.createElement('button');miniBtn.id='layerEditMini';miniBtn.type='button';miniBtn.textContent='Mini map';buttons.appendChild(miniBtn);
 
-  // Package operations are global file operations, so keep them beside Open Disk.1 / ADF.
-  const fileActions=document.createElement('div');fileActions.id='circuitFileActions';const openDisk=header.querySelector('.filebtn');if(openDisk){header.insertBefore(fileActions,openDisk);fileActions.appendChild(openDisk);}else header.appendChild(fileActions);
-  const top=document.createElement('div');top.id='circuitPackageHeader';top.innerHTML=`<label>Circuit # <input id="circuitNumber" type="number" min="0" max="99" step="1"></label><input id="circuitPackageInput" type="file" accept=".zip,application/zip" hidden><button id="circuitPackageImport" type="button">Import circuit ZIP</button><button id="circuitPackageZip" type="button">Export circuit ZIP</button><span id="circuitPackageTopStatus" title="Circuit package status"></span>`;fileActions.appendChild(top);
+  // Package operations share the fixed header toolbar with Disk.1 open/drop controls.
+  let fileActions=$('circuitFileActions');if(!fileActions){fileActions=document.createElement('div');fileActions.id='circuitFileActions';header.appendChild(fileActions);}
+  const openDisk=header.querySelector('.filebtn');if(openDisk&&openDisk.parentElement!==fileActions)fileActions.appendChild(openDisk);
+  const drop=$('dropZone');if(drop&&drop.parentElement!==fileActions)fileActions.appendChild(drop);
+  let top=$('circuitPackageHeader');if(!top){top=document.createElement('div');top.id='circuitPackageHeader';top.innerHTML=`<label>Circuit # <input id="circuitNumber" type="number" min="0" max="99" step="1"></label><input id="circuitPackageInput" type="file" accept=".zip,application/zip" hidden><button id="circuitPackageImport" type="button">Import circuit ZIP</button><button id="circuitPackageZip" type="button">Export circuit ZIP</button>`;fileActions.appendChild(top);}
 
   const pane=document.createElement('div');pane.id='circuitAuxPane';pane.hidden=true;pane.innerHTML=`
-    <div id="circuitMapControls" class="toolGroup" hidden><div class="toolGroupTitle">Regional map arrow</div><label>Regional map <select id="circuitMapId">${REGIONAL_MAPS.map(m=>`<option value="${m.id}">${m.id} · ${m.name}</option>`).join('')}</select></label><div id="circuitArrowChoices"></div><details><summary>Raw game coordinates</summary><div class="circuitAuxGrid"><label>Arrow X <input id="circuitMarkerX" type="number"></label><label>Arrow Y <input id="circuitMarkerY" type="number"></label><label class="circuitAuxWide">Frame <input id="circuitMarkerFrame" type="number" min="0" max="3"></label></div><button id="circuitMapApply" type="button">Apply raw fields</button></details><div id="circuitAuxStatus" class="muted"></div><div class="muted">Retail USA is read directly from Disk.1. Added regional maps are bundled with the editor. Drag the arrow tip directly on the enlarged map. Game map rectangle: x 240–317, y 1–47.</div></div>
+    <div id="circuitMapControls" class="toolGroup" hidden><div class="toolGroupTitle">Regional map arrow</div><label>Regional map <select id="circuitMapId">${REGIONAL_MAPS.map(m=>`<option value="${m.id}">${m.id} · ${m.name}</option>`).join('')}</select></label><div id="circuitArrowChoices"></div><details><summary>Raw game coordinates</summary><div class="circuitAuxGrid"><label>Arrow X <input id="circuitMarkerX" type="number"></label><label>Arrow Y <input id="circuitMarkerY" type="number"></label><label class="circuitAuxWide">Frame <input id="circuitMarkerFrame" type="number" min="0" max="3"></label></div></details><div id="circuitAuxStatus" class="muted"></div><div class="muted">Retail USA is read directly from Disk.1. Added regional maps are bundled with the editor. Drag the arrow tip directly on the enlarged map. Game map rectangle: x 240–317, y 1–47.</div></div>
     <div id="circuitPreviewControls" class="toolGroup" hidden><div class="toolGroupTitle">78×51 miniature circuit</div><div class="circuitToolRow"><button data-preview-tool="pencil" type="button">Pencil</button><button data-preview-tool="line" type="button">Line</button><button data-preview-tool="rect" type="button">Rect</button><button data-preview-tool="fill" type="button">Fill</button><button data-preview-tool="pick" type="button" title="Pick a colour from the miniature">Pick</button></div><label>Brush <input id="circuitPreviewBrush" type="range" min="1" max="5" step="1" value="1"> <span id="circuitPreviewBrushText">1</span></label><div id="circuitPreviewPalette"></div><div class="toolGroupTitle">Templates</div><div class="circuitTemplateGrid"><button data-preview-template="arrow" type="button">Arrow</button><button data-preview-template="pitbox_blue" type="button">Pit box Blue</button><button data-preview-template="pitbox_red" type="button">Pit box Red</button><button data-preview-template="pitbox_white" type="button">Pit box White</button><button data-preview-template="pitbox_yellow" type="button">Pit box Yellow</button><button data-preview-template="startline" type="button">Start line</button><button data-preview-template="tower" type="button">Lap tower</button></div><div class="circuitTemplateTransform"><button data-template-rotation="0" type="button">0°</button><button data-template-rotation="90" type="button">90°</button><button data-template-rotation="180" type="button">180°</button><button data-template-rotation="270" type="button">270°</button><button id="circuitTemplateFlipH" type="button">Flip H</button><button id="circuitTemplateFlipV" type="button">Flip V</button></div><div id="circuitTemplateState"></div><div class="raceSetupActions"><button id="circuitPreviewUndo" type="button">Undo</button><button id="circuitPreviewRevert" type="button">Restore loaded</button></div><div class="raceSetupActions"><button id="circuitPreviewBlank" type="button">New blank miniature</button><button id="circuitPreviewFromBackdrop" type="button">From backdrop</button></div></div>`;
   buttons.insertAdjacentElement('afterend',pane);
   const stack=viewerStack();if(getComputedStyle(stack).position==='static')stack.style.position='relative';const cv=document.createElement('canvas');cv.id='circuitAuxCanvas';cv.hidden=true;stack.appendChild(cv);
   mapBtn.addEventListener('click',()=>activateAux('map'));miniBtn.addEventListener('click',()=>activateAux('mini'));buttons.addEventListener('click',e=>{if(e.target!==mapBtn&&e.target!==miniBtn&&e.target.closest('button'))deactivateAux();},true);
-  $('circuitNumber').addEventListener('change',e=>{try{setCurrentCircuitIndex(Number(e.target.value));refreshUi();}catch(err){status(`ERROR: ${err.message}`);}});$('circuitMapId').addEventListener('change',e=>{setCurrentMapId(Number(e.target.value));refreshUi();});$('circuitMapApply').addEventListener('click',applyMapFields);$('circuitPackageImport').addEventListener('click',()=>$('circuitPackageInput').click());$('circuitPackageInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importCircuitZip(f);e.target.value='';});$('circuitPackageZip').addEventListener('click',exportZip);$('applyRouteLapGuards')?.addEventListener('click',applyRouteLapGuardFields);
+  $('circuitNumber').addEventListener('change',e=>{try{setCurrentCircuitIndex(Number(e.target.value));refreshUi();}catch(err){status(`ERROR: ${err.message}`);}});$('circuitMapId').addEventListener('change',e=>{setCurrentMapId(Number(e.target.value));refreshUi();});for(const id of ['circuitMarkerX','circuitMarkerY','circuitMarkerFrame'])$(id)?.addEventListener('input',commitMapRawField);$('circuitPackageImport').addEventListener('click',()=>$('circuitPackageInput').click());$('circuitPackageInput').addEventListener('change',e=>{const f=e.target.files?.[0];if(f)importCircuitZip(f);e.target.value='';});$('circuitPackageZip').addEventListener('click',exportZip);for(let i=0;i<WAYPOINT_ROUTE_COUNT;i++)$(`routeLapGuard${i}`)?.addEventListener('input',applyRouteLapGuardFields);
   $('trackSelect')?.addEventListener('change',packageSelectionCapture,true);
-  document.querySelectorAll('[data-preview-tool]').forEach(b=>b.addEventListener('click',()=>{previewTool=b.dataset.previewTool;previewTemplateHover=null;previewPaintHover=null;syncPreviewToolButtons();renderPreviewMode();}));document.querySelectorAll('[data-preview-template]').forEach(b=>b.addEventListener('click',()=>{previewTemplateKey=b.dataset.previewTemplate;previewTool='template';previewPaintHover=null;syncPreviewToolButtons();renderPreviewMode();}));document.querySelectorAll('[data-template-rotation]').forEach(b=>b.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateRotation=Number(b.dataset.templateRotation)||0;syncPreviewToolButtons();renderPreviewMode();}));$('circuitTemplateFlipH')?.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateFlipH=!previewTemplateFlipH;syncPreviewToolButtons();renderPreviewMode();});$('circuitTemplateFlipV')?.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateFlipV=!previewTemplateFlipV;syncPreviewToolButtons();renderPreviewMode();});syncPreviewToolButtons();$('circuitPreviewBrush').addEventListener('input',e=>{previewBrush=Number(e.target.value);$('circuitPreviewBrushText').textContent=String(previewBrush);});$('circuitPreviewUndo').addEventListener('click',previewUndoOnce);$('circuitPreviewRevert').addEventListener('click',previewRevert);$('circuitPreviewBlank').addEventListener('click',previewBlank);$('circuitPreviewFromBackdrop').addEventListener('click',previewFromBackdrop);
+  document.querySelectorAll('[data-preview-tool]').forEach(b=>b.addEventListener('click',()=>{previewTool=b.dataset.previewTool;previewTemplateHover=null;previewPaintHover=null;syncPreviewToolButtons();renderPreviewMode();}));document.querySelectorAll('[data-preview-template]').forEach(b=>b.addEventListener('click',()=>{previewTemplateKey=b.dataset.previewTemplate;previewTool='template';previewPaintHover=null;syncPreviewToolButtons();renderPreviewMode();}));document.querySelectorAll('[data-template-rotation]').forEach(b=>b.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateRotation=Number(b.dataset.templateRotation)||0;syncPreviewToolButtons();renderPreviewMode();}));$('circuitTemplateFlipH')?.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateFlipH=!previewTemplateFlipH;syncPreviewToolButtons();renderPreviewMode();});$('circuitTemplateFlipV')?.addEventListener('click',()=>{if(previewTool!=='template')return;previewTemplateFlipV=!previewTemplateFlipV;syncPreviewToolButtons();renderPreviewMode();});configurePreviewPaletteControl();syncPreviewToolButtons();$('circuitPreviewBrush').addEventListener('input',e=>{previewBrush=Number(e.target.value);$('circuitPreviewBrushText').textContent=String(previewBrush);});$('circuitPreviewUndo').addEventListener('click',previewUndoOnce);$('circuitPreviewRevert').addEventListener('click',previewRevert);$('circuitPreviewBlank').addEventListener('click',previewBlank);$('circuitPreviewFromBackdrop').addEventListener('click',previewFromBackdrop);
   cv.addEventListener('pointerdown',e=>{if(auxMode==='map'&&e.button===0){dragMarker=true;cv.setPointerCapture?.(e.pointerId);mapDrag(e);}else if(auxMode==='mini'&&(e.button===0||e.button===2))beginPreview(e);});cv.addEventListener('pointermove',e=>{mapDrag(e);movePreview(e);});cv.addEventListener('pointerup',e=>{if(auxMode==='map'){dragMarker=false;refreshUi();}endPreview(e);});cv.addEventListener('pointercancel',e=>{dragMarker=false;previewTemplateHover=null;previewPaintHover=null;endPreview(e);});cv.addEventListener('pointerleave',()=>{if(auxMode==='mini'&&!previewGesture&&(previewTemplateHover||previewPaintHover)){previewTemplateHover=null;previewPaintHover=null;renderPreviewMode();}});cv.addEventListener('contextmenu',e=>{if(auxMode==='mini')e.preventDefault();});
-  $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{markerGraphics=null;refreshUi();},0));$('editorScale')?.addEventListener('input',()=>setTimeout(renderAux,0));document.addEventListener('indyheat-race-setup-capture',e=>{if(e.detail?.type==='model')resetPackageSession();setTimeout(()=>{refreshUi();setupRaceIntegration();},0);});ensureLapContract();refreshUi();let raceTries=0;const raceTimer=setInterval(()=>{raceTries++;if(setupRaceIntegration()||raceTries>200)clearInterval(raceTimer);},50);
+  $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{markerGraphics=null;refreshUi();},0));$('editorScale')?.addEventListener('input',()=>setTimeout(renderAux,0));document.addEventListener('indyheat-race-setup-capture',e=>{if(e.detail?.type==='model')resetPackageSession();setTimeout(()=>{refreshUi();setupRaceIntegration();},0);});document.addEventListener('indyheat-edit-finished',e=>{const id=String(e.detail?.control?.id||'');if(/^circuitMarker[XY]$/.test(id)||id==='circuitMarkerFrame'||/^routeLapGuard[0-2]$/.test(id)){const finish=()=>refreshUi();if(EG)EG.frame('circuit-edit-finished',finish);else requestAnimationFrame(finish);}});ensureLapContract();refreshUi();let raceTries=0;const raceTimer=setInterval(()=>{raceTries++;if(setupRaceIntegration()||raceTries>200)clearInterval(raceTimer);},50);
   return true;
 }
 function boot(){if(injectUi())return;let tries=0;const t=setInterval(()=>{tries++;if(injectUi()||tries>200)clearInterval(t);},50);}

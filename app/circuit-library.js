@@ -14,6 +14,7 @@
 const VERSION='0.71';
 const CUSTOM_MIN=10,CUSTOM_MAX=99,RUNTIME_MAIN_BASE=0x1000;
 const $=id=>document.getElementById(id);
+const EG=root.IndyHeatEditGuard;
 const slots=new Map();
 let activeSlot=null;
 let importPassThrough=false;
@@ -237,9 +238,14 @@ function deactivateActiveSlot({refresh=true}={}){
 }
 function syncCanonicalUi(slot){
   if(!slot||activeSlot!==slot)return;
-  const number=$('circuitNumber'),map=$('circuitMapId');
-  if(number&&Number(number.value)!==slot.circuitIndex){number.value=String(slot.circuitIndex);number.dispatchEvent(new Event('change',{bubbles:true}));}
-  if(map&&Number(map.value)!==slot.mapId){map.value=String(slot.mapId);map.dispatchEvent(new Event('change',{bubbles:true}));}
+  const syncOne=(el,value,key)=>{
+    if(!el||Number(el.value)===Number(value))return;
+    if(EG?.editing(el)){EG.whenIdle(`circuit-library-${key}`,()=>syncCanonicalUi(slot));return;}
+    if(EG)EG.setValue(el,value,{force:true});else el.value=String(value);
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+  };
+  syncOne($('circuitNumber'),slot.circuitIndex,'number');
+  syncOne($('circuitMapId'),slot.mapId,'map');
 }
 function activateSlot(slot,{refresh=true,syncUi=true}={}){
   if(!slot||activeSlot===slot){if(slot&&syncUi)syncCanonicalUi(slot);return;}
@@ -346,7 +352,7 @@ function beforeTrackChange(e){
 function rekeyActiveSlot(n){
   const slot=activeSlot;if(!slot||n===slot.circuitIndex)return;
   if(!Number.isInteger(n)||n<CUSTOM_MIN||n>CUSTOM_MAX){
-    const input=$('circuitNumber');if(input)input.value=String(slot.circuitIndex);
+    const input=$('circuitNumber');if(input){if(EG)EG.setValue(input,slot.circuitIndex,{force:true});else input.value=String(slot.circuitIndex);}
     status(`Custom circuits use numbers ${CUSTOM_MIN}–${CUSTOM_MAX}; retail slots remain 0–9.`,true);return;
   }
   captureSlot(slot);const old=slot.circuitIndex;replaceExistingNumber(n,slot);slots.delete(old);W()?.clearPackageRoutes?.(authorKey(old));

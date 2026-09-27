@@ -316,7 +316,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=api;
 root.IndyHeatRaceSetupTools=api;
 
 if(typeof document==='undefined')return;
-const T=root.IndyHeatTools,C=root.IndyHeatRaceSetupCapture;
+const T=root.IndyHeatTools,C=root.IndyHeatRaceSetupCapture,EG=root.IndyHeatEditGuard;
 if(!T||!C)return;
 const $=id=>document.getElementById(id);
 let graphics=null,active=false,currentPit=0,drag=null,hitTargets=[];
@@ -354,9 +354,12 @@ function injectUi(){
     #layerEditRaceSetup.active{border-color:#d6b54a;background:#5a4a1c}
     #raceSetupPane[hidden]{display:none}
     #raceSetupPane{font-size:12px}
-    .raceSetupGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:7px 0 10px}
+    .raceSetupGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;margin:7px 0 10px}
     .raceSetupGrid label{display:grid;gap:3px;margin:0;color:#b9c0cc;font-size:11px}
     .raceSetupGrid input,.raceSetupGrid select{min-width:0;width:100%;box-sizing:border-box}
+    .raceLapSliderRow{display:flex;align-items:center;gap:4px;width:100%;min-width:0;white-space:nowrap}
+    .raceLapSliderRow #raceLaps{flex:1 1 auto;width:auto;max-width:none;min-width:58px;margin:0}
+    .raceLapSliderValue{flex:0 0 5.5ch;min-width:5.5ch;text-align:left;white-space:nowrap;font-weight:700;color:#e3e7ec;font-variant-numeric:tabular-nums}
     .raceSetupWide{grid-column:1/-1}
     .raceSetupChecks{display:none}
     .raceSetupChecks label{margin:0;font-size:11px}
@@ -382,7 +385,7 @@ function injectUi(){
         <label><input id="raceShowPitCars" type="checkbox"> Cars in pits</label>
       </div>
       <div class="raceSetupGrid">
-        <label>Laps <input id="raceLaps" type="number" min="2" max="20" step="1" title="Authored custom range: 2–20"></label>
+        <label>Laps <span class="raceLapSliderRow"><input id="raceLaps" type="range" min="2" max="20" step="1" title="Authored custom range: 2–20"><output id="raceLapsSliderValue" class="raceLapSliderValue" for="raceLaps">2 laps</output></span></label>
         <label>Start orient <input id="raceStartOrient" type="number" min="-32768" max="32767" step="1"></label>
         <label>Flag X <input id="raceFlagX" type="number" min="-32768" max="32767" step="1"></label>
         <label>Flag Y <input id="raceFlagY" type="number" min="-32768" max="32767" step="1"></label>
@@ -407,7 +410,9 @@ function injectUi(){
         <label>Crew screen Y <input id="raceScreenY" type="number" min="-32768" max="32767" step="1"></label>
         <label class="raceSetupWide">Slot / side word <input id="raceSlotWord" type="number" min="-32768" max="32767" step="1"></label>
       </div>
-      <div class="raceSetupActions"><button id="raceApply" type="button">Apply fields</button><button id="raceRevert" type="button">Revert setup</button></div>
+      <button id="raceApply" type="button" hidden aria-hidden="true" tabindex="-1">Apply fields</button>
+      <div id="raceCompareCopy" class="raceSetupActions"><button id="raceCopyPitsA" type="button" disabled>Copy A pits</button><button id="raceCopyPitsB" type="button" disabled>Copy B pits</button></div>
+      <div class="raceSetupActions"><button id="raceRevert" type="button">Revert setup</button><span></span></div>
       <div class="raceSetupActions"><button id="raceExport" type="button">Export setup .bin</button><button id="raceExportAll" type="button">Export all setup .bins</button></div>
       <div class="raceSetupActions"><button id="raceExportMain" type="button">Modified main .bin</button><span></span></div>
       <div id="raceSetupStatus" class="muted">Race setup data is loading.</div>
@@ -416,8 +421,14 @@ function injectUi(){
   const stack=view.closest('.canvasStack')||view.parentElement;const cv=document.createElement('canvas');cv.id='raceSetupCanvas';stack.appendChild(cv);
   mode.addEventListener('click',activate);
   ['layerModeWaypoints','layerEditSurface','layerEditMask','layerEditRecovery','layerEditBackdrop'].forEach(id=>$(id)?.addEventListener('click',()=>{if(active)deactivate();}));
-  $('racePitSlot').addEventListener('change',e=>{currentPit=Number(e.target.value)||0;refreshPanel();draw();});
+  $('raceLaps').addEventListener('input',commitLapSlider);
+  $('racePitSlot').addEventListener('change',e=>{currentPit=Number(e.target.value)||0;const finish=()=>{refreshPanel();draw();};if(EG)EG.frame('race-pit-slot',finish);else requestAnimationFrame(finish);});
+  $('raceCopyPitsA').addEventListener('click',()=>copyPitsFromCompare('A'));
+  $('raceCopyPitsB').addEventListener('click',()=>copyPitsFromCompare('B'));
+  document.addEventListener('indyheat-circuit-compare-changed',syncRaceCompareCopyButtons);
   ['raceShowStart','raceShowPitlaneZone','raceShowPitApproach','raceShowPits','raceShowPitCrew','raceShowBoards','raceShowFlag','raceShowGridCars','raceShowPitCars'].forEach(id=>$(id)?.addEventListener('change',draw));
+  ['raceStartOrient','raceFlagX','raceFlagY','raceStartX','raceStartY','racePitPickupX','racePitPickupY','racePitPickupHalfWidth','racePitApproachY','raceServiceX','raceServiceY','raceBoardX','raceBoardY','raceScreenX','raceScreenY','raceSlotWord'].forEach(id=>$(id)?.addEventListener('input',commitPanelField));
+  // Hidden compatibility hook for older internal helpers; users no longer need an Apply step.
   $('raceApply').addEventListener('click',applyPanel);
   $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);refreshPanel();draw();setStatus('Selected circuit race setup restored to the loaded Disk.1 data.');});
   $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($74).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8 · Route A/B assignment 4.`);});
@@ -427,6 +438,7 @@ function injectUi(){
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{currentPit=0;refreshPanel();draw();},0));
   $('editorScale')?.addEventListener('change',()=>setTimeout(draw,0));$('opacity')?.addEventListener('input',draw);
   document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(()=>{ensureGraphics();refreshPanel();draw();},0));
+  document.addEventListener('indyheat-edit-finished',e=>{const control=e.detail?.control;if(control&&$('raceSetupPane')?.contains(control)){const finish=()=>{refreshPanel();draw();};if(EG)EG.frame('race-edit-finished',finish);else requestAnimationFrame(finish);}});
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>draw()).observe(view);
   return true;
 }
@@ -442,15 +454,89 @@ function activate(){
 }
 function deactivate(){active=false;drag=null;$('layerEditRaceSetup')?.classList.remove('active');$('raceSetupPane').hidden=true;const c=overlayCanvas();c?.classList.remove('editing','dragging');draw();}
 
+function syncLapReadout(){
+  const input=$('raceLaps'),out=$('raceLapsSliderValue');if(!input||!out)return false;
+  let value=Math.round(Number(input.value));if(!Number.isFinite(value))value=2;value=Math.max(2,Math.min(20,value));
+  const text=`${value} laps`;out.value=text;out.textContent=text;out.setAttribute('aria-label',text);return true;
+}
+function commitLapSlider(){
+  if(!syncLapReadout())return false;
+  const input=$('raceLaps'),r=currentRecord();if(!input||!r||!C.model)return false;
+  const value=Math.round(Number(input.value));
+  if(!Number.isInteger(value)||value<LAP_MIN||value>LAP_MAX)return false;
+  try{
+    // Keep the authored race record in step with the thumb while it is moving.
+    // refreshPanel() can therefore run at any time without snapping the control
+    // back to the value that existed before the drag started.
+    writeCommon(C.model.main,r.offset,{laps:value});
+    const revert=$('raceRevert');if(revert)revert.disabled=!dirty();
+    const finish=()=>draw();if(EG)EG.frame('race-lap-live',finish);else finish();return true;
+  }catch(e){setStatus(`ERROR: ${e.message}`);return false;}
+}
+
 function refreshPanel(){
   const s=currentSetup();if(!s){setStatus('Race setup data is not available for this circuit yet.');return;}
-  $('raceLaps').value=s.laps;$('racePitPickupX').value=s.pitPickupX;$('racePitPickupY').value=s.pitPickupY;$('racePitPickupHalfWidth').value=s.pitPickupHalfWidth;$('racePitApproachY').value=s.pitApproachY;$('raceFlagX').value=s.flagX;$('raceFlagY').value=s.flagY;$('raceStartX').value=fixedText(s.startX);$('raceStartY').value=fixedText(s.startY);$('raceStartOrient').value=s.startOrient;
-  currentPit=Math.max(0,Math.min(3,currentPit));$('racePitSlot').value=String(currentPit);const p=s.pits[currentPit];
-  $('raceServiceX').value=fixedText(p.serviceX);$('raceServiceY').value=fixedText(p.serviceY);$('raceBoardX').value=fixedText(p.boardX);$('raceBoardY').value=fixedText(p.boardY);$('raceScreenX').value=p.screenX;$('raceScreenY').value=p.screenY;$('raceSlotWord').value=p.slotWord;
+  const put=(id,value)=>{const el=$(id);if(!el)return;if(EG)EG.setValue(el,value);else el.value=String(value??'');};
+  put('raceLaps',s.laps);syncLapReadout();put('racePitPickupX',s.pitPickupX);put('racePitPickupY',s.pitPickupY);put('racePitPickupHalfWidth',s.pitPickupHalfWidth);put('racePitApproachY',s.pitApproachY);put('raceFlagX',s.flagX);put('raceFlagY',s.flagY);put('raceStartX',fixedText(s.startX));put('raceStartY',fixedText(s.startY));put('raceStartOrient',s.startOrient);
+  currentPit=Math.max(0,Math.min(3,currentPit));put('racePitSlot',currentPit);const p=s.pits[currentPit];
+  put('raceServiceX',fixedText(p.serviceX));put('raceServiceY',fixedText(p.serviceY));put('raceBoardX',fixedText(p.boardX));put('raceBoardY',fixedText(p.boardY));put('raceScreenX',p.screenX);put('raceScreenY',p.screenY);put('raceSlotWord',p.slotWord);
   const r=currentRecord(),d=dirty();
-  setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}\n${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($74). Drag visible anchors or edit fields.`);
-  $('raceRevert').disabled=!d;
+  setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}
+${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($74). Drag visible anchors or edit fields.`);
+  $('raceRevert').disabled=!d;syncRaceCompareCopyButtons();
 }
+function syncRaceCompareCopyButtons(){
+  const api=root.IndyHeatCircuitCompare;
+  for(const slot of ['A','B']){
+    const b=$(`raceCopyPits${slot}`),q=api?.getSlot?.(slot);if(!b)continue;
+    b.disabled=!q?.raceSetupBin||!!api?.isCurrent?.(slot);
+  }
+}
+function copyPitsFromCompare(slot){
+  const api=root.IndyHeatCircuitCompare,q=api?.getSlot?.(slot),r=currentRecord();
+  try{
+    if(!q?.raceSetupBin)throw new Error(`Comparison ${slot} has no race/pit data. Use Set ${slot} on the source circuit first.`);
+    if(api?.isCurrent?.(slot))throw new Error(`Comparison ${slot} is the current circuit.`);
+    if(!r||!C.model)throw new Error('Race setup data is unavailable for the current circuit.');
+    const src=q.raceSetupBin;
+    if(src.length!==LEGACY_COMPACT_SIZE&&src.length!==LEGACY_COMPACT_SIZE_V70&&src.length!==COMPACT_SIZE)throw new Error('Comparison pit data has an unsupported race setup size.');
+    const merged=makeCompactBin(C.model.main,r);
+    merged.set(src.slice(COMPACT_LAYOUT.pits.offset,COMPACT_LAYOUT.pits.offset+COMPACT_LAYOUT.pits.length),COMPACT_LAYOUT.pits.offset);
+    if(src.length>=LEGACY_COMPACT_SIZE_V70)merged.set(src.slice(COMPACT_LAYOUT.pitlane.offset,COMPACT_LAYOUT.pitlane.offset+COMPACT_LAYOUT.pitlane.length),COMPACT_LAYOUT.pitlane.offset);
+    applyCompactBin(C.model.main,r,merged);currentPit=0;
+    const finish=()=>{refreshPanel();draw();setStatus(`Copied all pit/service, crew, board and pitlane data from ${slot} · ${q.label}.`);};
+    if(EG)EG.frame('copy-compare-pits',finish);else finish();
+  }catch(e){setStatus(`ERROR: ${e.message}`);}
+  syncRaceCompareCopyButtons();
+}
+
+function commitPanelField(e){
+  const input=e?.target,r=currentRecord(),s=currentSetup();if(!input||!r||!s||!C.model)return;
+  if(input.value===''||input.validity?.valid===false)return;
+  try{
+    const id=input.id,value=Number(input.value);
+    if(!Number.isFinite(value))return;
+    const common={
+      racePitPickupX:['pitPickupX',value],racePitPickupY:['pitPickupY',value],
+      racePitPickupHalfWidth:['pitPickupHalfWidth',value],racePitApproachY:['pitApproachY',value],
+      raceFlagX:['flagX',value],raceFlagY:['flagY',value],raceStartOrient:['startOrient',value],
+      raceStartX:['startX',numberToFixed(input.value)],raceStartY:['startY',numberToFixed(input.value)]
+    }[id];
+    if(common)writeCommon(C.model.main,r.offset,{[common[0]]:common[1]});
+    else{
+      const pit={
+        raceServiceX:['serviceX',numberToFixed(input.value)],raceServiceY:['serviceY',numberToFixed(input.value)],
+        raceBoardX:['boardX',numberToFixed(input.value)],raceBoardY:['boardY',numberToFixed(input.value)],
+        raceScreenX:['screenX',value],raceScreenY:['screenY',value],raceSlotWord:['slotWord',value]
+      }[id];
+      if(!pit)return;
+      writePit(C.model.main,s.pitFileOffset,currentPit,{[pit[0]]:pit[1]});
+    }
+    const finish=()=>{draw();const d=dirty();$('raceRevert').disabled=!d;setStatus(`${s.name||`Race ${s.recordIndex}`} · ${d?'Modified':'Unmodified'} · changes are live.`);};
+    if(EG)EG.frame('race-live-field',finish);else finish();
+  }catch(err){setStatus(`ERROR: ${err.message}`);}
+}
+
 function applyPanel(){
   const r=currentRecord(),s=currentSetup();if(!r||!s||!C.model)return;
   try{
@@ -820,21 +906,13 @@ function installNameUi(){
     label.innerHTML=`Circuit name <span style="display:flex;gap:7px;align-items:center"><input id="raceCircuitName" type="text" maxlength="${NAME_DISPLAY_SIZE}" autocomplete="off" spellcheck="false" title="Gasoline Alley circuit name; 1–${NAME_DISPLAY_SIZE} printable ASCII characters"><output id="raceCircuitNameCount" style="min-width:4.5ch;text-align:right"></output></span><span class="muted" style="font-size:10px;line-height:1.25">Displayed on Gasoline Alley. Exported as the optional 18-byte name.bin package sidecar.</span>`;
     grid.insertBefore(label,grid.firstChild);
     const input=$('raceCircuitName');
-    input.addEventListener('input',()=>{input.dataset.editing='1';updateCounter();});
-  }
-  const apply=$('raceApply');
-  if(apply&&!apply.dataset.circuitNameHook){
-    apply.dataset.circuitNameHook='1';
-    apply.addEventListener('click',e=>{
+    const commitName=(showError=false)=>{
       try{
-        const bytes=encodeNameBytes($('raceCircuitName').value);
-        authoredNames.set(currentNameKey(),bytes);
-        $('raceCircuitName').dataset.editing='';
-      }catch(err){
-        e.preventDefault();e.stopImmediatePropagation();setRaceStatus(`ERROR: ${err.message}`);
-      }
-    },true);
-    apply.addEventListener('click',()=>setTimeout(()=>syncNameUi(true),0));
+        const bytes=encodeNameBytes(input.value);authoredNames.set(currentNameKey(),bytes);$('raceRevert')&&($('raceRevert').disabled=false);return true;
+      }catch(err){if(showError)setRaceStatus(`ERROR: ${err.message}`);return false;}
+    };
+    input.addEventListener('input',()=>{input.dataset.editing='1';updateCounter();commitName(false);});
+    input.addEventListener('change',()=>{if(commitName(true)){input.dataset.editing='';syncNameUi(true);}});
   }
   const revert=$('raceRevert');
   if(revert&&!revert.dataset.circuitNameHook){
