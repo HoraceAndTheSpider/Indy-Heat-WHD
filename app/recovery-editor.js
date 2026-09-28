@@ -69,7 +69,7 @@ pane.innerHTML=`
       <input id="recoveryAutoDepth" type="range" min="1" max="10" step="1" value="5">
     </label></div>
     <div class="recoveryActions">
-      <button id="recoveryAuto" type="button" title="Calculate recovery directions across the whole map from the current Surface edge">Auto recovery</button>
+      <button id="recoveryAuto" type="button" title="Calculate recovery directions from the current Surface edge, then force every outer canvas recovery cell to point inward">Auto recovery</button>
     </div>
     <div class="recoveryRow muted">Whole map · no selection required.</div>
     <div class="recoveryActions">
@@ -233,6 +233,21 @@ function normalisedInfluences(map){
   }
   return out;
 }
+function addCanvasBorderRecoveryTargets(targets){
+  let count=0;
+  for(let gy=0;gy<GRID_H;gy++)for(let gx=0;gx<GRID_W;gx++){
+    if(gx!==0&&gx!==GRID_W-1&&gy!==0&&gy!==GRID_H-1)continue;
+    // Final safety pass: every recovery cell touching the playable canvas edge
+    // points back into the canvas, irrespective of Surface activity. Corners use
+    // the inward diagonal; ordinary edge cells use the inward cardinal direction.
+    const dx=gx===0?1:(gx===GRID_W-1?-1:0);
+    const dy=gy===0?1:(gy===GRID_H-1?-1:0);
+    const value=recoveryValueFromVector(dx,dy);
+    if(value==null)continue;
+    targets.set(gy*GRID_W+gx,value);count++;
+  }
+  return count;
+}
 function calculateAutoRecovery(){
   finishPointerGesture(null,false);
   const surface=surfaceCapture(),v=values(),state=trackState();
@@ -277,11 +292,6 @@ function calculateAutoRecovery(){
       if(bn)u=unitVector(bx,by);
     }
     if(u)seeds.set(index,u);
-  }
-
-  if(!seeds.size){
-    setStatus('Auto recovery found no active Surface-edge boundary cells.');
-    return {changed:0,seeds:0};
   }
 
   const targets=new Map();
@@ -345,6 +355,10 @@ function calculateAutoRecovery(){
     frontierInfluence=next;
   }
 
+  // Always finish by protecting the screen perimeter. These cells can be
+  // non-active and still matter to the original game's off-track recovery.
+  const borderCount=addCanvasBorderRecoveryTargets(targets);
+
   const changed=[];
   const before=[];
   for(const [index,value] of targets){
@@ -352,8 +366,8 @@ function calculateAutoRecovery(){
     changed.push(index);before.push(v[index]);
   }
   if(!changed.length){
-    setStatus(`Auto recovery: ${seeds.size} boundary cells analysed; arrows already match.`);
-    return {changed:0,seeds:seeds.size,inner:inner.size,open:openCount,depth};
+    setStatus(`Auto recovery: ${seeds.size} Surface boundary cells + ${borderCount} canvas-border cells analysed; arrows already match.`);
+    return {changed:0,seeds:seeds.size,inner:inner.size,open:openCount,border:borderCount,depth};
   }
 
   changed.forEach((index,n)=>applyRaw(index,targets.get(index)));
@@ -366,8 +380,8 @@ function calculateAutoRecovery(){
 
   updateStats();
   draw();
-  setStatus(`Auto recovery: ${changed.length} cells updated · ${seeds.size} boundary · ${inner.size} inner · ${openCount} open (${depth}-cell depth).`);
-  return {changed:changed.length,seeds:seeds.size,inner:inner.size,open:openCount,depth};
+  setStatus(`Auto recovery: ${changed.length} cells updated · ${seeds.size} Surface boundary · ${inner.size} inner · ${openCount} open · ${borderCount} canvas border (${depth}-cell depth).`);
+  return {changed:changed.length,seeds:seeds.size,inner:inner.size,open:openCount,border:borderCount,depth};
 }
 let autoRecoveryBusy=false;
 function runAutoRecovery(){
@@ -595,12 +609,10 @@ function deactivateRecovery(){
 function activateRecovery(){
   if(active){draw();return;}
   $('layerModeWaypoints')?.click();
-  const wp=$('showWaypoints');if(wp?.checked){wp.checked=false;wp.dispatchEvent(new Event('change',{bubbles:true}));}
   if(waypointHost)waypointHost.hidden=true;if(drawing)drawing.hidden=true;
   buttons.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
   active=true;mode.classList.add('active');pane.hidden=false;canvas.classList.add('editing');selectedGroup.clear();grabGroup=false;pointerGesture=null;
   $('recoveryGrabGroup')?.classList.remove('active');
-  const arrows=$('recoveryShowArrows');if(arrows&&!arrows.checked){arrows.checked=true;arrows.dispatchEvent(new Event('change',{bubbles:true}));}
   draw();
 }
 mode.addEventListener('click',e=>{e.preventDefault();activateRecovery();});

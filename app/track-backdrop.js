@@ -243,7 +243,7 @@ function inject(){
   return true;
 }
 function activate(){
-  if(active){refresh();return;}$('layerModeWaypoints')?.click();const wp=$('showWaypoints');if(wp?.checked){wp.checked=false;wp.dispatchEvent(new Event('change',{bubbles:true}));}
+  if(active){refresh();return;}$('layerModeWaypoints')?.click();
   buttonsClear();active=true;$('layerEditBackdrop')?.classList.add('active');$('backdropEditorPane').hidden=false;if($('layerDrawingPane'))$('layerDrawingPane').hidden=true;if($('layerWaypointHost'))$('layerWaypointHost').hidden=true;refresh();
 }
 function buttonsClear(){$('layerModeButtons')?.querySelectorAll('button').forEach(b=>b.classList.remove('active'));}

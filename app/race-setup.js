@@ -484,7 +484,7 @@ function viewCanvas(){return $('view');}function overlayCanvas(){return $('raceS
 function syncSize(){const v=viewCanvas(),c=overlayCanvas();if(!v||!c)return;if(c.width!==v.width||c.height!==v.height){c.width=v.width;c.height=v.height;c.getContext('2d').imageSmoothingEnabled=false;}}
 function activate(){
   if(active){draw();return;}
-  $('layerModeWaypoints')?.click();const wp=$('showWaypoints');if(wp?.checked){wp.checked=false;wp.dispatchEvent(new Event('change',{bubbles:true}));}
+  $('layerModeWaypoints')?.click();
   const buttons=$('layerModeButtons');buttons?.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
   active=true;$('layerEditRaceSetup')?.classList.add('active');$('raceSetupPane').hidden=false;$('layerDrawingPane')&&( $('layerDrawingPane').hidden=true );$('layerWaypointHost')&&( $('layerWaypointHost').hidden=true );
   const c=overlayCanvas();c?.classList.add('editing');refreshPanel();draw();

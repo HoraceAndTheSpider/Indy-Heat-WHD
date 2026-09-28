@@ -330,6 +330,13 @@ function disableRacePresentation(){
   disableGroup('race',RACE_TOGGLES);
 }
 function applyModeOverlayPolicy(id){
+  // Overlay/view state is independent of edit mode. A repeated click on an
+  // already-active mode is the explicit request to show that mode's preferred
+  // overlay and suppress the conflicting overlays. Modes without a dedicated
+  // circuit overlay (Backdrop, MiniMap, GeoMap and CPU Choices) are no-ops.
+  const ownsOverlay=id==='layerEditMask'||id==='layerEditSurface'||id==='layerModeWaypoints'||
+    id==='layerEditRecovery'||id==='layerEditRaceSetup';
+  if(!ownsOverlay)return false;
   policyGuard=true;
   try{
     const mask=id==='layerEditMask';
@@ -338,8 +345,6 @@ function applyModeOverlayPolicy(id){
     const recovery=id==='layerEditRecovery';
     const race=id==='layerEditRaceSetup';
 
-    // Mode selection establishes defaults. The left View controls can then
-    // deliberately override Race/Pits visibility without changing edit mode.
     root.IndyHeatRaceOverlayOverride=false;
     setCheck('layerShowMask',mask);
     setCheck('layerShowSurface',surface);
@@ -357,6 +362,7 @@ function applyModeOverlayPolicy(id){
     syncFoldMasters();
     renderHud();
   }
+  return true;
 }
 function installModeCoordinator(){
   if(modeCoordinatorInstalled)return true;
@@ -373,23 +379,25 @@ function installModeCoordinator(){
     if(e.isTrusted===false&&!mobilePointerIntent){
       // Programmatic mode changes are legitimate in a few workflows, but the
       // Waypoints click used internally while another user-selected mode is
-      // activating must not steal the authoritative mode.
+      // activating must not steal the authoritative mode or alter View state.
       if(modeTransitionTarget)return;
       beginModeTransition(id);
       setTimeout(()=>{
         reorderModeButtons();
-        applyModeOverlayPolicy(id);
         syncOverlayOpacity();
         syncCurrentModeButtons();
       },0);
       return;
     }
 
+    // First click: change editor only. Second click on the already-active mode:
+    // explicitly select that mode's preferred overlay/view combination.
+    const repeated=currentModeId===id;
     beginModeTransition(id);
     if(id!=='layerEditRecovery'&&recoveryActuallyActive())deactivateRecoveryThroughOwnApi();
     setTimeout(()=>{
       reorderModeButtons();
-      applyModeOverlayPolicy(id);
+      if(repeated)applyModeOverlayPolicy(id);
       syncOverlayOpacity();
       syncCurrentModeButtons();
     },0);

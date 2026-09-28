@@ -684,7 +684,6 @@ function activateAux(mode){
   // before the auxiliary editor hides the normal editor panes.
   const racePane=$('raceSetupPane'),raceCanvas=$('raceSetupCanvas');
   if((racePane&&!racePane.hidden)||raceCanvas?.classList.contains('editing'))$('layerModeWaypoints')?.click();
-  const wp=$('showWaypoints');if(wp?.checked){wp.checked=false;wp.dispatchEvent(new Event('change',{bubbles:true}));}
   hideKnownEditorPanes();auxMode=mode;setCircuitHidden(true);setOverlayOpacityVisible(false);$('circuitAuxPane').hidden=false;const buttonId=mode==='map'?'layerEditMap':'layerEditMini';setExclusiveModeButton(buttonId);$('circuitMapControls').hidden=mode!=='map';$('circuitPreviewControls').hidden=mode!=='mini';syncPreviewToolButtons();refreshUi();
 }
 

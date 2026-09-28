@@ -500,19 +500,18 @@ function updateToolbar(){
 }
 
 function enterWaypointMode(){
+  // Edit mode and View overlays are deliberately independent. Selecting the
+  // Waypoints editor must not silently turn the Waypoints overlay on.
   editMode=null;gesture=null;
-  const wp=$('showWaypoints');
-  if(wp&&!wp.checked){wp.checked=true;wp.dispatchEvent(new Event('change',{bubbles:true}));}
   updateToolbar();queueRedraw(true);
 }
 function enterEdit(mode){
   if(editMode===mode){updateToolbar();return;}
   if(!model){setLayerStatus('Layer data is still loading.');return;}
+  // Likewise, entering Foreground/Surface does not change any View checkbox.
+  // A second click on the active mode button is handled by editor-ui.js when
+  // the user explicitly wants that mode's preferred overlay view.
   editMode=mode;gesture=null;
-  if(mode==='mask')ui.showMask.checked=true;
-  if(mode==='surface')ui.showSurface.checked=true;
-  const wp=$('showWaypoints');
-  if(wp?.checked){wp.checked=false;wp.dispatchEvent(new Event('change',{bubbles:true}));}
   updateToolbar();queueRedraw(true);
 }
 function exitEdit(){if(!editMode)return;enterWaypointMode();}
@@ -1147,7 +1146,7 @@ $('editorScale')?.addEventListener('change',()=>setTimeout(()=>{
 },0));
 ui.viewportToggle.addEventListener('click',toggleViewport);
 $('trackSelect')?.addEventListener('change',e=>selectedTrack(Number(e.target.value)));
-$('showWaypoints')?.addEventListener('change',e=>{if(e.target.checked&&editMode)enterWaypointMode();else{syncEditorPane();queueRedraw(true);}});
+$('showWaypoints')?.addEventListener('change',()=>{syncEditorPane();queueRedraw(true);});
 $('fileInput')?.addEventListener('change',e=>{if(e.target.files?.[0])loadManualFile(e.target.files[0]);});
 $('dropZone')?.addEventListener('drop',e=>{if(e.dataTransfer?.files?.[0])loadManualFile(e.dataTransfer.files[0]);});
 
