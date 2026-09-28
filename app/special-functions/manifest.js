@@ -5,7 +5,8 @@ const modules=Object.freeze([
     'gravel-trap.js',
     'pit-wall.js',
     'random-people.js',
-    'rough-track.js'
+    'rough-track.js',
+    'water.js'
   ]);
 root.INDYHEAT_SPECIAL_FUNCTION_MODULES=modules;
 if(root.IndyHeatSpecialFunctions?.loadManifest)root.IndyHeatSpecialFunctions.loadManifest(modules);
