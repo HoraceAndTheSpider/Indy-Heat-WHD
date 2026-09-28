@@ -28,9 +28,16 @@ function sourceKey(){
   const retail=o?.dataset?.indyheatRetailIndex;return `retail:${retail==null?(o?.value??trackIndex()):retail}`;
 }
 function capturedModels(){const out=[],seen=new Set();for(const m of [C.coreModel,C.layerModel,C.model,...(C.models||[])]){if(!m||seen.has(m)||typeof m.getResource!=='function')continue;seen.add(m);out.push(m);}return out;}
-function currentResource(){const b=baseId();if(b==null)return null;for(const model of capturedModels()){try{const r=model.getResource(b);if(r)return r;}catch(_e){}}return null;}
+function resourceAt(offset=0){const b=baseId();if(b==null)return null;for(const model of capturedModels()){try{const r=model.getResource(b+Number(offset||0));if(r)return r;}catch(_e){}}return null;}
+function currentResource(){return resourceAt(0);}
+function currentForegroundResource(){return resourceAt(1);}
 function currentPixels(){const r=currentResource();return r?D.decodeTrackPlanar(r.data):null;}
-function syncResourceBytes(bytes){const b=baseId();if(b==null)return 0;let n=0;for(const model of capturedModels()){try{const r=model.getResource(b);if(r&&r.data.length>=D.TRACK_BYTES){r.data.set(bytes.subarray(0,D.TRACK_BYTES),0);n++;}}catch(_e){}}return n;}
+function currentForegroundPixels(){const r=currentForegroundResource();if(!r||typeof T.decode1bpp!=='function')return null;const q=T.decode1bpp(r.data,W,H,0);return q instanceof Uint8Array?q:Uint8Array.from(q||[]);}
+function syncResourceOffsetBytes(offset,bytes,minLength=0){const b=baseId();if(b==null||!bytes)return 0;let n=0;for(const model of capturedModels()){try{const r=model.getResource(b+Number(offset||0));if(r&&r.data.length>=minLength){r.data.set(bytes.subarray(0,Math.min(r.data.length,bytes.length)),0);n++;}}catch(_e){}}return n;}
+function syncResourceBytes(bytes){return syncResourceOffsetBytes(0,bytes,D.TRACK_BYTES);}
+function syncForegroundResourceBytes(bytes){return syncResourceOffsetBytes(1,bytes,Math.ceil(W/8)*H);}
+function encodeForegroundPixels(pixels,templateBytes=null){if(!(pixels instanceof Uint8Array)||pixels.length!==W*H)throw new Error(`Foreground layer must contain ${W*H} pixels.`);const rowBytes=Math.ceil(W/8),need=rowBytes*H,out=templateBytes?Uint8Array.from(templateBytes):new Uint8Array(need);if(out.length<need)throw new Error(`Foreground resource is only ${out.length} bytes; expected at least ${need}.`);for(let y=0;y<H;y++)for(let xb=0;xb<rowBytes;xb++){let value=0;const x0=xb*8;for(let bit=0;bit<8;bit++)if(pixels[y*W+x0+bit])value|=0x80>>>bit;out[y*rowBytes+xb]=value;}return out;}
+function refreshSelectedTrack(){const sel=$('trackSelect');if(sel){sel.dispatchEvent(new Event('change',{bubbles:true}));return true;}try{return !!root.IndyHeatEditorBridge?.refreshSelectedTrack?.();}catch(_e){return false;}}
 function requestCoreRender(){const opacity=$('backgroundOpacity');if(opacity){opacity.dispatchEvent(new Event('input',{bubbles:true}));return true;}return false;}
 function previewPixels(pixels){
   // recovery-hook captures every 320×256 decode, including app.js and layer-editor.js.
@@ -45,9 +52,10 @@ function writePixels(pixels){
 }
 function syncLiveFromResource(){const pixels=currentPixels();if(pixels)previewPixels(pixels);}
 function sourceUndo(){const k=sourceKey();if(!undoBySource.has(k))undoBySource.set(k,[]);return undoBySource.get(k);}
-function pushUndo(bytes){const st=sourceUndo();st.push(Uint8Array.from(bytes));if(st.length>30)st.shift();syncUi();}
+function cloneUndoEntry(value){if(value instanceof Uint8Array)return Uint8Array.from(value);if(value&&typeof value==='object')return {backdrop:value.backdrop?Uint8Array.from(value.backdrop):null,foreground:value.foreground?Uint8Array.from(value.foreground):null,label:String(value.label||'Special Function')};return null;}
+function pushUndo(value){const item=cloneUndoEntry(value);if(!item)return;const st=sourceUndo();st.push(item);if(st.length>30)st.shift();syncUi();}
 function ensureBaseline(){const k=sourceKey(),r=currentResource();if(k&&r&&!baselineBySource.has(k))baselineBySource.set(k,r.data.slice(0,D.TRACK_BYTES));}
-function undoPaint(){const prev=sourceUndo().pop();if(!prev)return;try{syncResourceBytes(prev);previewPixels(D.decodeTrackPlanar(prev));setState('Backdrop edit undone.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}}
+function undoPaint(){const prev=sourceUndo().pop();if(!prev)return;try{if(prev instanceof Uint8Array){syncResourceBytes(prev);previewPixels(D.decodeTrackPlanar(prev));setState('Backdrop edit undone.');}else{if(prev.backdrop){syncResourceBytes(prev.backdrop);previewPixels(D.decodeTrackPlanar(prev.backdrop));}if(prev.foreground)syncForegroundResourceBytes(prev.foreground);refreshSelectedTrack();setState(`${prev.label||'Special Function'} edit undone${prev.foreground?' · Backdrop + Foreground':''}.`);}syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}}
 function restoreLoaded(){const k=sourceKey(),bytes=baselineBySource.get(k);if(!bytes)return;try{pushUndo(currentResource().data.slice(0,D.TRACK_BYTES));syncResourceBytes(bytes);previewPixels(D.decodeTrackPlanar(bytes));setState('Backdrop restored to the circuit state loaded into this editor session.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}}
 
 function paletteInfo(){
@@ -79,6 +87,7 @@ function syncTransparencyUi(){const v=brushTransparencyIndex(),value=$('backdrop
 function paletteRecords(){const info=paletteInfo();return Array.from({length:PALETTE_SIZE},(_,i)=>({rgb:info.rgb?.[i]||[255,0,255],title:`${i} · $${paletteWord(i).toString(16).toUpperCase().padStart(3,'0')}`}));}
 function configurePaletteControl(){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(!host||!PC)return false;return PC.configure(host,{records:paletteRecords,legacyDataKey:'backdropColour',primary:()=>paintColour,secondary:brushTransparencyIndex,primaryTarget:()=>transparencyPickArmed?'secondary':'primary',onPrimary:setPaintColour,onSecondary:setTransparencyIndex,secondaryTitle:'brush transparency index · right-click to keep/set',stencil:true});}
 function applyStencil(basePixels,outPixels){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;return host&&PC?.applyStencilPixels?PC.applyStencilPixels(host,basePixels,outPixels):outPixels;}
+function applyForegroundStencil(baseForeground,proposedForeground,backdropBase){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(!host||!PC?.stencilActive?.(host)||!PC?.stencilBlocked)return proposedForeground;const out=Uint8Array.from(proposedForeground);for(let i=0;i<out.length;i++)if(PC.stencilBlocked(host,backdropBase[i]))out[i]=baseForeground[i];return out;}
 function renderPalette(){const info=paletteInfo();configurePaletteControl();const src=$('backdropPaletteSource');if(src)src.textContent=info.sourceLabel||'verified Indy Heat race palette';syncTransparencyUi();}
 function renderPaletteSelection(){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(host&&PC)PC.render(host);}
 function syncUi(){
@@ -194,10 +203,44 @@ function installSpecialFunctionsAdapter(){
     getPrimaryColour:()=>paintColour,
     getTemplate:specialTemplate,
     paletteRgb,paletteWord,
-    readLayer(name){const pixels=name==='backdrop'?currentPixels():null;return pixels?pixels.slice():null;},
-    validateLayer(name,pixels){if(name!=='backdrop')throw new Error(`Unsupported logical layer ${name}.`);for(const v of pixels)if(v>=PALETTE_SIZE)throw new Error(`Backdrop palette index ${v} is outside 0..${PALETTE_SIZE-1}.`);},
-    previewLayers(layers,{baseLayers}={}){const proposed=layers?.backdrop,base=baseLayers?.backdrop||currentPixels();if(!proposed||!base)return false;previewPixels(applyStencil(base,proposed));return true;},
-    commitLayers(layers,{baseLayers,historyToken,message}={}){const proposed=layers?.backdrop,base=baseLayers?.backdrop||currentPixels(),r=currentResource();if(!proposed||!base||!r)return false;const before=historyToken||r.data.slice(0,D.TRACK_BYTES),out=applyStencil(base,proposed);return commitPixels(out,before,message||'Special Function committed.');},
+    readLayer(name){
+      if(name==='backdrop'){const pixels=currentPixels();return pixels?pixels.slice():null;}
+      if(name==='foreground'){const pixels=currentForegroundPixels();return pixels?pixels.slice():null;}
+      return null;
+    },
+    validateLayer(name,pixels){
+      if(name==='backdrop'){for(const v of pixels)if(v>=PALETTE_SIZE)throw new Error(`Backdrop palette index ${v} is outside 0..${PALETTE_SIZE-1}.`);return;}
+      if(name==='foreground'){for(const v of pixels)if(v!==0&&v!==1)throw new Error(`Foreground value ${v} is outside 0/1.`);return;}
+      throw new Error(`Unsupported logical layer ${name}.`);
+    },
+    previewLayers(layers,{baseLayers}={}){
+      const proposed=layers?.backdrop,base=baseLayers?.backdrop||currentPixels();
+      if(proposed&&base)previewPixels(applyStencil(base,proposed));
+      return !!(proposed||layers?.foreground);
+    },
+    commitLayers(layers,{baseLayers,historyToken,message,plugin}={}){
+      const backdropProposed=layers?.backdrop||null,foregroundProposed=layers?.foreground||null;
+      const backdropBase=baseLayers?.backdrop||currentPixels(),foregroundBase=baseLayers?.foreground||currentForegroundPixels();
+      const backdropResource=currentResource(),foregroundResource=currentForegroundResource();
+      if(backdropProposed&&(!backdropBase||!backdropResource))return false;
+      if(foregroundProposed&&(!foregroundBase||!foregroundResource))return false;
+      const before={
+        backdrop:backdropProposed?(historyToken||backdropResource.data.slice(0,D.TRACK_BYTES)):null,
+        foreground:foregroundProposed?foregroundResource.data.slice():null,
+        label:plugin?.name||'Special Function'
+      };
+      try{
+        if(backdropProposed){const out=applyStencil(backdropBase,backdropProposed);writePixels(out);}
+        if(foregroundProposed){
+          const out=applyForegroundStencil(foregroundBase,foregroundProposed,backdropBase||currentPixels());
+          const bytes=encodeForegroundPixels(out,foregroundResource.data);
+          if(!syncForegroundResourceBytes(bytes))throw new Error('No active editor model accepted the foreground edit.');
+        }
+        pushUndo(before);gesture=null;hover=null;
+        if(foregroundProposed)refreshSelectedTrack();
+        setState(message||'Special Function committed.');syncUi();drawOverlay();return true;
+      }catch(err){setState(`ERROR: ${err.message}`,true);return false;}
+    },
     clearPreview(){syncLiveFromResource();return true;},
     setStatus:setState,
     requestRedraw:drawOverlay,
