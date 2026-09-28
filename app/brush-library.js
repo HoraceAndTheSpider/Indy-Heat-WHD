@@ -1,16 +1,13 @@
 (function(root){
 'use strict';
 
-/* Shared brush catalogue + Special Functions framework — v0.101.
+/* Shared brush catalogue — v0.101.
  *
  * IHBR v2 carries catalogue metadata with the raster; IHBR v1 remains readable.
  * Brush Manager UI lives in brush-manager.js. Auto Foreground lives in
- * foreground-auto.js. This file owns the shared catalogue/metadata, folder
- * discovery, brush-placement integration and Special Functions registry.
- *
- * Special Functions remain framework/placeholders in v0.101: the Backdrop UI
- * can browse and inspect them, but selecting one does not alter canvas drawing
- * or write any layer.
+ * foreground-auto.js. This file owns shared catalogue/metadata, folder
+ * discovery and brush-placement integration only. Procedural Special Functions
+ * are isolated in special-functions-host.js and app/special-functions/.
  */
 const VERSION='0.101';
 const entries=new Map();
@@ -348,168 +345,14 @@ const api={
 root.IndyHeatBrushLibrary=api;
 
 
-/* -------------------------------------------------------------------------
- * Special Functions registry
- * -------------------------------------------------------------------------
- *
- * These entries describe procedural Backdrop operations rather than raster
- * brush images. The schema intentionally anticipates later per-function
- * parameters and layer metadata without implementing them prematurely.
- */
-const specialEntries=new Map();
-let selectedSpecialId=null;
-
-function freezeParameter(parameter){
-  const p=parameter&&typeof parameter==='object'?parameter:{key:String(parameter||'')};
-  return Object.freeze({...p,key:String(p.key||'').trim(),label:String(p.label||p.key||'').trim()});
-}
-function normaliseSpecial(entry){
-  const id=String(entry?.id||entry?.key||'').trim();if(!id)throw new Error('Special Function ID is required.');
-  const source=String(entry.source||'session').trim()||'session';
-  const category=String(entry.category||'Other').trim()||'Other';
-  const allowedTools=Object.freeze(Array.from(entry.allowedTools||[]).map(String));
-  const parameters=Object.freeze(Array.from(entry.parameters||[]).map(freezeParameter));
-  const layers=Object.freeze({
-    backdrop:entry.layers?.backdrop!==false,
-    foreground:entry.layers?.foreground===true,
-    surface:entry.layers?.surface===true
-  });
-  return Object.freeze({
-    id,
-    name:String(entry.name||id),
-    category,
-    source,
-    description:String(entry.description||''),
-    status:String(entry.status||'placeholder'),
-    implemented:entry.implemented===true,
-    allowedTools,
-    parameters,
-    layers,
-    tags:Object.freeze(Array.from(entry.tags||[]).map(String))
-  });
-}
-function specialRegister(entry){const item=normaliseSpecial(entry);specialEntries.set(item.id,item);specialNotify();return item;}
-function specialRemove(id){id=String(id);const removed=specialEntries.delete(id);if(selectedSpecialId===id)selectedSpecialId=null;if(removed)specialNotify();return removed;}
-function specialRemoveSource(source){source=String(source);let n=0;for(const [id,e] of specialEntries)if(e.source===source){specialEntries.delete(id);if(selectedSpecialId===id)selectedSpecialId=null;n++;}if(n)specialNotify();return n;}
-function specialGet(id){return specialEntries.get(String(id))||null;}
-function specialList({category=null,source=null,status=null}={}){
-  const c=category==null?null:String(category),s=source==null?null:String(source),st=status==null?null:String(status);
-  return [...specialEntries.values()].filter(e=>(c==null||e.category===c)&&(s==null||e.source===s)&&(st==null||e.status===st));
-}
-function specialSelected(){return selectedSpecialId?specialGet(selectedSpecialId):null;}
-function specialSelect(id){
-  const item=specialGet(id);if(!item)throw new Error(`Unknown Special Function "${id}".`);
-  selectedSpecialId=item.id;specialSelectionNotify();return item;
-}
-function specialClearSelection(){if(selectedSpecialId==null)return;selectedSpecialId=null;specialSelectionNotify();}
-function specialNotify(){if(typeof root.dispatchEvent==='function'&&typeof CustomEvent!=='undefined')root.dispatchEvent(new CustomEvent('indyheat-special-functions-changed'));}
-function specialSelectionNotify(){if(typeof root.dispatchEvent==='function'&&typeof CustomEvent!=='undefined')root.dispatchEvent(new CustomEvent('indyheat-special-function-selection-changed',{detail:{id:selectedSpecialId,item:specialSelected()}}));}
-
-const BUILTIN_SPECIAL_FUNCTIONS=Object.freeze([
-  Object.freeze({
-    id:'track-base',name:'Track base / outline',category:'Track',source:'builtin:special',
-    description:'Procedural track ribbon from line, curve or free-form geometry. Intended to establish track width and later support track shading.',
-    status:'placeholder',implemented:false,allowedTools:['line','curve','freeform'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'track-edging',name:'Track edging / walls',category:'Track',source:'builtin:special',
-    description:'Patterned track-edge or wall drawing following line, curve or free-form geometry. Pattern, width and colours will be defined from retail examples.',
-    status:'placeholder',implemented:false,allowedTools:['line','curve','freeform'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'track-limit-line',name:'Track-limit line',category:'Track',source:'builtin:special',
-    description:'Offset line-edge drawing with a gap followed by a coloured track-limit line. Gap, line width and colour will be defined during implementation.',
-    status:'placeholder',implemented:false,allowedTools:['line','curve','freeform'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'gravel-trap',name:'Gravel trap',category:'Terrain',source:'builtin:special',
-    description:'Area-drawn gravel texture for filled shapes or connected regions.',
-    status:'placeholder',implemented:false,allowedTools:['rectangle-filled','ellipse-filled','freeform','fill'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'grass-wear',name:'Grass wear / mud',category:'Terrain',source:'builtin:special',
-    description:'Procedural worn-grass treatment using mud browns and dark greens, derived from retail-map patterns.',
-    status:'placeholder',implemented:false,allowedTools:['rectangle-filled','ellipse-filled','freeform','fill'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'mesh-fence',name:'Mesh fence',category:'Scenery',source:'builtin:special',
-    description:'Straight or curved mesh fencing with regularly spaced posts.',
-    status:'placeholder',implemented:false,allowedTools:['line','curve','freeform'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'muddy-path',name:'Mud-edged path',category:'Terrain',source:'builtin:special',
-    description:'Path generator with procedural muddy or worn edges.',
-    status:'placeholder',implemented:false,allowedTools:['line','curve','freeform'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'crowd-fill',name:'People / crowd fill',category:'Scenery',source:'builtin:special',
-    description:'Area-driven crowd placement with controlled variation rather than a single repeated raster stamp.',
-    status:'placeholder',implemented:false,allowedTools:['rectangle-filled','ellipse-filled','freeform','fill'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'woodland-fill',name:'Trees / woodland',category:'Scenery',source:'builtin:special',
-    description:'Area-driven tree and woodland placement using repeatable controlled variation.',
-    status:'placeholder',implemented:false,allowedTools:['rectangle-filled','ellipse-filled','freeform','fill'],parameters:[],layers:{backdrop:true}
-  }),
-  Object.freeze({
-    id:'mud-area',name:'Mud area',category:'Terrain',source:'builtin:special',
-    description:'Area-drawn mud treatment distinct from worn-grass and path-edge effects.',
-    status:'placeholder',implemented:false,allowedTools:['rectangle-filled','ellipse-filled','freeform','fill'],parameters:[],layers:{backdrop:true}
-  })
-]);
-
-function refreshSpecialBuiltins(){
-  specialRemoveSource('builtin:special');
-  for(const entry of BUILTIN_SPECIAL_FUNCTIONS)specialEntries.set(entry.id,normaliseSpecial(entry));
-  specialNotify();
-  return BUILTIN_SPECIAL_FUNCTIONS.length;
-}
-
-const specialApi={
-  VERSION,
-  register:specialRegister,
-  remove:specialRemove,
-  removeSource:specialRemoveSource,
-  get:specialGet,
-  list:specialList,
-  selected:specialSelected,
-  select:specialSelect,
-  clearSelection:specialClearSelection,
-  refreshBuiltins:refreshSpecialBuiltins,
-  BUILTIN_SPECIAL_FUNCTIONS
-};
-root.IndyHeatSpecialFunctions=specialApi;
-
-/* -------------------------------------------------------------------------
- * Backdrop Special Functions catalogue UI
- * ------------------------------------------------------------------------- */
 function syncEditorVersion(){
   if(typeof root.IndyHeatSyncEditorIdentity==='function')root.IndyHeatSyncEditorIdentity();
 }
-
-function toolDisplayName(value){
-  const map={
-    line:'Line',curve:'Curve',freeform:'Free-form',
-    'rectangle-filled':'Filled rectangle','ellipse-filled':'Filled ellipse',fill:'Fill'
-  };
-  return map[value]||value;
-}
-function injectSpecialUiStyle(){
-  if(document.getElementById('indyheatSpecialFunctionStyle'))return;
+function injectBrushEnhancementStyle(){
+  if(document.getElementById('indyheatBrushEnhancementStyle'))return;
   const style=document.createElement('style');
-  style.id='indyheatSpecialFunctionStyle';
+  style.id='indyheatBrushEnhancementStyle';
   style.textContent=`
-    #backdropSpecialFunctions{margin:7px 0 6px;padding-top:7px;border-top:1px solid #343b46}
-    #backdropSpecialFunctionHeader{display:flex;align-items:center;gap:6px;font-size:11px;color:#d7dce5;margin:0 0 3px}
-    #backdropSpecialFunctionList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:4px;height:154px;min-height:84px;resize:vertical;overflow:auto;padding:2px 4px 7px 2px;box-sizing:border-box;border-bottom:1px solid #343b46}
-    #backdropSpecialFunctionList button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;align-items:center;min-width:0;padding:5px 6px;text-align:left;font-size:10px}
-    #backdropSpecialFunctionList button.selected{border-color:#d6b54a;background:#40391f;box-shadow:inset 0 0 0 1px #8f792f}
-    #backdropSpecialFunctionList .specialName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    #backdropSpecialFunctionList .specialBadge{font-size:8px;letter-spacing:.04em;text-transform:uppercase;color:#9fa7b4;border:1px solid #464e5b;border-radius:3px;padding:1px 3px;white-space:nowrap}
-    #backdropSpecialFunctionInfo{margin:5px 0 2px;padding:6px 7px;background:#15191f;border:1px solid #303640;border-radius:4px;font-size:10px;line-height:1.35;color:#aab1bd}
-    #backdropSpecialFunctionInfo[hidden]{display:none}
-    #backdropSpecialFunctionInfo b{color:#e1e5eb}
-    #backdropSpecialFunctionInfo .specialForms{margin-top:3px;color:#8f98a6}
     #backdropUndoRow{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:7px 0 8px}
     #backdropUndoRow button{font-size:11px;padding:6px;width:100%}
     #backdropBrushControls{margin:4px 0 7px}
@@ -533,38 +376,6 @@ function injectSpecialUiStyle(){
     .sharedBrushRecolourButtons button{min-width:0;padding:4px 1px;font-size:9px}
   `;
   document.head.appendChild(style);
-}
-function renderSpecialUi(){
-  const host=document.getElementById('backdropSpecialFunctionList'),info=document.getElementById('backdropSpecialFunctionInfo'),count=document.getElementById('backdropSpecialFunctionCount');
-  if(!host||!info)return;
-  const all=specialList();
-  if(count)count.textContent=String(all.length);
-  host.innerHTML='';
-  for(const entry of all){
-    const button=document.createElement('button');
-    button.type='button';
-    button.dataset.specialFunctionId=entry.id;
-    button.classList.toggle('selected',entry.id===selectedSpecialId);
-    button.title=entry.description;
-    const name=document.createElement('span');name.className='specialName';name.textContent=entry.name;
-    const badge=document.createElement('span');badge.className='specialBadge';badge.textContent=entry.category;
-    button.append(name,badge);
-    button.addEventListener('click',()=>{specialSelect(entry.id);renderSpecialUi();});
-    host.appendChild(button);
-  }
-  const selected=specialSelected();
-  if(!selected){
-    info.hidden=true;
-    info.replaceChildren();
-    return;
-  }
-  const forms=selected.allowedTools.length?selected.allowedTools.map(toolDisplayName).join(' · '):'To be defined';
-  info.hidden=false;
-  info.innerHTML='';
-  const title=document.createElement('div');title.innerHTML=`<b></b> · ${selected.category}`;title.querySelector('b').textContent=selected.name;
-  const description=document.createElement('div');description.textContent=selected.description;
-  const tools=document.createElement('div');tools.className='specialForms';tools.textContent=`Drawing forms: ${forms}`;
-  info.append(title,description,tools);
 }
 function replaceLabelText(label,text){
   if(!label)return;
@@ -1776,43 +1587,20 @@ function scheduleBackdropTidy(){
   tidyBackdropUi();
   for(const delay of [50,150,400,900,1600])setTimeout(tidyBackdropUi,delay);
 }
-function installSpecialUi(){
-  if(typeof document==='undefined')return false;
-  const paintTools=document.getElementById('backdropPaintTools'),brushList=document.getElementById('backdropBrushLibraryList');
-  if(!paintTools||!brushList)return false;
-  injectSpecialUiStyle();
-  if(!document.getElementById('backdropSpecialFunctions')){
-    const section=document.createElement('div');section.id='backdropSpecialFunctions';
-    section.innerHTML=`
-      <div id="backdropSpecialFunctionHeader">
-        <span>Special Functions (<span id="backdropSpecialFunctionCount">0</span>)</span>
-      </div>
-      <div id="backdropSpecialFunctionList" aria-label="Backdrop Special Functions"></div>
-      <div id="backdropSpecialFunctionInfo" hidden></div>`;
-    brushList.insertAdjacentElement('afterend',section);
-  }
-  renderSpecialUi();
-  scheduleBackdropTidy();
-  return true;
-}
-function bootSpecialUi(){
+function bootBrushEnhancements(){
   syncEditorVersion();
-  refreshSpecialBuiltins();
+  injectBrushEnhancementStyle();
   installBrushEnhancementListeners();
   configureSharedBrushUi();
+  scheduleBackdropTidy();
   let uiTries=0;
   const uiTimer=setInterval(()=>{
     configureSharedBrushUi();
     const ready=!!(document.getElementById('backdropBrushTransforms')&&document.getElementById('circuitCustomBrushTransforms')&&document.getElementById('backdropMagicCapture')&&document.getElementById('circuitMagicCapture'));
     if(ready||++uiTries>240)clearInterval(uiTimer);
   },50);
-  if(installSpecialUi())return;
-  let tries=0;
-  const timer=setInterval(()=>{if(installSpecialUi()||++tries>240)clearInterval(timer);},50);
 }
 if(typeof root.addEventListener==='function'){
-  root.addEventListener('indyheat-special-functions-changed',renderSpecialUi);
-  root.addEventListener('indyheat-special-function-selection-changed',renderSpecialUi);
   root.addEventListener('indyheat-brush-library-changed',()=>{
     if(placementEntryId&&!get(placementEntryId))clearPlacementEntry();
     scheduleBackdropTidy();
@@ -1843,7 +1631,7 @@ if(typeof document!=='undefined'){
   }):null;
   raceHudObserver?.observe(document.documentElement,{childList:true,subtree:true});
   installRaceHudInsertAnchorFix();
-  const boot=()=>{syncEditorVersion();refreshBuiltins();loadCompanionModule('brush-manager.js','IndyHeatBrushManager');loadCompanionModule('foreground-auto.js','IndyHeatForegroundAuto');refreshFolderBrushes();installRaceHudInsertAnchorFix();bootSpecialUi();};
+  const boot=()=>{syncEditorVersion();refreshBuiltins();loadCompanionModule('brush-manager.js','IndyHeatBrushManager');loadCompanionModule('foreground-auto.js','IndyHeatForegroundAuto');refreshFolderBrushes();installRaceHudInsertAnchorFix();bootBrushEnhancements();};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});else setTimeout(boot,0);
 }
 })(typeof globalThis!=='undefined'?globalThis:this);
