@@ -15,7 +15,7 @@ const COMPANION_BASE_URL=(typeof document!=='undefined'&&document.currentScript?
 function loadCompanionModule(filename,globalName){
   if(typeof document==='undefined'||(globalName&&root[globalName]))return false;
   if(document.querySelector(`script[data-indyheat-companion="${filename}"],script[src*="/${filename}"],script[src$="${filename}"]`))return true;
-  const script=document.createElement('script'),url=new URL(filename,COMPANION_BASE_URL||document.baseURI);url.searchParams.set('v','0101');
+  const script=document.createElement('script'),url=new URL(filename,COMPANION_BASE_URL||document.baseURI);url.searchParams.set('v',String(root.INDY_HEAT_BUILD_TOKEN||'0181'));
   script.src=url.href;script.dataset.indyheatCompanion=filename;script.defer=true;document.head.appendChild(script);return true;
 }
 
@@ -1469,6 +1469,8 @@ function tidyBackdropUi(){
   if(typeof document==='undefined')return false;
   const pane=document.getElementById('backdropEditorPane'),paintTools=document.getElementById('backdropPaintTools');
   if(!pane||!paintTools)return false;
+  const legacyIntro=[...pane.querySelectorAll('.muted')].find(el=>/Import an ILBM\/IFF backdrop/i.test(el.textContent||''));
+  legacyIntro?.remove();
   configureSharedBrushUi();
 
   document.querySelectorAll('#backdropBrushLibraryList [data-backdrop-library-id]').forEach(button=>{
