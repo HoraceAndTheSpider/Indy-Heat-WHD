@@ -2,8 +2,8 @@
 'use strict';
 
 /* Stable host for isolated procedural editor Special Functions. */
-const API_VERSION=1;
-const HOST_VERSION='1.3';
+const API_VERSION=3;
+const HOST_VERSION='1.5';
 const plugins=new Map(),adapters=new Map(),loadedModules=new Set(),moduleErrors=new Map();
 let selectedId=null,manifestModules=[],uiTimer=null,moduleLoadChain=Promise.resolve(),reloadCounter=0;
 const SESSION_TOKEN=Date.now().toString(36);
@@ -96,6 +96,8 @@ function lifecycleContext(plugin,target){
     width:Number(adapter?.width)||0,height:Number(adapter?.height)||0,paletteSize:Number(adapter?.paletteSize)||0,
     primaryColour:()=>Number(adapter?.getPrimaryColour?.()??0),
     template:()=>cloneTemplate(adapter?.getTemplate?.()),
+    hasLayer:name=>adapter?.readLayer?.(String(name)) instanceof Uint8Array,
+    layerInfo:name=>{const key=String(name),base=adapter?.readLayer?.(key);return base instanceof Uint8Array?normaliseLayerInfo(adapter,key,base):null;},
     refreshPreview:()=>adapter?.requestRedraw?.(),
     ui:createUiHelpers(adapter)
   });
@@ -161,7 +163,8 @@ function normaliseGeometry(geometry){
     complete:geometry?.complete===true
   });
 }
-function pixelHelpers(width,height,paletteSize){
+function pixelHelpers(width,height,paletteSize,info={}){
+  const cellWidth=Math.max(1,Number(info.cellWidth)||1),cellHeight=Math.max(1,Number(info.cellHeight)||1);
   function validIndex(index){index=Number(index);if(!Number.isInteger(index)||index<0||index>=paletteSize)throw new Error(`Palette index ${index} is outside 0..${paletteSize-1}.`);return index;}
   function setIndexedPixel(pixels,x,y,index){
     x=Math.round(Number(x));y=Math.round(Number(y));index=validIndex(index);
@@ -174,31 +177,73 @@ function pixelHelpers(width,height,paletteSize){
     for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if((x-cx)*(x-cx)+(y-cy)*(y-cy)<=r2&&setIndexedPixel(pixels,x,y,index))n++;
     return n;
   }
-  return Object.freeze({setIndexedPixel,paintDisc,validIndex,clamp:(v,min,max)=>Math.max(min,Math.min(max,v))});
+  function screenToLayer(x,y){
+    x=Math.floor(Number(x)/cellWidth);y=Math.floor(Number(y)/cellHeight);
+    return Number.isFinite(x)&&Number.isFinite(y)&&x>=0&&y>=0&&x<width&&y<height?Object.freeze({x,y}):null;
+  }
+  function layerToScreen(x,y){
+    x=Math.round(Number(x));y=Math.round(Number(y));
+    return Number.isFinite(x)&&Number.isFinite(y)&&x>=0&&y>=0&&x<width&&y<height?Object.freeze({x:x*cellWidth,y:y*cellHeight,width:cellWidth,height:cellHeight}):null;
+  }
+  function setAtScreen(pixels,x,y,index){const p=screenToLayer(x,y);return p?setIndexedPixel(pixels,p.x,p.y,index):false;}
+  return Object.freeze({setIndexedPixel,paintDisc,validIndex,screenToLayer,layerToScreen,setAtScreen,clamp:(v,min,max)=>Math.max(min,Math.min(max,v))});
 }
-function validateLayer(adapter,name,pixels,base){
+function normaliseToolState(value){
+  const q=value&&typeof value==='object'?value:{};
+  return Object.freeze({
+    brushSize:Math.max(1,Math.round(Number(q.brushSize)||1)),
+    brushShape:String(q.brushShape||'square'),
+    hatched:q.hatched===true
+  });
+}
+function normaliseLayerInfo(adapter,name,base){
+  const raw=typeof adapter.layerInfo==='function'?(adapter.layerInfo(name)||{}):{};
+  let width=Math.round(Number(raw.width)),height=Math.round(Number(raw.height));
+  if(!(width>0&&height>0)){
+    const aw=Math.round(Number(adapter.width)),ah=Math.round(Number(adapter.height));
+    if(aw>0&&ah>0&&aw*ah===base.length){width=aw;height=ah;}
+    else{width=base.length;height=1;}
+  }
+  if(width*height!==base.length)throw new Error(`${name}: logical layer dimensions ${width}×${height} do not match ${base.length} values.`);
+  const paletteSize=Math.max(1,Math.round(Number(raw.paletteSize)||Number(adapter.paletteSize)||256));
+  return Object.freeze({
+    name:String(name),width,height,paletteSize,
+    kind:String(raw.kind||'indexed'),
+    screenWidth:Math.max(1,Math.round(Number(raw.screenWidth)||width)),
+    screenHeight:Math.max(1,Math.round(Number(raw.screenHeight)||height)),
+    cellWidth:Math.max(1,Number(raw.cellWidth)||1),
+    cellHeight:Math.max(1,Number(raw.cellHeight)||1)
+  });
+}
+function validateLayer(adapter,name,pixels,base,info=null){
   if(!(pixels instanceof Uint8Array))pixels=Uint8Array.from(pixels||[]);
-  if(pixels.length!==base.length)throw new Error(`${name}: plugin returned ${pixels.length} pixels; expected ${base.length}.`);
-  if(typeof adapter.validateLayer==='function')adapter.validateLayer(name,pixels,base);
+  if(pixels.length!==base.length)throw new Error(`${name}: plugin returned ${pixels.length} values; expected ${base.length}.`);
+  if(typeof adapter.validateLayer==='function')adapter.validateLayer(name,pixels,base,info);
   return pixels;
 }
 function runPlugin(target,geometry,phase){
   const plugin=selected(),adapter=adapterFor(target);
   if(!plugin||!adapter||!plugin.supportedModes.includes(target))return null;
   const g=normaliseGeometry(geometry);if(!plugin.supportedTools.includes(g.tool))return null;
-  const baseLayers={},workingLayers={};
+  const baseLayers={},workingLayers={},layerInfos={},layerHelpers={};
   for(const name of plugin.layers){
     const base=adapter.readLayer(name);if(!(base instanceof Uint8Array))throw new Error(`${plugin.name}: logical layer "${name}" is unavailable in ${target}.`);
     baseLayers[name]=base.slice();workingLayers[name]=base.slice();
+    layerInfos[name]=normaliseLayerInfo(adapter,name,base);
+    layerHelpers[name]=pixelHelpers(layerInfos[name].width,layerInfos[name].height,layerInfos[name].paletteSize,layerInfos[name]);
   }
-  const helpers=pixelHelpers(Number(adapter.width)||0,Number(adapter.height)||0,Number(adapter.paletteSize)||256);
+  const primaryLayer=Object.prototype.hasOwnProperty.call(layerHelpers,'backdrop')?'backdrop':plugin.layers[0];
+  const helpers=layerHelpers[primaryLayer]||pixelHelpers(Number(adapter.width)||0,Number(adapter.height)||0,Number(adapter.paletteSize)||256);
   const ctx={
     apiVersion:API_VERSION,phase,target,plugin,geometry:g,
     width:Number(adapter.width)||0,height:Number(adapter.height)||0,paletteSize:Number(adapter.paletteSize)||0,
     primaryColour:Number(adapter.getPrimaryColour?.()??0),
+    toolState:normaliseToolState(adapter.getToolState?.()),
     template:cloneTemplate(adapter.getTemplate?.()),
     layer(name){name=String(name);if(!Object.prototype.hasOwnProperty.call(workingLayers,name))throw new Error(`${plugin.name}: undeclared layer "${name}".`);return workingLayers[name];},
     baseLayer(name){name=String(name);if(!Object.prototype.hasOwnProperty.call(baseLayers,name))throw new Error(`${plugin.name}: undeclared layer "${name}".`);return baseLayers[name].slice();},
+    layerInfo(name){name=String(name);if(!Object.prototype.hasOwnProperty.call(layerInfos,name))throw new Error(`${plugin.name}: undeclared layer "${name}".`);return layerInfos[name];},
+    helpersFor(name){name=String(name);if(!Object.prototype.hasOwnProperty.call(layerHelpers,name))throw new Error(`${plugin.name}: undeclared layer "${name}".`);return layerHelpers[name];},
     paletteRgb:index=>adapter.paletteRgb?.(index)||null,
     paletteWord:index=>adapter.paletteWord?.(index)??null,
     helpers
@@ -211,7 +256,7 @@ function runPlugin(target,geometry,phase){
     if(!Object.prototype.hasOwnProperty.call(workingLayers,name))throw new Error(`${plugin.name}: returned undeclared layer "${name}".`);
     workingLayers[name]=Uint8Array.from(pixels);
   }
-  for(const name of Object.keys(workingLayers))workingLayers[name]=validateLayer(adapter,name,workingLayers[name],baseLayers[name]);
+  for(const name of Object.keys(workingLayers))workingLayers[name]=validateLayer(adapter,name,workingLayers[name],baseLayers[name],layerInfos[name]);
   return {plugin,geometry:g,baseLayers,workingLayers,message:String(returned?.message||`${plugin.name} committed.`)};
 }
 function previewGeometry(target,geometry,options={}){

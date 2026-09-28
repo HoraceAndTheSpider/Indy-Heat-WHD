@@ -9,7 +9,7 @@ const {
   stampOpaqueRasterBrushPoints,patternFillOpaqueRasterBrush,stampBrushMaskPoints,patternFillBrushMask,transformRasterBrush,
   encodeBrushFile,decodeBrushFile,BRUSH_VERSION,DRAW_TOOL_DEFS
 }=B;
-const W=D.TRACK_WIDTH,H=D.TRACK_HEIGHT,PALETTE_SIZE=32;
+const W=D.TRACK_WIDTH,H=D.TRACK_HEIGHT,PALETTE_SIZE=32,SURFACE_W=160,SURFACE_H=112,SURFACE_BYTES=0x1180;
 const $=id=>document.getElementById(id);
 let drawTool='freehand',captureMode=null,gesture=null,hover=null,brush=null,activeLibraryId=null,paintColour=1,transparencyPickArmed=false;
 const undoBySource=new Map(),baselineBySource=new Map(),brushTransparencyBySource=new Map();
@@ -31,12 +31,18 @@ function capturedModels(){const out=[],seen=new Set();for(const m of [C.coreMode
 function resourceAt(offset=0){const b=baseId();if(b==null)return null;for(const model of capturedModels()){try{const r=model.getResource(b+Number(offset||0));if(r)return r;}catch(_e){}}return null;}
 function currentResource(){return resourceAt(0);}
 function currentForegroundResource(){return resourceAt(1);}
+function currentSurfaceResource(){return resourceAt(2);}
 function currentPixels(){const r=currentResource();return r?D.decodeTrackPlanar(r.data):null;}
 function currentForegroundPixels(){const r=currentForegroundResource();if(!r||typeof T.decode1bpp!=='function')return null;const q=T.decode1bpp(r.data,W,H,0);return q instanceof Uint8Array?q:Uint8Array.from(q||[]);}
+function surfaceOffset(resource=currentSurfaceResource()){return resource?Math.max(0,resource.data.length-SURFACE_BYTES):0;}
+function currentSurfacePixels(){const r=currentSurfaceResource();if(!r||typeof T.decodeSurface2bpp!=='function')return null;const q=T.decodeSurface2bpp(r.data,surfaceOffset(r)),cells=q?.cells;return cells instanceof Uint8Array?cells.slice():Uint8Array.from(cells||[]);}
 function syncResourceOffsetBytes(offset,bytes,minLength=0){const b=baseId();if(b==null||!bytes)return 0;let n=0;for(const model of capturedModels()){try{const r=model.getResource(b+Number(offset||0));if(r&&r.data.length>=minLength){r.data.set(bytes.subarray(0,Math.min(r.data.length,bytes.length)),0);n++;}}catch(_e){}}return n;}
 function syncResourceBytes(bytes){return syncResourceOffsetBytes(0,bytes,D.TRACK_BYTES);}
 function syncForegroundResourceBytes(bytes){return syncResourceOffsetBytes(1,bytes,Math.ceil(W/8)*H);}
+function syncSurfaceResourceBytes(bytes){return syncResourceOffsetBytes(2,bytes,SURFACE_BYTES);}
 function encodeForegroundPixels(pixels,templateBytes=null){if(!(pixels instanceof Uint8Array)||pixels.length!==W*H)throw new Error(`Foreground layer must contain ${W*H} pixels.`);const rowBytes=Math.ceil(W/8),need=rowBytes*H,out=templateBytes?Uint8Array.from(templateBytes):new Uint8Array(need);if(out.length<need)throw new Error(`Foreground resource is only ${out.length} bytes; expected at least ${need}.`);for(let y=0;y<H;y++)for(let xb=0;xb<rowBytes;xb++){let value=0;const x0=xb*8;for(let bit=0;bit<8;bit++)if(pixels[y*W+x0+bit])value|=0x80>>>bit;out[y*rowBytes+xb]=value;}return out;}
+function encodeSurfacePixels(cells,templateBytes=null){if(!(cells instanceof Uint8Array)||cells.length!==SURFACE_W*SURFACE_H)throw new Error(`Surface layer must contain ${SURFACE_W*SURFACE_H} cells.`);const resource=currentSurfaceResource(),out=templateBytes?Uint8Array.from(templateBytes):new Uint8Array(resource?.data?.length||SURFACE_BYTES),offset=Math.max(0,out.length-SURFACE_BYTES);if(out.length<SURFACE_BYTES)throw new Error(`Surface resource is only ${out.length} bytes; expected at least ${SURFACE_BYTES}.`);for(let y=0;y<SURFACE_H;y++)for(let x=0;x<SURFACE_W;x++)L.setSurfaceCell(out,x,y,cells[y*SURFACE_W+x],offset,SURFACE_W,SURFACE_H);return out;}
+function arraysEqual(a,b){if(!a||!b||a.length!==b.length)return false;for(let i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true;}
 function refreshSelectedTrack(){const sel=$('trackSelect');if(sel){sel.dispatchEvent(new Event('change',{bubbles:true}));return true;}try{return !!root.IndyHeatEditorBridge?.refreshSelectedTrack?.();}catch(_e){return false;}}
 function requestCoreRender(){const opacity=$('backgroundOpacity');if(opacity){opacity.dispatchEvent(new Event('input',{bubbles:true}));return true;}return false;}
 function previewPixels(pixels){
@@ -52,10 +58,30 @@ function writePixels(pixels){
 }
 function syncLiveFromResource(){const pixels=currentPixels();if(pixels)previewPixels(pixels);}
 function sourceUndo(){const k=sourceKey();if(!undoBySource.has(k))undoBySource.set(k,[]);return undoBySource.get(k);}
-function cloneUndoEntry(value){if(value instanceof Uint8Array)return Uint8Array.from(value);if(value&&typeof value==='object')return {backdrop:value.backdrop?Uint8Array.from(value.backdrop):null,foreground:value.foreground?Uint8Array.from(value.foreground):null,label:String(value.label||'Special Function')};return null;}
+function cloneUndoEntry(value){
+  if(value instanceof Uint8Array)return Uint8Array.from(value);
+  if(!value||typeof value!=='object')return null;
+  const source=value.layers&&typeof value.layers==='object'?value.layers:{backdrop:value.backdrop,foreground:value.foreground,surface:value.surface},layers={};
+  for(const [name,bytes] of Object.entries(source))if(bytes)layers[name]=Uint8Array.from(bytes);
+  return Object.keys(layers).length?{layers,label:String(value.label||'Special Function')}:null;
+}
 function pushUndo(value){const item=cloneUndoEntry(value);if(!item)return;const st=sourceUndo();st.push(item);if(st.length>30)st.shift();syncUi();}
 function ensureBaseline(){const k=sourceKey(),r=currentResource();if(k&&r&&!baselineBySource.has(k))baselineBySource.set(k,r.data.slice(0,D.TRACK_BYTES));}
-function undoPaint(){const prev=sourceUndo().pop();if(!prev)return;try{if(prev instanceof Uint8Array){syncResourceBytes(prev);previewPixels(D.decodeTrackPlanar(prev));setState('Backdrop edit undone.');}else{if(prev.backdrop){syncResourceBytes(prev.backdrop);previewPixels(D.decodeTrackPlanar(prev.backdrop));}if(prev.foreground)syncForegroundResourceBytes(prev.foreground);refreshSelectedTrack();setState(`${prev.label||'Special Function'} edit undone${prev.foreground?' · Backdrop + Foreground':''}.`);}syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}}
+function undoPaint(){
+  const prev=sourceUndo().pop();if(!prev)return;
+  try{
+    if(prev instanceof Uint8Array){syncResourceBytes(prev);previewPixels(D.decodeTrackPlanar(prev));setState('Backdrop edit undone.');}
+    else{
+      const layers=prev.layers||{},restored=[];let refresh=false;
+      if(layers.backdrop){syncResourceBytes(layers.backdrop);restored.push('Backdrop');}
+      if(layers.foreground){syncForegroundResourceBytes(layers.foreground);restored.push('Foreground');refresh=true;}
+      if(layers.surface){syncSurfaceResourceBytes(layers.surface);restored.push('Surface');refresh=true;}
+      if(refresh)refreshSelectedTrack();else if(layers.backdrop)previewPixels(D.decodeTrackPlanar(layers.backdrop));
+      setState(`${prev.label||'Special Function'} edit undone${restored.length?` · ${restored.join(' + ')}`:''}.`);
+    }
+    syncUi();
+  }catch(err){setState(`ERROR: ${err.message}`,true);}
+}
 function restoreLoaded(){const k=sourceKey(),bytes=baselineBySource.get(k);if(!bytes)return;try{pushUndo(currentResource().data.slice(0,D.TRACK_BYTES));syncResourceBytes(bytes);previewPixels(D.decodeTrackPlanar(bytes));setState('Backdrop restored to the circuit state loaded into this editor session.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}}
 
 function paletteInfo(){
@@ -88,6 +114,7 @@ function paletteRecords(){const info=paletteInfo();return Array.from({length:PAL
 function configurePaletteControl(){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(!host||!PC)return false;return PC.configure(host,{records:paletteRecords,legacyDataKey:'backdropColour',primary:()=>paintColour,secondary:brushTransparencyIndex,primaryTarget:()=>transparencyPickArmed?'secondary':'primary',onPrimary:setPaintColour,onSecondary:setTransparencyIndex,secondaryTitle:'brush transparency index · right-click to keep/set',stencil:true});}
 function applyStencil(basePixels,outPixels){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;return host&&PC?.applyStencilPixels?PC.applyStencilPixels(host,basePixels,outPixels):outPixels;}
 function applyForegroundStencil(baseForeground,proposedForeground,backdropBase){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(!host||!PC?.stencilActive?.(host)||!PC?.stencilBlocked)return proposedForeground;const out=Uint8Array.from(proposedForeground);for(let i=0;i<out.length;i++)if(PC.stencilBlocked(host,backdropBase[i]))out[i]=baseForeground[i];return out;}
+function applySurfaceStencil(baseSurface,proposedSurface,backdropBase){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(!host||!PC?.stencilActive?.(host)||!PC?.stencilBlocked)return proposedSurface;const out=Uint8Array.from(proposedSurface);for(let cy=0;cy<SURFACE_H;cy++)for(let cx=0;cx<SURFACE_W;cx++){const i=cy*SURFACE_W+cx;if(out[i]===baseSurface[i])continue;let blocked=false;for(let dy=0;dy<2&&!blocked;dy++)for(let dx=0;dx<2;dx++){const px=cx*2+dx,py=cy*2+dy;if(py<H&&PC.stencilBlocked(host,backdropBase[py*W+px])){blocked=true;break;}}if(blocked)out[i]=baseSurface[i];}return out;}
 function renderPalette(){const info=paletteInfo();configurePaletteControl();const src=$('backdropPaletteSource');if(src)src.textContent=info.sourceLabel||'verified Indy Heat race palette';syncTransparencyUi();}
 function renderPaletteSelection(){const host=$('backdropPaintPalette'),PC=root.IndyHeatPaletteControl;if(host&&PC)PC.render(host);}
 function syncUi(){
@@ -189,6 +216,39 @@ function drawOverlay(){const c=overlayCanvas();if(!c)return;const ctx=c.getConte
 function drawLibraryThumbnail(canvas,entry){const b=entry?.brush,ctx=canvas?.getContext?.('2d');if(!b||!ctx)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;const scale=Math.max(1,Math.floor(Math.min((canvas.width-4)/b.width,(canvas.height-4)/b.height))),ox=Math.floor((canvas.width-b.width*scale)/2),oy=Math.floor((canvas.height-b.height*scale)/2);for(let y=0;y<b.height;y++)for(let x=0;x<b.width;x++){const v=b.pixels[y*b.width+x];if(v===b.transparent)continue;const c=paletteRgb(v);ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.fillRect(ox+x*scale,oy+y*scale,scale,scale);}}
 function renderBrushLibrary(){const host=$('backdropBrushLibraryList');if(!host)return;const entries=Library.list({target:'backdrop'});host.innerHTML='';host.classList.toggle('empty',!entries.length);if(!entries.length){const m=document.createElement('div');m.className='muted emptyBrushLibrary';m.textContent='No Backdrop pre-made brushes installed yet.';host.appendChild(m);}for(const entry of entries){const b=document.createElement('button');b.type='button';b.dataset.backdropLibraryId=entry.id;b.title=`${entry.name} · ${entry.brush.width}×${entry.brush.height} · ${entry.source}`;b.innerHTML='<canvas width="34" height="26" aria-hidden="true"></canvas><span></span>';b.querySelector('span').textContent=entry.name;b.addEventListener('click',()=>activateLibraryBrush(entry.id));host.appendChild(b);drawLibraryThumbnail(b.querySelector('canvas'),entry);}const count=$('backdropBrushLibraryCount');if(count)count.textContent=String(entries.length);syncUi();}
 
+function drawSpecialLayerPreview(layers,baseLayers){
+  const canvas=overlayCanvas(),ctx=canvas?.getContext?.('2d');if(!canvas||!ctx)return false;
+  const sx=canvas.width/W,sy=canvas.height/H,backdropBase=baseLayers?.backdrop||currentPixels();
+  let drew=false;
+  const foreground=layers?.foreground,foregroundBase=baseLayers?.foreground;
+  if(foreground&&foregroundBase&&backdropBase){
+    const effective=applyForegroundStencil(foregroundBase,foreground,backdropBase);
+    ctx.save();
+    for(let i=0;i<effective.length;i++){
+      if(effective[i]===foregroundBase[i])continue;
+      const x=i%W,y=(i/W)|0;
+      ctx.fillStyle=effective[i]?'rgba(245,189,79,.68)':'rgba(18,22,28,.70)';
+      ctx.fillRect(x*sx,y*sy,Math.max(1,sx),Math.max(1,sy));drew=true;
+    }
+    ctx.restore();
+  }
+  const surface=layers?.surface,surfaceBase=baseLayers?.surface;
+  if(surface&&surfaceBase&&backdropBase){
+    const effective=applySurfaceStencil(surfaceBase,surface,backdropBase),colours=['rgba(255,255,255,.46)','rgba(220,69,69,.62)','rgba(94,212,108,.62)','rgba(74,121,232,.62)'];
+    ctx.save();
+    const cw=2*sx,ch=2*sy;
+    for(let i=0;i<effective.length;i++){
+      if(effective[i]===surfaceBase[i])continue;
+      const cx=i%SURFACE_W,cy=(i/SURFACE_W)|0;
+      ctx.fillStyle=colours[effective[i]]||'rgba(255,255,255,.52)';
+      ctx.fillRect(cx*cw,cy*ch,Math.max(1,cw),Math.max(1,ch));drew=true;
+    }
+    ctx.restore();
+  }
+  return drew;
+}
+function clearSpecialLayerPreview(){const c=overlayCanvas(),ctx=c?.getContext?.('2d');if(!c||!ctx)return false;ctx.clearRect(0,0,c.width,c.height);return true;}
+
 function specialTemplate(){
   if(!brush)return null;
   const entry=activeLibraryId?Library.get(activeLibraryId):null;
@@ -201,47 +261,64 @@ function installSpecialFunctionsAdapter(){
     getTool:()=>drawTool,
     setTool:tool=>selectDrawTool(tool),
     getPrimaryColour:()=>paintColour,
+    getToolState:()=>({brushSize:brushSize(),brushShape:'square',hatched:false}),
     getTemplate:specialTemplate,
     paletteRgb,paletteWord,
+    layerInfo(name){
+      if(name==='backdrop')return {width:W,height:H,paletteSize:PALETTE_SIZE,kind:'indexed',screenWidth:W,screenHeight:H,cellWidth:1,cellHeight:1};
+      if(name==='foreground')return {width:W,height:H,paletteSize:2,kind:'binary',screenWidth:W,screenHeight:H,cellWidth:1,cellHeight:1};
+      if(name==='surface')return {width:SURFACE_W,height:SURFACE_H,paletteSize:4,kind:'class',screenWidth:W,screenHeight:224,cellWidth:2,cellHeight:2};
+      return null;
+    },
     readLayer(name){
       if(name==='backdrop'){const pixels=currentPixels();return pixels?pixels.slice():null;}
       if(name==='foreground'){const pixels=currentForegroundPixels();return pixels?pixels.slice():null;}
+      if(name==='surface'){const cells=currentSurfacePixels();return cells?cells.slice():null;}
       return null;
     },
     validateLayer(name,pixels){
       if(name==='backdrop'){for(const v of pixels)if(v>=PALETTE_SIZE)throw new Error(`Backdrop palette index ${v} is outside 0..${PALETTE_SIZE-1}.`);return;}
       if(name==='foreground'){for(const v of pixels)if(v!==0&&v!==1)throw new Error(`Foreground value ${v} is outside 0/1.`);return;}
+      if(name==='surface'){for(const v of pixels)if(v>3)throw new Error(`Surface class ${v} is outside 0..3.`);return;}
       throw new Error(`Unsupported logical layer ${name}.`);
     },
     previewLayers(layers,{baseLayers}={}){
-      const proposed=layers?.backdrop,base=baseLayers?.backdrop||currentPixels();
-      if(proposed&&base)previewPixels(applyStencil(base,proposed));
-      return !!(proposed||layers?.foreground);
+      const backdrop=layers?.backdrop,backdropBase=baseLayers?.backdrop||currentPixels();
+      if(backdrop&&backdropBase)previewPixels(applyStencil(backdropBase,backdrop));
+      drawSpecialLayerPreview(layers,baseLayers||{});
+      return !!(layers?.backdrop||layers?.foreground||layers?.surface);
     },
     commitLayers(layers,{baseLayers,historyToken,message,plugin}={}){
-      const backdropProposed=layers?.backdrop||null,foregroundProposed=layers?.foreground||null;
-      const backdropBase=baseLayers?.backdrop||currentPixels(),foregroundBase=baseLayers?.foreground||currentForegroundPixels();
-      const backdropResource=currentResource(),foregroundResource=currentForegroundResource();
-      if(backdropProposed&&(!backdropBase||!backdropResource))return false;
-      if(foregroundProposed&&(!foregroundBase||!foregroundResource))return false;
-      const before={
-        backdrop:backdropProposed?(historyToken||backdropResource.data.slice(0,D.TRACK_BYTES)):null,
-        foreground:foregroundProposed?foregroundResource.data.slice():null,
-        label:plugin?.name||'Special Function'
-      };
+      const backdropBase=baseLayers?.backdrop||currentPixels(),foregroundBase=baseLayers?.foreground||currentForegroundPixels(),surfaceBase=baseLayers?.surface||currentSurfacePixels();
+      const proposed={};
+      if(layers?.backdrop&&backdropBase)proposed.backdrop=applyStencil(backdropBase,layers.backdrop);
+      if(layers?.foreground&&foregroundBase&&backdropBase)proposed.foreground=applyForegroundStencil(foregroundBase,layers.foreground,backdropBase);
+      if(layers?.surface&&surfaceBase&&backdropBase)proposed.surface=applySurfaceStencil(surfaceBase,layers.surface,backdropBase);
+      const bases={backdrop:backdropBase,foreground:foregroundBase,surface:surfaceBase},changed=Object.keys(proposed).filter(name=>bases[name]&&!arraysEqual(proposed[name],bases[name]));
+      if(!changed.length){gesture=null;hover=null;setState(message||'Special Function made no changes.');syncUi();drawOverlay();return true;}
+      const resources={backdrop:currentResource(),foreground:currentForegroundResource(),surface:currentSurfaceResource()};
+      for(const name of changed)if(!resources[name]){setState(`ERROR: ${name} logical layer is unavailable.`,true);return false;}
+      const before={layers:{},label:plugin?.name||'Special Function'};
+      for(const name of changed){
+        if(name==='backdrop')before.layers.backdrop=historyToken||resources.backdrop.data.slice(0,D.TRACK_BYTES);
+        else before.layers[name]=resources[name].data.slice();
+      }
       try{
-        if(backdropProposed){const out=applyStencil(backdropBase,backdropProposed);writePixels(out);}
-        if(foregroundProposed){
-          const out=applyForegroundStencil(foregroundBase,foregroundProposed,backdropBase||currentPixels());
-          const bytes=encodeForegroundPixels(out,foregroundResource.data);
+        if(changed.includes('backdrop'))writePixels(proposed.backdrop);
+        if(changed.includes('foreground')){
+          const bytes=encodeForegroundPixels(proposed.foreground,resources.foreground.data);
           if(!syncForegroundResourceBytes(bytes))throw new Error('No active editor model accepted the foreground edit.');
         }
+        if(changed.includes('surface')){
+          const bytes=encodeSurfacePixels(proposed.surface,resources.surface.data);
+          if(!syncSurfaceResourceBytes(bytes))throw new Error('No active editor model accepted the surface edit.');
+        }
         pushUndo(before);gesture=null;hover=null;
-        if(foregroundProposed)refreshSelectedTrack();
+        if(changed.some(name=>name!=='backdrop'))refreshSelectedTrack();
         setState(message||'Special Function committed.');syncUi();drawOverlay();return true;
       }catch(err){setState(`ERROR: ${err.message}`,true);return false;}
     },
-    clearPreview(){syncLiveFromResource();return true;},
+    clearPreview(){syncLiveFromResource();clearSpecialLayerPreview();return true;},
     setStatus:setState,
     requestRedraw:drawOverlay,
     onSelectionChanged(plugin){captureMode=null;gesture=null;hover=null;if(plugin){if(!plugin.supportedTools.includes(drawTool)&&plugin.supportedTools.length)drawTool=plugin.supportedTools[0];setState(`${plugin.name} active · ${plugin.supportedTools.map(toolLabel).join(' / ')}.`);}else setState('Special Function off. Normal Backdrop drawing restored.');syncUi();drawOverlay();}
