@@ -4,9 +4,14 @@
 /* Water Special Function.
  *
  * Procedural water derived from the supplied Indy Heat water brush reference.
- * Light water is based on palette index 15 with 16/17 edge highlights.
- * Dark water is based on palette index 14 with the reference 12/15 edge family.
- * Deep water steps one shade darker to index 13 with a 12/14 edge family.
+ * The three main styles select the body/base water family only:
+ *   Light = base 15
+ *   Dark  = base 14
+ *   Deep  = base 13
+ *
+ * Edge treatment is now separate and consistent:
+ *   Light edges = shoreline transitions toward lighter blues.
+ *   Dark edges  = shoreline transitions toward darker blues.
  *
  * Area tools shade the complete generated shoreline. Pencil/Line/Curve inherit
  * the existing Backdrop brush size; optional Single edge shades only the left
@@ -14,20 +19,24 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.1';
-const settings={style:'light',edgeGradient:4,edgeDither:65,singleEdge:false};
+const VERSION='0.1.2';
+const settings={style:'light',edgeTone:'light',edgeGradient:4,edgeDither:65,singleEdge:false};
 let generation=1;
 
-const LIGHT_BASE=15;
-const DARK_BASE=14;
-const DEEP_BASE=13;
-const LIGHT_EDGE=Object.freeze({mid:16,bright:17});
-const DARK_EDGE=Object.freeze({dark:12,highlight:15});
-const DEEP_EDGE=Object.freeze({dark:12,highlight:14});
+const BASES=Object.freeze({light:15,dark:14,deep:13});
 const EDGE_STOPS=Object.freeze({
-  light:Object.freeze([LIGHT_EDGE.bright,LIGHT_EDGE.mid,LIGHT_BASE]),
-  dark:Object.freeze([DARK_EDGE.dark,DARK_EDGE.highlight,DARK_BASE]),
-  deep:Object.freeze([DEEP_EDGE.dark,DEEP_EDGE.highlight,DEEP_BASE])
+  light:Object.freeze({
+    light:Object.freeze([17,16,15]),
+    dark:Object.freeze([12,13,14,15])
+  }),
+  dark:Object.freeze({
+    light:Object.freeze([17,16,15,14]),
+    dark:Object.freeze([12,13,14])
+  }),
+  deep:Object.freeze({
+    light:Object.freeze([17,16,15,14,13]),
+    dark:Object.freeze([12,13])
+  })
 });
 
 function mix32(value){
@@ -128,8 +137,6 @@ function edgeSeeds(mask,w,h,geometry,singleEdge){
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
     const i=y*w+x;if(!boundary[i])continue;
     const q=nearestPathSide(points,x,y);
-    // Canvas Y grows downwards. Positive cross is the visible right-hand side;
-    // negative cross is visible left. Single-edge mode deliberately keeps left.
     if(q.side<0&&!q.endCap)seeds[i]=1;
   }
   return seeds;
@@ -149,19 +156,23 @@ function inwardDistances(mask,seeds,w,h,radius,geometry,singleEdge){
   }
   return dist;
 }
-function edgeStops(style){return EDGE_STOPS[style]||EDGE_STOPS.light;}
-function edgeColour(style,seed,x,y,d,width,dither){
-  const base=style==='deep'?DEEP_BASE:style==='dark'?DARK_BASE:LIGHT_BASE;
+function normaliseStyle(style){return style==='deep'?'deep':style==='dark'?'dark':'light';}
+function normaliseEdgeTone(tone){return tone==='dark'?'dark':'light';}
+function baseForStyle(style){return BASES[normaliseStyle(style)]||BASES.light;}
+function edgeStops(style,edgeTone){
+  const s=EDGE_STOPS[normaliseStyle(style)]||EDGE_STOPS.light;
+  return s[normaliseEdgeTone(edgeTone)]||s.light;
+}
+function edgeColour(style,edgeTone,seed,x,y,d,width,dither){
+  const base=baseForStyle(style);
   if(width<=0||d<=0||d>width)return base;
-  const stops=edgeStops(style),last=stops.length-1;
+  const stops=edgeStops(style,edgeTone),last=stops.length-1;
   if(width===1)return stops[0];
   const pos=((d-1)/(width-1))*last;
   const strength=Math.max(0,Math.min(1,Number(dither)||0));
   const jitter=(hashAt(seed,x,y,19)/0xffffffff-.5)*1.35*strength;
   let index=Math.round(pos+jitter);
   index=Math.max(0,Math.min(last,index));
-  // At higher dither settings occasionally borrow a neighbouring band colour.
-  // This keeps the shoreline visibly speckled instead of forming clean contours.
   if(strength>.05){
     const r=hashAt(seed,x,y,23)/0xffffffff;
     const chance=.28*strength;
@@ -172,21 +183,22 @@ function edgeColour(style,seed,x,y,d,width,dither){
 }
 function render(ctx){
   const sourceMask=areaMask(ctx);if(!sourceMask||countMask(sourceMask)<1)return {message:'Water: select or draw an area.'};
-  const style=settings.style==='deep'?'deep':settings.style==='dark'?'dark':'light',base=style==='deep'?DEEP_BASE:style==='dark'?DARK_BASE:LIGHT_BASE,backdrop=ctx.layer('backdrop'),seed=seedForGeometry(ctx.geometry);
+  const style=normaliseStyle(settings.style),edgeTone=normaliseEdgeTone(settings.edgeTone),base=baseForStyle(style),backdrop=ctx.layer('backdrop'),seed=seedForGeometry(ctx.geometry);
   const width=Math.max(0,Math.min(20,Math.round(Number(settings.edgeGradient)||0))),dither=Math.max(0,Math.min(100,Number(settings.edgeDither)||0))/100,single=settings.singleEdge&&isPathTool(ctx.geometry?.tool);
   const seeds=edgeSeeds(sourceMask,ctx.width,ctx.height,ctx.geometry,single),dist=inwardDistances(sourceMask,seeds,ctx.width,ctx.height,width,ctx.geometry,single);
   let pixels=0,edgePixels=0;
   for(let y=0;y<ctx.height;y++)for(let x=0;x<ctx.width;x++){
     const i=y*ctx.width+x;if(!sourceMask[i])continue;let value=base;
-    if(width>0&&dist[i]>0){value=edgeColour(style,seed,x,y,dist[i],width,dither);if(value!==base)edgePixels++;}
+    if(width>0&&dist[i]>0){value=edgeColour(style,edgeTone,seed,x,y,dist[i],width,dither);if(value!==base)edgePixels++;}
     backdrop[i]=value;pixels++;
   }
   if(ctx.phase==='apply')generation++;
-  const styleLabel=style==='deep'?'Deep':style==='dark'?'Dark':'Light',side=single?' · single left edge':'';
-  return {message:`Water committed · ${styleLabel} · ${pixels} px · edge gradient ${width}px · dither ${Math.round(dither*100)}%${side} · ${edgePixels} highlighted px.`};
+  const styleLabel=style==='deep'?'Deep':style==='dark'?'Dark':'Light',toneLabel=edgeTone==='dark'?'Dark edges':'Light edges',side=single?' · single left edge':'';
+  return {message:`Water committed · ${styleLabel} · ${toneLabel} · ${pixels} px · edge gradient ${width}px · dither ${Math.round(dither*100)}%${side} · ${edgePixels} edge px.`};
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Base',value:settings.style,options:[{value:'light',label:'Light'},{value:'dark',label:'Dark'},{value:'deep',label:'Deep'}],onChange:value=>{settings.style=value;}});
+  ctx.ui.select(container,{label:'Edge tone',value:settings.edgeTone,options:[{value:'light',label:'Light'},{value:'dark',label:'Dark'}],onChange:value=>{settings.edgeTone=value;}});
   ctx.ui.slider(container,{label:'Edge gradient',min:0,max:20,step:1,value:settings.edgeGradient,onInput:value=>{settings.edgeGradient=value;}});
   ctx.ui.slider(container,{label:'Edge dither',min:0,max:100,step:5,value:settings.edgeDither,onInput:value=>{settings.edgeDither=value;}});
   ctx.ui.checkbox(container,{label:'Single edge (Pencil/Line/Curve)',checked:settings.singleEdge,onChange:value=>{settings.singleEdge=value;}});
@@ -198,7 +210,7 @@ S.register({
   version:VERSION,
   category:'Scenery',
   status:'prototype',
-  description:'Procedural light/dark/deep water with dithered shoreline gradients following fills, shapes and brush-sized paths.',
+  description:'Procedural light/dark/deep water with independently light or dark shoreline gradients following fills, shapes and brush-sized paths.',
   supportedModes:['backdrop'],
   supportedTools:['freehand','line','curve','rectangle','rectangle-filled','ellipse','ellipse-filled','freeform','fill'],
   layers:['backdrop'],

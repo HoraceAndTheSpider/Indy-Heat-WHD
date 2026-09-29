@@ -6,6 +6,8 @@ const modules=Object.freeze([
     'pit-wall.js',
     'random-people.js',
     'rough-track.js',
+    'trees-foliage.js',
+    'tyre-wall.js',
     'water.js'
   ]);
 root.INDYHEAT_SPECIAL_FUNCTION_MODULES=modules;

@@ -17,7 +17,7 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.0';
+const VERSION='0.1.1';
 const settings={density:35};
 let generation=1;
 
@@ -57,7 +57,12 @@ function darkerIndex(ctx,index){
     if(!group.includes(index))continue;
     const ordered=[...group].sort((a,b)=>luminance(paletteRgb(ctx,a))-luminance(paletteRgb(ctx,b))||a-b);
     const position=ordered.indexOf(index);
-    if(position<=0)return index;
+    if(position<=0){
+      /* The source is already the darkest member of its colour family.
+         Use the track palette's dark grey (index 4) so the shadow remains
+         visible instead of disappearing into the ground colour. */
+      return group===SHADE_GROUPS[0]?index:4;
+    }
     return ordered[Math.max(0,position-1)];
   }
 
@@ -187,7 +192,7 @@ function mountControls(container,ctx){
 }
 
 const PeopleTools=Object.freeze({
-  VERSION:'1.0',SKIN_TONES,LEG_TONES,TORSO_TONES,darkerIndex,personFootprint,paintPerson,rectangleMask,ellipseMask,scatterArea,scatterPencil
+  VERSION:'1.1',SKIN_TONES,LEG_TONES,TORSO_TONES,darkerIndex,personFootprint,paintPerson,rectangleMask,ellipseMask,scatterArea,scatterPencil
 });
 root.IndyHeatPeopleTools=PeopleTools;
 
