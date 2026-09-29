@@ -403,7 +403,9 @@ const CIRCUIT_BRUSH_COLOUR_LABELS=Object.freeze({
   green:'Green',grey:'Grey',blue:'Blue',yellow:'Yellow',red:'Red'
 });
 
+function backdropScratchActive(){return !!root.IndyHeatBackdropWorkspace?.isScratchActive?.();}
 function placementSourceKey(){
+  if(backdropScratchActive())return 'scratch';
   const sel=document.getElementById('trackSelect'),o=sel?.selectedOptions?.[0];
   if(o?.dataset?.indyheatPackageKey)return `package:${o.dataset.indyheatPackageKey}`;
   const retail=o?.dataset?.indyheatRetailIndex;
@@ -658,6 +660,7 @@ function cloneLayerSnapshot(bytes){return bytes?Uint8Array.from(bytes):null;}
 function syncHistoryUi(){
   const undo=document.getElementById('backdropPaintUndo');
   const redo=document.getElementById('backdropPaintRedo');
+  if(backdropScratchActive()){root.IndyHeatBackdropWorkspace?.syncUi?.();if(redo)redo.disabled=true;return;}
   if(undo)undo.disabled=!editHistory().length;
   if(redo)redo.disabled=!redoHistory().length;
 }
@@ -729,20 +732,21 @@ function installPlacementCommitHooks(){
   const stamp=B.stampOpaqueRasterBrushPoints.bind(B);
   B.stampOpaqueRasterBrushPoints=function(pixels,width,height,brush,points,...rest){
     const result=stamp(pixels,width,height,brush,points,...rest);
-    if(width===320&&height===256)beginOrExtendPending(brush,points,{mode:'stamp'});
+    if(width===320&&height===256&&!backdropScratchActive())beginOrExtendPending(brush,points,{mode:'stamp'});
     return result;
   };
 
   const pattern=B.patternFillOpaqueRasterBrush.bind(B);
   B.patternFillOpaqueRasterBrush=function(pixels,width,height,brush,points,anchorX,anchorY,...rest){
     const result=pattern(pixels,width,height,brush,points,anchorX,anchorY,...rest);
-    if(width===320&&height===256)beginOrExtendPending(brush,points,{mode:'pattern',anchorX,anchorY});
+    if(width===320&&height===256&&!backdropScratchActive())beginOrExtendPending(brush,points,{mode:'pattern',anchorX,anchorY});
     return result;
   };
 
   const encode=D.encodeTrackPlanar.bind(D);
   D.encodeTrackPlanar=function(pixels,...rest){
-    const before=currentBackdropSnapshot(),encoded=encode(pixels,...rest),pending=pendingPlacement;
+    const encoded=encode(pixels,...rest);if(backdropScratchActive())return encoded;
+    const before=currentBackdropSnapshot(),pending=pendingPlacement;
     let historyRecord=null;
     const backdropActive=!!document.getElementById('layerEditBackdrop')?.classList.contains('active');
     if(backdropActive&&before&&!byteArraysEqual(before,encoded)){
@@ -768,6 +772,7 @@ function restoreEditRecord(record,toAfter){
   return true;
 }
 function undoEdit(e){
+  if(backdropScratchActive())return;
   e?.preventDefault?.();e?.stopImmediatePropagation?.();
   const stack=editHistory(),record=stack[stack.length-1];
   if(!record){syncHistoryUi();return;}
@@ -782,6 +787,7 @@ function undoEdit(e){
   if(state)state.textContent='Backdrop edit undone.';
 }
 function redoEdit(e){
+  if(backdropScratchActive())return;
   e?.preventDefault?.();e?.stopImmediatePropagation?.();
   const redo=redoHistory(),record=redo[redo.length-1];
   if(!record){syncHistoryUi();return;}
@@ -796,6 +802,7 @@ function redoEdit(e){
   if(state)state.textContent='Backdrop edit redone.';
 }
 function captureExternalBackdropChange(){
+  if(backdropScratchActive())return;
   const before=currentBackdropSnapshot();
   if(!before)return;
   const beforeForeground=snapshotLayer(1),beforeSurface=snapshotLayer(2),sourceKey=placementSourceKey();
@@ -820,6 +827,7 @@ const placementApi=Object.freeze({
   clear:clearPlacementEntry,
   activeEntry:activePlacementEntry,
   syncUi:syncPlacementUi,
+  syncHistory:syncHistoryUi,
   cancelPending:()=>{pendingPlacement=null;}
 });
 root.IndyHeatMultiLayerPlacement=placementApi;
@@ -834,6 +842,7 @@ function installPlacementListeners(){
     const button=e.target.closest?.('[data-backdrop-library-id]');
     if(!button)return;
     const entry=get(button.dataset.backdropLibraryId);
+    if(backdropScratchActive()){clearPlacementEntry();return;}
     if(entry?.placement?.position?.mode==='fixed'){
       clearPlacementEntry();
       let result=null,error=null;
@@ -1172,7 +1181,7 @@ function miniLayout(canvas){
 function magicContextFromEvent(mode,e){
   if(mode==='backdrop'){
     if(e.target?.id!=='view')return null;
-    const D=root.IndyHeatTrackBackdropTools,before=currentBackdropSnapshot();
+    const D=root.IndyHeatTrackBackdropTools,before=backdropScratchActive()?root.IndyHeatBackdropWorkspace?.scratchBackdropBytes?.():currentBackdropSnapshot();
     if(!D?.decodeTrackPlanar||!before)throw new Error('Backdrop data is unavailable.');
     const r=e.target.getBoundingClientRect();
     return {
