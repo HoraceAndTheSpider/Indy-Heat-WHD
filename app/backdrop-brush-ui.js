@@ -19,9 +19,16 @@ const scratchResources=Object.freeze({
   surface:{data:new Uint8Array(SURFACE_BYTES)}
 });
 let scratchActive=false;
+const externalOverlay={
+  image:null,name:'External overlay',width:0,height:0,
+  baseWidth:0,baseHeight:0,
+  offsetX:0,offsetY:0,scaleX:100,scaleY:100,
+  rotation:0,tilt:0
+};
 let paletteCacheModel=null,paletteCache=null;
 function scratchResourceAt(offset=0){return Number(offset)===1?scratchResources.foreground:Number(offset)===2?scratchResources.surface:scratchResources.backdrop;}
 function scratchCanvas(){return $('backdropScratchCanvas');}
+function externalOverlayCanvas(){return $('backdropExternalOverlayCanvas');}
 function scratchWorkspaceActive(){return scratchActive;}
 function cancelPlacementPending(){try{root.IndyHeatMultiLayerPlacement?.cancelPending?.();}catch(_e){}}
 function specialActive(){return !!SF?.isActiveFor?.('backdrop');}
@@ -103,8 +110,28 @@ function undoPaint(){
     syncUi();
   }catch(err){setState(`ERROR: ${err.message}`,true);}
 }
+function scratchTransparencyIndex(){
+  if(!brushTransparencyBySource.has('scratch'))brushTransparencyBySource.set('scratch',0);
+  return brushTransparencyBySource.get('scratch');
+}
+function clearScratchPage(){
+  try{
+    const previous={layers:{backdrop:scratchResources.backdrop.data.slice(),foreground:scratchResources.foreground.data.slice(),surface:scratchResources.surface.data.slice()},label:'Scratch'};
+    const fillIndex=scratchTransparencyIndex(),pixels=new Uint8Array(W*H);pixels.fill(fillIndex);
+    const encoded=D.encodeTrackPlanar(pixels);
+    if(!arraysEqual(previous.layers.backdrop,encoded)||previous.layers.foreground.some(Boolean)||previous.layers.surface.some(Boolean)){
+      const item=cloneUndoEntry(previous);if(item){if(!undoBySource.has('scratch'))undoBySource.set('scratch',[]);const st=undoBySource.get('scratch');st.push(item);if(st.length>30)st.shift();}
+    }
+    scratchResources.backdrop.data.set(encoded);
+    scratchResources.foreground.data.fill(0);
+    scratchResources.surface.data.fill(0);
+    if(scratchActive)previewPixels(pixels);else renderScratchPixels(pixels);
+    setState(`Scratch page cleared to transparency index ${fillIndex}.`);
+    syncUi();return true;
+  }catch(err){setState(`ERROR: ${err.message}`,true);return false;}
+}
 function restoreLoaded(){
-  if(scratchActive){try{pushUndo({layers:{backdrop:scratchResources.backdrop.data.slice(),foreground:scratchResources.foreground.data.slice(),surface:scratchResources.surface.data.slice()},label:'Scratch'});scratchResources.backdrop.data.fill(0);scratchResources.foreground.data.fill(0);scratchResources.surface.data.fill(0);previewPixels(D.decodeTrackPlanar(scratchResources.backdrop.data));setState('Scratch page cleared.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}return;}
+  if(scratchActive){clearScratchPage();return;}
   const k=sourceKey(),bytes=baselineBySource.get(k);if(!bytes)return;try{pushUndo(currentResource().data.slice(0,D.TRACK_BYTES));syncResourceBytes(bytes);previewPixels(D.decodeTrackPlanar(bytes));setState('Backdrop restored to the circuit state loaded into this editor session.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}
 }
 
@@ -118,13 +145,186 @@ function paletteInfo(){
 function paletteRgb(i){return paletteInfo()?.rgb?.[Number(i)]||[255,0,255];}
 function paletteWord(i){return Number(paletteInfo()?.words?.[Number(i)]??T.VERIFIED_TRACK_PALETTE_WORDS?.[Number(i)]??0);}
 function syncScratchVisibility(){const c=scratchCanvas();if(!c)return;c.classList.toggle('active',scratchActive&&backdropActive());if(scratchActive&&backdropActive())renderScratchPixels(currentPixels());}
-function setScratchActive(on){scratchActive=!!on;gesture=null;hover=null;cancelPlacementPending();if(scratchActive){ensureBaseline();renderScratchPixels(currentPixels());setState('Scratch page active · edits stay independent of the selected circuit.');}else{requestCoreRender();setState('Track Backdrop active. Scratch content retained for this editor session.');}syncScratchVisibility();syncUi();root.IndyHeatMultiLayerPlacement?.syncHistory?.();drawOverlay();}
-function ensureScratchButton(){
-  let button=$('backdropScratchToggle');if(!button){button=document.createElement('button');button.id='backdropScratchToggle';button.type='button';button.textContent='Scratch';button.setAttribute('aria-pressed','false');button.title='Toggle the persistent 320×256 Backdrop scratch page. Scratch content is retained while switching circuits.';button.addEventListener('click',()=>setScratchActive(!scratchActive));}
-  const target=$('backdropFileButtonGrid')||$('backdropPaintActions');if(target&&button.parentElement!==target)target.appendChild(button);
-  const old=$('backdropPaintActions');if(old&&old!==target&&!old.children.length)old.remove();syncUi();return !!target;
+function syncExternalOverlayVisibility(){const c=externalOverlayCanvas();if(!c)return;c.classList.toggle('active',!!externalOverlay.image&&backdropActive());}
+function externalTiltGeometry(width,height,tilt){
+  const signed=clamp((Number(tilt)||0)/100,-1,1),amount=Math.abs(signed);
+  const heightFactor=1-.45*amount,edgeFactor=Math.max(.20,1-.80*amount);
+  return {
+    signed,amount,
+    height:Math.max(1,height*heightFactor),
+    topWidth:Math.max(1,width*(signed>=0?edgeFactor:1)),
+    bottomWidth:Math.max(1,width*(signed>=0?1:edgeFactor))
+  };
 }
-function scheduleScratchButton(){let tries=0;const tick=()=>{const ready=ensureScratchButton();if(ready&&$('backdropFileButtonGrid'))return;if(++tries<80)setTimeout(tick,50);};tick();}
+function overlayDisplaySize(){
+  const bw=Math.max(1,Number(externalOverlay.baseWidth)||Number(externalOverlay.width)||1),bh=Math.max(1,Number(externalOverlay.baseHeight)||Number(externalOverlay.height)||1);
+  return {width:bw*Math.max(.01,Number(externalOverlay.scaleX)||100)/100,height:bh*Math.max(.01,Number(externalOverlay.scaleY)||100)/100};
+}
+function externalProjectiveSourceY(t,topWidth,bottomWidth){
+  t=clamp(Number(t)||0,0,1);
+  const top=Math.max(.0001,Number(topWidth)||.0001),bottom=Math.max(.0001,Number(bottomWidth)||.0001);
+  const ratio=top/bottom,den=ratio-t*(ratio-1);
+  return den>1e-9?clamp(t/den,0,1):t;
+}
+function drawExternalTransformed(ctx,image,sourceW,sourceH,cx,cy,width,height,rotation,tilt,alpha=1){
+  if(!ctx||!image||!(sourceW>0&&sourceH>0&&width>0&&height>0))return false;
+  const g=externalTiltGeometry(width,height,tilt),steps=Math.max(1,Math.min(Math.ceil(g.height),512));
+  ctx.save();ctx.globalAlpha=clamp(Number(alpha)||0,0,1);ctx.imageSmoothingEnabled=true;ctx.translate(cx,cy);ctx.rotate((Number(rotation)||0)*Math.PI/180);
+  for(let n=0;n<steps;n++){
+    const t0=n/steps,t1=(n+1)/steps,tm=(t0+t1)/2;
+    const dw=g.topWidth+(g.bottomWidth-g.topWidth)*tm;
+    const dy=-g.height/2+t0*g.height,dh=(t1-t0)*g.height;
+    const sy0=externalProjectiveSourceY(t0,g.topWidth,g.bottomWidth)*sourceH;
+    const sy1=externalProjectiveSourceY(t1,g.topWidth,g.bottomWidth)*sourceH;
+    const sh=Math.max(.001,sy1-sy0);
+    ctx.drawImage(image,0,sy0,sourceW,sh,-dw/2,dy,dw,dh+.55);
+  }
+  ctx.restore();return true;
+}
+function externalOverlayOpacity(){return clamp(Number($('opacity')?.value??55)/100,0,1);}
+function renderExternalOverlay(){
+  const c=externalOverlayCanvas();if(!c)return false;
+  if(c.width!==W)c.width=W;if(c.height!==H)c.height=H;
+  const ctx=c.getContext('2d');ctx.clearRect(0,0,W,H);
+  if(!externalOverlay.image){syncExternalOverlayVisibility();return false;}
+  const iw=Math.max(1,Number(externalOverlay.width)||Number(externalOverlay.image.width)||1),ih=Math.max(1,Number(externalOverlay.height)||Number(externalOverlay.image.height)||1),size=overlayDisplaySize();
+  drawExternalTransformed(ctx,externalOverlay.image,iw,ih,W/2+Number(externalOverlay.offsetX||0),H/2+Number(externalOverlay.offsetY||0),size.width,size.height,externalOverlay.rotation,externalOverlay.tilt,externalOverlayOpacity());
+  syncExternalOverlayVisibility();return true;
+}
+function setScratchActive(on){
+  scratchActive=!!on;gesture=null;hover=null;cancelPlacementPending();
+  if(scratchActive){ensureBaseline();renderScratchPixels(currentPixels());setState('Scratch page active · edits stay independent of the selected circuit.');}
+  else{requestCoreRender();setState('Track Backdrop active. Scratch content retained for this editor session.');}
+  syncScratchVisibility();syncExternalOverlayVisibility();syncUi();root.IndyHeatMultiLayerPlacement?.syncHistory?.();drawOverlay();
+}
+function closeExternalImage(){try{externalOverlay.image?.close?.();}catch(_e){}externalOverlay.image=null;externalOverlay.width=0;externalOverlay.height=0;externalOverlay.baseWidth=0;externalOverlay.baseHeight=0;}
+function resetExternalTransform(){externalOverlay.offsetX=0;externalOverlay.offsetY=0;externalOverlay.scaleX=100;externalOverlay.scaleY=100;externalOverlay.rotation=0;externalOverlay.tilt=0;}
+function externalTransformedBounds(width,height,rotation,tilt){
+  const g=externalTiltGeometry(width,height,tilt),a=(Number(rotation)||0)*Math.PI/180,c=Math.cos(a),s=Math.sin(a);
+  const corners=[
+    [-g.topWidth/2,-g.height/2],[g.topWidth/2,-g.height/2],
+    [-g.bottomWidth/2,g.height/2],[g.bottomWidth/2,g.height/2]
+  ].map(([x,y])=>({x:x*c-y*s,y:x*s+y*c}));
+  const rawMinX=Math.min(...corners.map(p=>p.x)),rawMaxX=Math.max(...corners.map(p=>p.x));
+  const rawMinY=Math.min(...corners.map(p=>p.y)),rawMaxY=Math.max(...corners.map(p=>p.y));
+  const minX=Math.floor(rawMinX),maxX=Math.ceil(rawMaxX),minY=Math.floor(rawMinY),maxY=Math.ceil(rawMaxY);
+  return {
+    minX,maxX,minY,maxY,
+    width:Math.max(1,maxX-minX),height:Math.max(1,maxY-minY),
+    centreX:(minX+maxX)/2,centreY:(minY+maxY)/2,
+    originX:-minX,originY:-minY
+  };
+}
+function realignExternalOverlay(){
+  if(!externalOverlay.image)return false;
+  try{
+    const iw=Math.max(1,Number(externalOverlay.width)||Number(externalOverlay.image.width)||1);
+    const ih=Math.max(1,Number(externalOverlay.height)||Number(externalOverlay.image.height)||1);
+    const size=overlayDisplaySize(),rotation=Number(externalOverlay.rotation)||0,tilt=Number(externalOverlay.tilt)||0;
+    const bounds=externalTransformedBounds(size.width,size.height,rotation,tilt);
+    if(bounds.width>4096||bounds.height>4096)throw new Error('Re-aligned overlay would be too large; reduce Width/Height first.');
+    const baked=document.createElement('canvas');baked.width=bounds.width;baked.height=bounds.height;
+    const bctx=baked.getContext('2d');bctx.clearRect(0,0,bounds.width,bounds.height);
+    drawExternalTransformed(bctx,externalOverlay.image,iw,ih,bounds.originX,bounds.originY,size.width,size.height,rotation,tilt,1);
+    const previous=externalOverlay.image;
+    externalOverlay.image=baked;externalOverlay.width=bounds.width;externalOverlay.height=bounds.height;
+    externalOverlay.baseWidth=bounds.width;externalOverlay.baseHeight=bounds.height;
+    externalOverlay.offsetX+=bounds.centreX;externalOverlay.offsetY+=bounds.centreY;
+    externalOverlay.scaleX=100;externalOverlay.scaleY=100;externalOverlay.rotation=0;externalOverlay.tilt=0;
+    try{previous?.close?.();}catch(_e){}
+    renderExternalOverlay();syncReferenceLayerUi();
+    setState(`External overlay re-aligned · new baseline ${bounds.width}×${bounds.height} uses the full axis-aligned transformed bounds.`);
+    return true;
+  }catch(err){setState(`ERROR: ${err.message}`,true);return false;}
+}
+async function decodeExternalImage(file){
+  if(typeof createImageBitmap==='function'){
+    try{const bitmap=await createImageBitmap(file);return {image:bitmap,width:bitmap.width,height:bitmap.height};}catch(_e){}
+  }
+  const url=URL.createObjectURL(file);
+  try{
+    const image=await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('The selected image could not be decoded by this browser.'));img.src=url;});
+    return {image,width:image.naturalWidth||image.width,height:image.naturalHeight||image.height};
+  }finally{URL.revokeObjectURL(url);}
+}
+async function loadExternalOverlay(file){
+  if(!file)return false;
+  try{
+    const decoded=await decodeExternalImage(file);closeExternalImage();resetExternalTransform();
+    externalOverlay.image=decoded.image;externalOverlay.width=decoded.width;externalOverlay.height=decoded.height;externalOverlay.name=String(file.name||'External overlay');
+    const fit=Math.min(W/Math.max(1,decoded.width),H/Math.max(1,decoded.height));externalOverlay.baseWidth=decoded.width*fit;externalOverlay.baseHeight=decoded.height*fit;
+    renderExternalOverlay();syncReferenceLayerUi();const transformDetails=$('backdropExternalTransformDetails');if(transformDetails)transformDetails.open=true;setState(`External overlay loaded · ${externalOverlay.name} · ${decoded.width}×${decoded.height}.`);return true;
+  }catch(err){setState(`ERROR: ${err.message}`,true);return false;}
+}
+function removeExternalOverlay(){
+  closeExternalImage();externalOverlay.name='External overlay';const c=externalOverlayCanvas();c?.getContext('2d')?.clearRect(0,0,W,H);syncExternalOverlayVisibility();syncReferenceLayerUi();setState('External overlay removed.');
+}
+function syncExternalControl(id,value,suffix=''){
+  const input=$(id),output=$(`${id}Value`);if(input&&document.activeElement!==input)input.value=String(value);if(output)output.textContent=`${value}${suffix}`;
+}
+function syncReferenceLayerUi(){
+  const show=$('backdropScratchToggle');if(show){show.classList.toggle('active',scratchActive);show.setAttribute('aria-pressed',String(scratchActive));show.textContent='Show';}
+  const scratchLabel=$('backdropScratchLabel');if(scratchLabel)scratchLabel.textContent='Scratch';
+  const remove=$('backdropExternalRemove');if(remove)remove.disabled=!externalOverlay.image;
+  const label=$('backdropExternalLabel');if(label){label.textContent=externalOverlay.image?externalOverlay.name:'External Overlay';label.title=externalOverlay.image?externalOverlay.name:'';}
+  const transformDetails=$('backdropExternalTransformDetails');if(transformDetails)transformDetails.hidden=!externalOverlay.image;
+  const controls=$('backdropExternalControls');if(controls)controls.hidden=false;
+  syncExternalControl('backdropExternalOffsetX',externalOverlay.offsetX,'');
+  syncExternalControl('backdropExternalOffsetY',externalOverlay.offsetY,'');
+  syncExternalControl('backdropExternalScaleX',externalOverlay.scaleX,'%');
+  syncExternalControl('backdropExternalScaleY',externalOverlay.scaleY,'%');
+  syncExternalControl('backdropExternalRotation',externalOverlay.rotation,'°');
+  syncExternalControl('backdropExternalTilt',externalOverlay.tilt,'%');
+}
+function bindExternalSlider(id,key,{integer=true}={}){
+  const input=$(id);if(!input||input.dataset.externalBound)return;input.dataset.externalBound='1';
+  input.addEventListener('input',()=>{externalOverlay[key]=integer?Math.round(Number(input.value)||0):Number(input.value)||0;renderExternalOverlay();syncReferenceLayerUi();});
+}
+function ensureExternalTransformUi(){
+  const opacity=$('overlayOpacityControl'),viewSection=opacity?.closest('section');if(!viewSection)return false;
+  let details=$('backdropExternalTransformDetails');
+  if(!details){
+    details=document.createElement('details');details.id='backdropExternalTransformDetails';details.className='smallDetails';details.hidden=true;
+    details.innerHTML=`<summary>External overlay</summary><div id="backdropExternalControls">
+      <label>X offset <input id="backdropExternalOffsetX" type="range" min="-320" max="320" step="1" value="0"><output id="backdropExternalOffsetXValue">0</output></label>
+      <label>Y offset <input id="backdropExternalOffsetY" type="range" min="-256" max="256" step="1" value="0"><output id="backdropExternalOffsetYValue">0</output></label>
+      <label>Width <input id="backdropExternalScaleX" type="range" min="10" max="400" step="1" value="100"><output id="backdropExternalScaleXValue">100%</output></label>
+      <label>Height <input id="backdropExternalScaleY" type="range" min="10" max="400" step="1" value="100"><output id="backdropExternalScaleYValue">100%</output></label>
+      <label class="externalRotateRow"><span>Rotate</span><input id="backdropExternalRotation" type="range" min="0" max="360" step="1" value="0"><output id="backdropExternalRotationValue">0°</output><button id="backdropExternalRealign" type="button" title="Bake the current transform into a new axis-aligned rectangular baseline, including the full rotated outside bounds">Re-align</button></label>
+      <label title="Positive tilt narrows the top, keeps the lower edge wider, and compresses the image height relative to the current re-aligned axes"><span>Tilt</span><input id="backdropExternalTilt" type="range" min="-100" max="100" step="1" value="0"><output id="backdropExternalTiltValue">0%</output></label>
+    </div>`;
+    opacity.insertAdjacentElement('afterend',details);
+    $('backdropExternalRealign')?.addEventListener('click',realignExternalOverlay);
+    bindExternalSlider('backdropExternalOffsetX','offsetX');bindExternalSlider('backdropExternalOffsetY','offsetY');
+    bindExternalSlider('backdropExternalScaleX','scaleX');bindExternalSlider('backdropExternalScaleY','scaleY');
+    bindExternalSlider('backdropExternalRotation','rotation');bindExternalSlider('backdropExternalTilt','tilt');
+  }
+  return true;
+}
+function ensureReferenceLayersUi(){
+  const select=$('trackSelect');if(!select)return false;
+  let details=$('circuitReferenceLayers');
+  if(!details){
+    details=document.createElement('details');details.id='circuitReferenceLayers';details.open=true;
+    details.innerHTML=`<summary>Reference layers</summary><div id="circuitReferenceLayerRows">
+      <div id="backdropScratchRow" class="referenceLayerRow"><span class="circuitCompareSlot">S</span><button id="backdropScratchClear" type="button">Clear</button><button id="backdropScratchToggle" type="button" aria-pressed="false">Show</button><span id="backdropScratchLabel" class="circuitCompareLabel">Scratch</span></div>
+      <div id="backdropExternalRow" class="referenceLayerRow"><span class="circuitCompareSlot">E</span><button id="backdropExternalAdd" type="button">Add</button><button id="backdropExternalRemove" type="button" disabled>Remove</button><span id="backdropExternalLabel" class="circuitCompareLabel">External Overlay</span></div>
+      <input id="backdropExternalInput" type="file" accept="image/*" hidden>
+    </div>`;
+    select.insertAdjacentElement('afterend',details);
+    $('backdropScratchClear')?.addEventListener('click',clearScratchPage);
+    $('backdropScratchToggle')?.addEventListener('click',()=>setScratchActive(!scratchActive));
+    $('backdropExternalAdd')?.addEventListener('click',()=>$('backdropExternalInput')?.click());
+    $('backdropExternalRemove')?.addEventListener('click',removeExternalOverlay);
+    $('backdropExternalInput')?.addEventListener('change',async e=>{const f=e.target.files?.[0];if(f)await loadExternalOverlay(f);e.target.value='';});
+  }
+  ensureExternalTransformUi();
+  const rows=$('circuitReferenceLayerRows'),compare=$('circuitCompareAB'),scratchRow=$('backdropScratchRow');
+  if(rows&&compare&&compare.parentElement!==rows)rows.insertBefore(compare,scratchRow||rows.firstChild);
+  $('backdropScratchToggle')?.classList.toggle('active',scratchActive);
+  syncReferenceLayerUi();return !!details;
+}
+function scheduleReferenceLayersUi(){let tries=0;const tick=()=>{ensureReferenceLayersUi();if(++tries<240&&(!$('circuitCompareAB')||!$('circuitReferenceLayers')))setTimeout(tick,50);};tick();}
 async function importScratchIff(file){
   if(!file)return false;
   try{const bytes=new Uint8Array(await file.arrayBuffer()),result=D.convertIlbmToTrack(bytes,T.VERIFIED_TRACK_PALETTE_WORDS,{remap:$('backdropRemap')?.checked!==false});pushUndo(scratchResources.backdrop.data.slice());scratchResources.backdrop.data.set(result.trackBytes.subarray(0,D.TRACK_BYTES));previewPixels(result.pixels);setState(`Scratch imported ${file.name} · ${result.sourceWidth}×${result.sourceHeight}${result.remapped?' · palette remapped':''}.`);syncUi();return true;}catch(err){setState(`ERROR: ${err.message}`,true);return false;}
@@ -169,9 +369,9 @@ function syncUi(){
   const clear=$('backdropBrushClear'),save=$('backdropBrushSave');if(clear)clear.disabled=!brush;if(save)save.disabled=!brush;document.querySelectorAll('[data-backdrop-brush-rotate],[data-backdrop-brush-flip]').forEach(b=>b.disabled=!brush);
   const dims=$('backdropBrushDims');if(dims)dims.textContent=brush?`${brush.width}×${brush.height} · ${brush.visiblePixels} visible px · hotspot ${brush.hotspotX},${brush.hotspotY}`:'Standard pixel brush';
   const undo=$('backdropPaintUndo');if(undo)undo.disabled=!sourceUndo().length;
-  const restore=$('backdropPaintRestore');if(restore){restore.textContent=scratchActive?'Clear scratch':'Restore loaded';restore.disabled=scratchActive?false:!baselineBySource.has(sourceKey());}
+  const restore=$('backdropPaintRestore');if(restore){restore.textContent='Restore loaded';restore.disabled=scratchActive||!baselineBySource.has(sourceKey());restore.title=scratchActive?'Scratch is cleared from the Reference layers group on the left.':'';}
   const raw=$('backdropExport');if(raw){raw.disabled=scratchActive;raw.title=scratchActive?'Raw .bin export is disabled for the Scratch page. Switch back to the track to export the runtime Backdrop resource.':'';}
-  const toggle=$('backdropScratchToggle');if(toggle){toggle.classList.toggle('active',scratchActive);toggle.setAttribute('aria-pressed',String(scratchActive));toggle.textContent='Scratch';}
+  syncReferenceLayerUi();
 }
 function selectDrawTool(tool){if(!DRAW_TOOL_DEFS.some(d=>d.value===tool))return;if(specialActive()&&tool!=='pick'&&!specialToolAllowed(tool)){setState(`${toolLabel(tool)} is not available for the active Special Function.`);return;}drawTool=tool;captureMode=null;gesture=null;hover=null;syncUi();if(tool==='curve')setState('Curve: click start, click end, then move and click to set the bend.');else if(tool==='freeform')setState('Free-form: click vertices; close within 3px of the start to commit.');else if(tool==='fill'&&brush)setState('Custom brush Fill tiles the brush through the connected colour area.');else setState(brush?`${toolLabel(tool)} with custom ${brush.width}×${brush.height} brush.`:`${toolLabel(tool)} with standard pixel brush.`);drawOverlay();}
 function selectCapture(mode){captureMode=mode;gesture=null;hover=null;syncUi();if(mode==='polygon')setState('Multi-edge capture: click successive vertices; close near the start to capture. Start with right-click to capture and remove the selected pixels.');else if(mode==='trace')setState('Hold left to trace a freeform capture lasso; hold right to capture and remove the selected pixels.');else setState(`Drag a ${mode==='ellipse'?'ellipse':'rectangle'} capture area; use right mouse to capture and remove the selected pixels.`);drawOverlay();}
@@ -376,8 +576,10 @@ function installSpecialFunctionsAdapter(){
 root.IndyHeatBackdropWorkspace=Object.freeze({
   isScratchActive:scratchWorkspaceActive,
   setScratchActive,
+  clearScratch:clearScratchPage,
   syncUi,
-  scratchBackdropBytes:()=>scratchResources.backdrop.data.slice()
+  scratchBackdropBytes:()=>scratchResources.backdrop.data.slice(),
+  hasExternalOverlay:()=>!!externalOverlay.image
 });
 
 function installUi(){
@@ -385,7 +587,9 @@ function installUi(){
   const style=document.createElement('style');style.textContent=`
     #backdropScratchCanvas{position:absolute;inset:0;z-index:7;display:none;width:100%;height:100%;image-rendering:pixelated;pointer-events:none;user-select:none}
     #backdropScratchCanvas.active{display:block}
-    #backdropPaintCanvas{position:absolute;inset:0;z-index:8;display:none;image-rendering:pixelated;touch-action:none;user-select:none}
+    #backdropExternalOverlayCanvas{position:absolute;inset:0;z-index:8;display:none;width:100%;height:100%;pointer-events:none;user-select:none}
+    #backdropExternalOverlayCanvas.active{display:block}
+    #backdropPaintCanvas{position:absolute;inset:0;z-index:9;display:none;image-rendering:pixelated;touch-action:none;user-select:none}
     #backdropPaintCanvas.active{display:block;pointer-events:none}
     #backdropPaintTools{margin-top:8px;padding-top:7px;border-top:1px solid #343b46}
     #backdropPaintTools .backdropDrawToolGrid,#backdropPaintTools .backdropCaptureGrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:6px 0}
@@ -403,9 +607,27 @@ function installUi(){
     #backdropBrushLibraryList button{display:grid;grid-template-columns:38px minmax(0,1fr);gap:4px;align-items:center;min-width:0;padding:3px 4px;text-align:left;font-size:10px}#backdropBrushLibraryList button.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}#backdropBrushLibraryList canvas{image-rendering:pixelated;background:#161a21;border:1px solid #3f4652}#backdropBrushLibraryList span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #backdropBrushDims{font-size:10px;color:#9aa1ad;margin:3px 0 5px}#backdropPaintState{font-size:10px;line-height:1.35;min-height:27px;margin:4px 0 2px;color:#9aa1ad}#backdropPaintState.bad{color:#ff8585}
     #backdropBrushTransforms{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:5px 0}#backdropBrushTransforms button{min-width:0;padding:5px 2px;font-size:10px}
-    #backdropPaintActions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}#backdropPaintActions button{font-size:11px;padding:6px}#backdropExport{grid-column:1/-1}#backdropScratchToggle.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
+    #backdropPaintActions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}#backdropPaintActions button{font-size:11px;padding:6px}#backdropExport{grid-column:1/-1}
+    #circuitReferenceLayers{margin-top:7px;border-top:1px solid #30343d;padding-top:5px}
+    #circuitReferenceLayers>summary{cursor:pointer;font-size:11px;color:#d7dce5;user-select:none}
+    #circuitReferenceLayerRows{display:grid;gap:4px;margin-top:5px}
+    #circuitReferenceLayerRows #circuitCompareAB{margin-top:0}
+    .referenceLayerRow{display:grid;grid-template-columns:18px 42px 46px minmax(0,1fr);gap:4px;align-items:center}
+    .referenceLayerRow .circuitCompareSlot{font-weight:700;text-align:center;color:#d7dce5}
+    .referenceLayerRow button{min-width:0;padding:4px 5px;font-size:10px}
+    #backdropScratchToggle.active{border-color:#d6b54a;background:#5a4a1c;box-shadow:inset 0 0 0 1px #d6b54a}
+    #backdropExternalTransformDetails{margin-top:6px}
+    #backdropExternalTransformDetails>summary{cursor:pointer;font-size:11px;color:#d7dce5;user-select:none}
+    #backdropExternalControls{display:grid;gap:4px;padding:6px 0 2px 8px}
+    #backdropExternalControls[hidden]{display:none}
+    #backdropExternalControls label{display:grid;grid-template-columns:54px minmax(0,1fr) 42px;gap:5px;align-items:center;margin:0;font-size:10px;color:#9fa7b4}
+    #backdropExternalControls label.externalRotateRow{grid-template-columns:54px minmax(0,1fr) 42px 56px}
+    #backdropExternalControls label.externalRotateRow button{min-width:0;padding:3px 5px;font-size:9px}
+    #backdropExternalControls input[type=range]{width:100%;min-width:0;margin:0}
+    #backdropExternalControls output{text-align:right;font:10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#d7dce5}
   `;document.head.appendChild(style);
   const scratch=document.createElement('canvas');scratch.id='backdropScratchCanvas';scratch.width=W;scratch.height=H;stack.appendChild(scratch);
+  const external=document.createElement('canvas');external.id='backdropExternalOverlayCanvas';external.width=W;external.height=H;stack.appendChild(external);
   const canvas=document.createElement('canvas');canvas.id='backdropPaintCanvas';stack.appendChild(canvas);
   const tools=document.createElement('div');tools.id='backdropPaintTools';tools.innerHTML=`
     <div class="toolGroupTitle">Tool</div><div class="backdropDrawToolGrid">${DRAW_TOOL_DEFS.map(d=>`<button type="button" data-backdrop-draw-tool="${d.value}" title="${d.title}" aria-label="${d.title}">${d.icon}</button>`).join('')}</div>
@@ -421,13 +643,13 @@ function installUi(){
   tools.querySelectorAll('[data-backdrop-draw-tool]').forEach(b=>b.addEventListener('click',()=>selectDrawTool(b.dataset.backdropDrawTool)));tools.querySelectorAll('[data-backdrop-brush-capture]').forEach(b=>b.addEventListener('click',()=>selectCapture(b.dataset.backdropBrushCapture)));
   tools.querySelectorAll('[data-backdrop-brush-rotate]').forEach(b=>b.addEventListener('click',()=>rotateBrush(Number(b.dataset.backdropBrushRotate))));tools.querySelectorAll('[data-backdrop-brush-flip]').forEach(b=>b.addEventListener('click',()=>flipBrush(b.dataset.backdropBrushFlip)));
   $('backdropSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));$('backdropBrushClear')?.addEventListener('click',clearBrush);$('backdropBrushSave')?.addEventListener('click',downloadBrush);$('backdropBrushLoad')?.addEventListener('click',()=>$('backdropBrushLoadInput')?.click());$('backdropBrushLoadInput')?.addEventListener('change',async e=>{const f=e.target.files?.[0];if(f)await loadBrushFile(f);e.target.value='';});$('backdropBrushSize')?.addEventListener('input',syncUi);$('backdropPaintUndo')?.addEventListener('click',undoPaint);$('backdropPaintRestore')?.addEventListener('click',restoreLoaded);
-  $('backdropIffInput')?.addEventListener('change',handleBackdropIffInput,true);document.addEventListener('click',handleScratchFileClick,true);scheduleScratchButton();
+  $('backdropIffInput')?.addEventListener('change',handleBackdropIffInput,true);document.addEventListener('click',handleScratchFileClick,true);$('opacity')?.addEventListener('input',renderExternalOverlay);scheduleReferenceLayersUi();
   view.addEventListener('pointerdown',pointerDown,true);view.addEventListener('pointermove',pointerMove,true);view.addEventListener('pointerup',pointerUp,true);view.addEventListener('pointercancel',pointerCancel,true);view.addEventListener('pointerleave',()=>{if(backdropActive()&&!gesture){hover=null;drawOverlay();}},true);view.addEventListener('contextmenu',e=>{if(backdropActive()){e.preventDefault();e.stopImmediatePropagation();}},true);
-  $('layerEditBackdrop')?.addEventListener('click',()=>setTimeout(()=>{ensureBaseline();canvas.classList.toggle('active',backdropActive());syncScratchVisibility();syncOverlaySize();renderPalette();renderBrushLibrary();syncUi();},0));$('layerModeButtons')?.addEventListener('click',e=>{if(e.target?.id!=='layerEditBackdrop')setTimeout(()=>{canvas.classList.toggle('active',backdropActive());syncScratchVisibility();drawOverlay();},0);},true);
+  $('layerEditBackdrop')?.addEventListener('click',()=>setTimeout(()=>{ensureBaseline();canvas.classList.toggle('active',backdropActive());syncScratchVisibility();syncExternalOverlayVisibility();syncOverlaySize();renderPalette();renderBrushLibrary();syncUi();},0));$('layerModeButtons')?.addEventListener('click',e=>{if(e.target?.id!=='layerEditBackdrop')setTimeout(()=>{canvas.classList.toggle('active',backdropActive());syncScratchVisibility();syncExternalOverlayVisibility();drawOverlay();},0);},true);
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{paletteCacheModel=null;paletteCache=null;gesture=null;hover=null;captureMode=null;transparencyPickArmed=false;ensureBaseline();renderPalette();if(scratchActive)renderScratchPixels(currentPixels());syncUi();drawOverlay();},0));
   document.addEventListener('indyheat-circuit-content-refreshed',()=>setTimeout(()=>{paletteCacheModel=null;paletteCache=null;ensureBaseline();renderPalette();if(scratchActive)renderScratchPixels(currentPixels());syncUi();drawOverlay();},0));document.addEventListener('indyheat-race-setup-capture',()=>setTimeout(()=>{paletteCacheModel=null;paletteCache=null;ensureBaseline();renderPalette();if(scratchActive)renderScratchPixels(currentPixels());syncUi();},0));
   root.addEventListener?.('indyheat-brush-library-changed',renderBrushLibrary);if(typeof ResizeObserver!=='undefined')new ResizeObserver(syncOverlaySize).observe(view);document.addEventListener('keydown',e=>{if(e.key==='Escape'&&backdropActive()&&gesture){e.preventDefault();cancelGesture();setState('Shape cancelled.');}});
-  ensureBaseline();renderPalette();renderBrushLibrary();installSpecialFunctionsAdapter();if(!specialActive())selectDrawTool('freehand');else syncUi();syncScratchVisibility();syncOverlaySize();return true;
+  ensureBaseline();renderPalette();renderBrushLibrary();installSpecialFunctionsAdapter();if(!specialActive())selectDrawTool('freehand');else syncUi();syncScratchVisibility();syncExternalOverlayVisibility();renderExternalOverlay();syncOverlaySize();return true;
 }
 function boot(){if(installUi())return;let tries=0;const timer=setInterval(()=>{if(installUi()||++tries>240)clearInterval(timer);},50);}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0),{once:true});else setTimeout(boot,0);

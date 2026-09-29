@@ -6,6 +6,7 @@ const modules=Object.freeze([
     'pit-wall.js',
     'random-people.js',
     'rough-track.js',
+    'run-off-areas.js',
     'trees-foliage.js',
     'tyre-wall.js',
     'water.js'
