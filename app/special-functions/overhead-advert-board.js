@@ -3,7 +3,7 @@
 
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.4';
+const VERSION='0.1.5';
 const settings={
   family:'red',
   boardHeight:8,
@@ -265,6 +265,50 @@ function paintLeg(ctx,backdrop,foreground,foot,topY,makeForeground){
   }
   return count;
 }
+
+function applyOcclusionMask(ctx,foreground,geo,legAIsBackdrop){
+  const before=foreground.slice();
+  let setCount=0,clearCount=0;
+
+  // Entire banner is driven under.
+  fillPolygon(geo.poly,(x,y)=>{
+    x=Math.round(x);y=Math.round(y);
+    if(!inBounds(ctx.width,ctx.height,x,y))return;
+    const i=y*ctx.width+x;
+    if(foreground[i]!==1){foreground[i]=1;setCount++;}
+  });
+
+  // Nearer support (larger Y foot) is driven under.
+  const nearFoot=legAIsBackdrop?geo.b:geo.a;
+  const nearTop=legAIsBackdrop?geo.br.y:geo.bl.y;
+  for(const x of rectColumns(nearFoot.x,settings.legWidth)){
+    for(let y=Math.min(nearFoot.y,nearTop);y<=Math.max(nearFoot.y,nearTop);y++){
+      if(!inBounds(ctx.width,ctx.height,x,y))continue;
+      const i=y*ctx.width+x;
+      if(foreground[i]!==1){foreground[i]=1;setCount++;}
+    }
+  }
+
+  // Farther support (smaller Y foot) is explicitly background, even where
+  // its visible pixels overlap the banner artwork.
+  const farFoot=legAIsBackdrop?geo.a:geo.b;
+  const farTop=legAIsBackdrop?geo.bl.y:geo.br.y;
+  for(const x of rectColumns(farFoot.x,settings.legWidth)){
+    for(let y=Math.min(farFoot.y,farTop);y<=Math.max(farFoot.y,farTop);y++){
+      if(!inBounds(ctx.width,ctx.height,x,y))continue;
+      const i=y*ctx.width+x;
+      if(foreground[i]!==0){foreground[i]=0;clearCount++;}
+    }
+  }
+
+  let changed=0,active=0;
+  for(let i=0;i<foreground.length;i++){
+    if(foreground[i]!==before[i])changed++;
+    if(foreground[i])active++;
+  }
+  return {setCount,clearCount,changed,active};
+}
+
 function render(ctx){
   const geo=boardGeometry(ctx.geometry);if(!geo)return {message:'Overhead Advert Board: draw a Line.'};
   const backdrop=ctx.layer('backdrop'),foreground=ctx.layer('foreground');
@@ -278,7 +322,10 @@ function render(ctx){
   const legA=paintLeg(ctx,backdrop,foreground,geo.a,geo.bl.y,!legAIsBackdrop);
   const legB=paintLeg(ctx,backdrop,foreground,geo.b,geo.br.y,legAIsBackdrop);
 
-  return {message:`Overhead Advert Board committed · board ${geo.bh}px · legs ${geo.lh}px × ${settings.legWidth}px${settings.shadow?` · ground shadow ${settings.shadowDirection} ${settings.shadowLength}/${settings.shadowDrop}`:''}${settings.fauxText?' · faux text angled with darker family variation':''}.`};
+  // Authoritative final mask pass: banner + near support foreground, far support background.
+  const occ=applyOcclusionMask(ctx,foreground,geo,legAIsBackdrop);
+
+  return {message:`Overhead Advert Board committed · board ${geo.bh}px · legs ${geo.lh}px × ${settings.legWidth}px${settings.shadow?` · ground shadow ${settings.shadowDirection} ${settings.shadowLength}/${settings.shadowDrop}`:''} · Foreground ${occ.active} px (${occ.changed} changed)${settings.fauxText?' · faux text angled with darker family variation':''}.`};
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Board family',value:settings.family,options:FAMILY_OPTIONS,onChange:value=>{settings.family=value;}});
@@ -305,7 +352,7 @@ S.register({
   version:VERSION,
   category:'Scenery',
   status:'prototype',
-  description:'Line-only overhead sponsor board. The drawn line defines the two feet, with variable board height, leg height/width, grey support colour, full edge bevel, optional inner shade, slanted randomized faux text with darker family variation, and a background ground-projected shadow cast from the feet line and supports.',
+  description:'Line-only overhead sponsor board. The drawn line defines the two feet, with variable board height, leg height/width, grey support colour, full edge bevel, optional inner shade, slanted randomized faux text with darker family variation, an explicit banner/near-support foreground mask, far-support background mask, and a ground-projected shadow cast from the feet line and supports.',
   supportedModes:['backdrop'],
   supportedTools:['line'],
   layers:['backdrop','foreground'],
