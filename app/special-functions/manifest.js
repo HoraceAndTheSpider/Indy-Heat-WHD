@@ -3,6 +3,8 @@
 const modules=Object.freeze([
     'alternate-curbs.js',
     'gravel-trap.js',
+    'mesh-fence.js',
+    'overhead-advert-board.js',
     'pit-wall.js',
     'random-people.js',
     'rough-track.js',
