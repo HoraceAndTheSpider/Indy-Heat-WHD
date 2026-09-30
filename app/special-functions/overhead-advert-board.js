@@ -7,6 +7,7 @@ const VERSION='0.1.7';
 const MASK_FOREGROUND=0;
 const MASK_BACKGROUND=1;
 
+
 const settings={
   family:'red',
   boardHeight:8,
