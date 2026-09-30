@@ -1,7 +1,15 @@
 (function(root){
 'use strict';
 
-/* Stable host for isolated procedural editor Special Functions. */
+/* Stable host for isolated procedural editor Special Functions.
+ *
+ * Logical Foreground contract (do not infer/invert this per plugin):
+ *   1 = circuit artwork is in front of cars; cars are driven under it.
+ *   0 = artwork remains behind cars; cars are drawn over it.
+ * Screen Y increases downwards (0 at top, 255 at bottom). Perspective objects
+ * that need a far/background support should therefore normally use 0 for the
+ * support with the smaller foot Y and 1 for the nearer support/banner.
+ */
 const API_VERSION=3;
 const HOST_VERSION='1.5';
 const plugins=new Map(),adapters=new Map(),loadedModules=new Set(),moduleErrors=new Map();

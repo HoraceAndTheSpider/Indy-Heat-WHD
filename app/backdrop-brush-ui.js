@@ -12,7 +12,7 @@ const {
 const W=D.TRACK_WIDTH,H=D.TRACK_HEIGHT,PALETTE_SIZE=32,SURFACE_W=160,SURFACE_H=112,SURFACE_BYTES=0x1180;
 const $=id=>document.getElementById(id);
 let drawTool='freehand',captureMode=null,gesture=null,hover=null,brush=null,activeLibraryId=null,paintColour=1,transparencyPickArmed=false;
-const undoBySource=new Map(),baselineBySource=new Map(),brushTransparencyBySource=new Map();
+const undoBySource=new Map(),redoBySource=new Map(),baselineBySource=new Map(),brushTransparencyBySource=new Map();
 const scratchResources=Object.freeze({
   backdrop:{data:new Uint8Array(D.TRACK_BYTES)},
   foreground:{data:new Uint8Array(Math.ceil(W/8)*H)},
@@ -85,30 +85,86 @@ function writePixels(pixels){
   const bytes=D.encodeTrackPlanar(pixels);if(!syncResourceBytes(bytes))throw new Error(scratchActive?'Scratch page could not accept the Backdrop edit.':'No active editor model accepted the backdrop edit.');previewPixels(pixels);if(scratchActive)cancelPlacementPending();return bytes;
 }
 function syncLiveFromResource(){const pixels=currentPixels();if(pixels)previewPixels(pixels);}
-function sourceUndo(){const k=sourceKey();if(!undoBySource.has(k))undoBySource.set(k,[]);return undoBySource.get(k);}
-function cloneUndoEntry(value){
-  if(value instanceof Uint8Array)return Uint8Array.from(value);
+function sourceHistory(map){const k=sourceKey();if(!map.has(k))map.set(k,[]);return map.get(k);}
+function sourceUndo(){return sourceHistory(undoBySource);}
+function sourceRedo(){return sourceHistory(redoBySource);}
+function rawLayerBytes(name){
+  const resource=name==='backdrop'?currentResource():name==='foreground'?currentForegroundResource():name==='surface'?currentSurfaceResource():null;
+  if(!resource)return null;
+  return name==='backdrop'?resource.data.slice(0,D.TRACK_BYTES):resource.data.slice();
+}
+function cloneLayerMap(source){const out={};for(const [name,bytes] of Object.entries(source||{}))if(bytes)out[name]=Uint8Array.from(bytes);return out;}
+function historyBefore(value){
+  if(value instanceof Uint8Array)return {layers:{backdrop:Uint8Array.from(value)},label:'Backdrop'};
   if(!value||typeof value!=='object')return null;
-  const source=value.layers&&typeof value.layers==='object'?value.layers:{backdrop:value.backdrop,foreground:value.foreground,surface:value.surface},layers={};
-  for(const [name,bytes] of Object.entries(source))if(bytes)layers[name]=Uint8Array.from(bytes);
+  const source=value.layers&&typeof value.layers==='object'?value.layers:{backdrop:value.backdrop,foreground:value.foreground,surface:value.surface};
+  const layers=cloneLayerMap(source);
   return Object.keys(layers).length?{layers,label:String(value.label||'Special Function')}:null;
 }
-function pushUndo(value){const item=cloneUndoEntry(value);if(!item)return;const st=sourceUndo();st.push(item);if(st.length>30)st.shift();syncUi();}
+function buildHistoryRecord(beforeLayers,afterLayers,label='Backdrop'){
+  const before={},after={},names=new Set([...Object.keys(beforeLayers||{}),...Object.keys(afterLayers||{})]);
+  for(const name of names){
+    const b=beforeLayers?.[name],a=afterLayers?.[name];
+    if(!b||!a||arraysEqual(b,a))continue;
+    before[name]=Uint8Array.from(b);after[name]=Uint8Array.from(a);
+  }
+  return Object.keys(before).length?{before:{layers:before},after:{layers:after},label:String(label||'Backdrop')}:null;
+}
+function syncHistoryButtons(){
+  const undo=$('backdropPaintUndo'),redo=$('backdropPaintRedo');
+  if(undo)undo.disabled=!sourceUndo().length;
+  if(redo)redo.disabled=!sourceRedo().length;
+}
+function pushHistoryRecord(record){
+  if(!record)return null;
+  const stack=sourceUndo();stack.push(record);if(stack.length>30)stack.shift();
+  sourceRedo().length=0;syncHistoryButtons();return record;
+}
+function pushUndo(value){
+  const item=historyBefore(value);if(!item)return null;
+  const after={};for(const name of Object.keys(item.layers)){const bytes=rawLayerBytes(name);if(bytes)after[name]=bytes;}
+  return pushHistoryRecord(buildHistoryRecord(item.layers,after,item.label));
+}
+function recordExternalHistory({beforeLayers,afterLayers,label='Backdrop'}={}){
+  return pushHistoryRecord(buildHistoryRecord(beforeLayers,afterLayers,label));
+}
+function augmentLastHistory({beforeLayers,afterLayers,label='Backdrop',matchBackdropBefore=null,matchBackdropAfter=null}={}){
+  const extra=buildHistoryRecord(beforeLayers,afterLayers,label);if(!extra)return null;
+  const stack=sourceUndo(),last=stack[stack.length-1];
+  const canMerge=!!(last&&matchBackdropBefore&&matchBackdropAfter&&last.before?.layers?.backdrop&&last.after?.layers?.backdrop&&arraysEqual(last.before.layers.backdrop,matchBackdropBefore)&&arraysEqual(last.after.layers.backdrop,matchBackdropAfter));
+  if(!canMerge)return pushHistoryRecord(extra);
+  for(const [name,bytes] of Object.entries(extra.before.layers))if(!last.before.layers[name])last.before.layers[name]=Uint8Array.from(bytes);
+  for(const [name,bytes] of Object.entries(extra.after.layers))last.after.layers[name]=Uint8Array.from(bytes);
+  last.label=String(label||last.label||'Backdrop');sourceRedo().length=0;syncHistoryButtons();return last;
+}
+function applyHistoryLayers(layers){
+  const restored=[];let refresh=false,backdrop=false;
+  if(layers?.backdrop){if(!syncResourceBytes(layers.backdrop))throw new Error('Backdrop history could not restore the active resource.');restored.push('Backdrop');backdrop=true;}
+  if(layers?.foreground){if(!syncForegroundResourceBytes(layers.foreground))throw new Error('Foreground history could not restore the active resource.');restored.push('Foreground');refresh=true;}
+  if(layers?.surface){if(!syncSurfaceResourceBytes(layers.surface))throw new Error('Surface history could not restore the active resource.');restored.push('Surface');refresh=true;}
+  if(refresh)refreshSelectedTrack();else if(backdrop)previewPixels(D.decodeTrackPlanar(layers.backdrop));
+  return restored;
+}
 function ensureBaseline(){const k=sourceKey(),r=currentResource();if(k&&r&&!baselineBySource.has(k))baselineBySource.set(k,r.data.slice(0,D.TRACK_BYTES));}
-function undoPaint(){
-  const prev=sourceUndo().pop();if(!prev)return;
+function undoPaint(e){
+  e?.preventDefault?.();e?.stopImmediatePropagation?.();
+  const record=sourceUndo().pop();if(!record){syncHistoryButtons();return false;}
   try{
-    if(prev instanceof Uint8Array){syncResourceBytes(prev);previewPixels(D.decodeTrackPlanar(prev));setState('Backdrop edit undone.');}
-    else{
-      const layers=prev.layers||{},restored=[];let refresh=false;
-      if(layers.backdrop){syncResourceBytes(layers.backdrop);restored.push('Backdrop');}
-      if(layers.foreground){syncForegroundResourceBytes(layers.foreground);restored.push('Foreground');refresh=true;}
-      if(layers.surface){syncSurfaceResourceBytes(layers.surface);restored.push('Surface');refresh=true;}
-      if(refresh)refreshSelectedTrack();else if(layers.backdrop)previewPixels(D.decodeTrackPlanar(layers.backdrop));
-      setState(`${prev.label||'Special Function'} edit undone${restored.length?` · ${restored.join(' + ')}`:''}.`);
-    }
-    syncUi();
-  }catch(err){setState(`ERROR: ${err.message}`,true);}
+    const restored=applyHistoryLayers(record.before?.layers||{});
+    const redo=sourceRedo();redo.push(record);if(redo.length>30)redo.shift();
+    setState(`${record.label||'Backdrop'} edit undone${restored.length?` · ${restored.join(' + ')}`:''}.`);
+    syncUi();syncHistoryButtons();return true;
+  }catch(err){sourceUndo().push(record);setState(`ERROR: ${err.message}`,true);syncHistoryButtons();return false;}
+}
+function redoPaint(e){
+  e?.preventDefault?.();e?.stopImmediatePropagation?.();
+  const record=sourceRedo().pop();if(!record){syncHistoryButtons();return false;}
+  try{
+    const restored=applyHistoryLayers(record.after?.layers||{});
+    const undo=sourceUndo();undo.push(record);if(undo.length>30)undo.shift();
+    setState(`${record.label||'Backdrop'} edit redone${restored.length?` · ${restored.join(' + ')}`:''}.`);
+    syncUi();syncHistoryButtons();return true;
+  }catch(err){sourceRedo().push(record);setState(`ERROR: ${err.message}`,true);syncHistoryButtons();return false;}
 }
 function scratchTransparencyIndex(){
   if(!brushTransparencyBySource.has('scratch'))brushTransparencyBySource.set('scratch',0);
@@ -119,12 +175,11 @@ function clearScratchPage(){
     const previous={layers:{backdrop:scratchResources.backdrop.data.slice(),foreground:scratchResources.foreground.data.slice(),surface:scratchResources.surface.data.slice()},label:'Scratch'};
     const fillIndex=scratchTransparencyIndex(),pixels=new Uint8Array(W*H);pixels.fill(fillIndex);
     const encoded=D.encodeTrackPlanar(pixels);
-    if(!arraysEqual(previous.layers.backdrop,encoded)||previous.layers.foreground.some(Boolean)||previous.layers.surface.some(Boolean)){
-      const item=cloneUndoEntry(previous);if(item){if(!undoBySource.has('scratch'))undoBySource.set('scratch',[]);const st=undoBySource.get('scratch');st.push(item);if(st.length>30)st.shift();}
-    }
+    const changed=!arraysEqual(previous.layers.backdrop,encoded)||previous.layers.foreground.some(Boolean)||previous.layers.surface.some(Boolean);
     scratchResources.backdrop.data.set(encoded);
     scratchResources.foreground.data.fill(0);
     scratchResources.surface.data.fill(0);
+    if(changed)pushUndo(previous);
     if(scratchActive)previewPixels(pixels);else renderScratchPixels(pixels);
     setState(`Scratch page cleared to transparency index ${fillIndex}.`);
     syncUi();return true;
@@ -132,7 +187,7 @@ function clearScratchPage(){
 }
 function restoreLoaded(){
   if(scratchActive){clearScratchPage();return;}
-  const k=sourceKey(),bytes=baselineBySource.get(k);if(!bytes)return;try{pushUndo(currentResource().data.slice(0,D.TRACK_BYTES));syncResourceBytes(bytes);previewPixels(D.decodeTrackPlanar(bytes));setState('Backdrop restored to the circuit state loaded into this editor session.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}
+  const k=sourceKey(),bytes=baselineBySource.get(k);if(!bytes)return;try{const before=currentResource().data.slice(0,D.TRACK_BYTES);syncResourceBytes(bytes);previewPixels(D.decodeTrackPlanar(bytes));pushUndo(before);setState('Backdrop restored to the circuit state loaded into this editor session.');syncUi();}catch(err){setState(`ERROR: ${err.message}`,true);}
 }
 
 function paletteInfo(){
@@ -327,13 +382,13 @@ function ensureReferenceLayersUi(){
 function scheduleReferenceLayersUi(){let tries=0;const tick=()=>{ensureReferenceLayersUi();if(++tries<240&&(!$('circuitCompareAB')||!$('circuitReferenceLayers')))setTimeout(tick,50);};tick();}
 async function importScratchIff(file){
   if(!file)return false;
-  try{const bytes=new Uint8Array(await file.arrayBuffer()),result=D.convertIlbmToTrack(bytes,T.VERIFIED_TRACK_PALETTE_WORDS,{remap:$('backdropRemap')?.checked!==false});pushUndo(scratchResources.backdrop.data.slice());scratchResources.backdrop.data.set(result.trackBytes.subarray(0,D.TRACK_BYTES));previewPixels(result.pixels);setState(`Scratch imported ${file.name} · ${result.sourceWidth}×${result.sourceHeight}${result.remapped?' · palette remapped':''}.`);syncUi();return true;}catch(err){setState(`ERROR: ${err.message}`,true);return false;}
+  try{const bytes=new Uint8Array(await file.arrayBuffer()),result=D.convertIlbmToTrack(bytes,T.VERIFIED_TRACK_PALETTE_WORDS,{remap:$('backdropRemap')?.checked!==false}),before=scratchResources.backdrop.data.slice();scratchResources.backdrop.data.set(result.trackBytes.subarray(0,D.TRACK_BYTES));previewPixels(result.pixels);pushUndo(before);setState(`Scratch imported ${file.name} · ${result.sourceWidth}×${result.sourceHeight}${result.remapped?' · palette remapped':''}.`);syncUi();return true;}catch(err){setState(`ERROR: ${err.message}`,true);return false;}
 }
 function downloadScratchIff(){
   try{const E=root.IndyHeatBackdropIlbmExport;if(!E?.encodeBackdropIlbm)throw new Error('Backdrop IFF exporter is unavailable.');const words=Array.from(paletteInfo()?.words||T.VERIFIED_TRACK_PALETTE_WORDS||[]).slice(0,32),source=scratchResources.backdrop.data.slice(0,D.TRACK_BYTES),iff=E.encodeBackdropIlbm(source,words),parsed=D.parseIlbm(iff),roundTrip=D.encodeTrackPlanar(D.decodeIlbmPixels(parsed));if(!D.arraysEqual(source,roundTrip))throw new Error('Scratch IFF self-check failed.');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([iff],{type:'image/x-ilbm'}));a.download='indyheat_scratch_backdrop.iff';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);setState('Scratch exported as indyheat_scratch_backdrop.iff · 320×256 · 5 planes.');return true;}catch(err){setState(`ERROR: ${err.message}`,true);return false;}
 }
 async function handleBackdropIffInput(e){
-  if(!scratchActive){const r=currentResource();if(r)pushUndo(r.data.slice(0,D.TRACK_BYTES));setTimeout(syncLiveFromResource,80);setTimeout(syncLiveFromResource,260);return;}
+  if(!scratchActive){const r=currentResource(),before=r?.data.slice(0,D.TRACK_BYTES);setTimeout(syncLiveFromResource,80);setTimeout(()=>{syncLiveFromResource();if(before)pushUndo(before);},320);return;}
   e.preventDefault();e.stopImmediatePropagation();const input=e.target,file=input?.files?.[0];if(file)await importScratchIff(file);if(input)input.value='';
 }
 function handleScratchFileClick(e){if(!scratchActive)return;const button=e.target?.closest?.('#backdropExportIff');if(!button)return;e.preventDefault();e.stopImmediatePropagation();downloadScratchIff();}
@@ -368,7 +423,7 @@ function syncUi(){
   const slider=$('backdropBrushSize');if(slider)slider.disabled=!!brush;const label=$('backdropBrushSizeText');if(label)label.textContent=brush?`Brush ${brush.width}×${brush.height}`:String(slider?.value||1);
   const clear=$('backdropBrushClear'),save=$('backdropBrushSave');if(clear)clear.disabled=!brush;if(save)save.disabled=!brush;document.querySelectorAll('[data-backdrop-brush-rotate],[data-backdrop-brush-flip]').forEach(b=>b.disabled=!brush);
   const dims=$('backdropBrushDims');if(dims)dims.textContent=brush?`${brush.width}×${brush.height} · ${brush.visiblePixels} visible px · hotspot ${brush.hotspotX},${brush.hotspotY}`:'Standard pixel brush';
-  const undo=$('backdropPaintUndo');if(undo)undo.disabled=!sourceUndo().length;
+  const undo=$('backdropPaintUndo');if(undo)undo.disabled=!sourceUndo().length;const redo=$('backdropPaintRedo');if(redo)redo.disabled=!sourceRedo().length;
   const restore=$('backdropPaintRestore');if(restore){restore.textContent='Restore loaded';restore.disabled=scratchActive||!baselineBySource.has(sourceKey());restore.title=scratchActive?'Scratch is cleared from the Reference layers group on the left.':'';}
   const raw=$('backdropExport');if(raw){raw.disabled=scratchActive;raw.title=scratchActive?'Raw .bin export is disabled for the Scratch page. Switch back to the track to export the runtime Backdrop resource.':'';}
   syncReferenceLayerUi();
@@ -578,6 +633,11 @@ root.IndyHeatBackdropWorkspace=Object.freeze({
   setScratchActive,
   clearScratch:clearScratchPage,
   syncUi,
+  syncHistory:syncHistoryButtons,
+  recordHistory:recordExternalHistory,
+  augmentHistory:augmentLastHistory,
+  undo:undoPaint,
+  redo:redoPaint,
   scratchBackdropBytes:()=>scratchResources.backdrop.data.slice(),
   hasExternalOverlay:()=>!!externalOverlay.image
 });
@@ -642,7 +702,7 @@ function installUi(){
   const exportButton=$('backdropExport'),oldActions=$('backdropRevert')?.closest('.backdropActions');if(exportButton)$('backdropPaintActions')?.appendChild(exportButton);if(oldActions)oldActions.style.display='none';
   tools.querySelectorAll('[data-backdrop-draw-tool]').forEach(b=>b.addEventListener('click',()=>selectDrawTool(b.dataset.backdropDrawTool)));tools.querySelectorAll('[data-backdrop-brush-capture]').forEach(b=>b.addEventListener('click',()=>selectCapture(b.dataset.backdropBrushCapture)));
   tools.querySelectorAll('[data-backdrop-brush-rotate]').forEach(b=>b.addEventListener('click',()=>rotateBrush(Number(b.dataset.backdropBrushRotate))));tools.querySelectorAll('[data-backdrop-brush-flip]').forEach(b=>b.addEventListener('click',()=>flipBrush(b.dataset.backdropBrushFlip)));
-  $('backdropSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));$('backdropBrushClear')?.addEventListener('click',clearBrush);$('backdropBrushSave')?.addEventListener('click',downloadBrush);$('backdropBrushLoad')?.addEventListener('click',()=>$('backdropBrushLoadInput')?.click());$('backdropBrushLoadInput')?.addEventListener('change',async e=>{const f=e.target.files?.[0];if(f)await loadBrushFile(f);e.target.value='';});$('backdropBrushSize')?.addEventListener('input',syncUi);$('backdropPaintUndo')?.addEventListener('click',undoPaint);$('backdropPaintRestore')?.addEventListener('click',restoreLoaded);
+  $('backdropSetTransparent')?.addEventListener('click',()=>setTransparencyPickArmed(!transparencyPickArmed));$('backdropBrushClear')?.addEventListener('click',clearBrush);$('backdropBrushSave')?.addEventListener('click',downloadBrush);$('backdropBrushLoad')?.addEventListener('click',()=>$('backdropBrushLoadInput')?.click());$('backdropBrushLoadInput')?.addEventListener('change',async e=>{const f=e.target.files?.[0];if(f)await loadBrushFile(f);e.target.value='';});$('backdropBrushSize')?.addEventListener('input',syncUi);$('backdropPaintUndo')?.addEventListener('click',undoPaint);document.addEventListener('click',e=>{if(e.target?.id==='backdropPaintRedo'&&backdropActive())redoPaint(e);},true);$('backdropPaintRestore')?.addEventListener('click',restoreLoaded);
   $('backdropIffInput')?.addEventListener('change',handleBackdropIffInput,true);document.addEventListener('click',handleScratchFileClick,true);$('opacity')?.addEventListener('input',renderExternalOverlay);scheduleReferenceLayersUi();
   view.addEventListener('pointerdown',pointerDown,true);view.addEventListener('pointermove',pointerMove,true);view.addEventListener('pointerup',pointerUp,true);view.addEventListener('pointercancel',pointerCancel,true);view.addEventListener('pointerleave',()=>{if(backdropActive()&&!gesture){hover=null;drawOverlay();}},true);view.addEventListener('contextmenu',e=>{if(backdropActive()){e.preventDefault();e.stopImmediatePropagation();}},true);
   $('layerEditBackdrop')?.addEventListener('click',()=>setTimeout(()=>{ensureBaseline();canvas.classList.toggle('active',backdropActive());syncScratchVisibility();syncExternalOverlayVisibility();syncOverlaySize();renderPalette();renderBrushLibrary();syncUi();},0));$('layerModeButtons')?.addEventListener('click',e=>{if(e.target?.id!=='layerEditBackdrop')setTimeout(()=>{canvas.classList.toggle('active',backdropActive());syncScratchVisibility();syncExternalOverlayVisibility();drawOverlay();},0);},true);

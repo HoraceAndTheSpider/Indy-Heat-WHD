@@ -386,8 +386,6 @@ function replaceLabelText(label,text){
 }
 
 let placementEntryId=null,pendingPlacement=null;
-const multiHistoryBySource=new Map();
-const editHistoryBySource=new Map(),redoHistoryBySource=new Map();
 let placementListenersInstalled=false,placementHooksInstalled=false;
 let arbitraryRotationPatched=false,magicCaptureMode=null,brushEnhancementListenersInstalled=false;
 let freeRotateArmed=null,freeRotateGesture=null,freeRotationSyntheticClick=null;
@@ -466,6 +464,13 @@ function placeFixedBackdropEntry(idOrEntry){
   const top=position.anchor==='hotspot'?position.y-brush.hotspotY:position.y;
   if(left<0||top<0||left+brush.width>320||top+brush.height>256)
     throw new Error(`${entry.name} fixed position lies outside the 320×256 Backdrop.`);
+
+  const beforeLayers={backdrop:Uint8Array.from(before)},afterLayers={},changedLayers=[];
+  const beforeForeground=entry.placement.foreground?snapshotLayer(1):null;
+  const beforeSurface=entry.placement.surface?snapshotLayer(2):null;
+  if(beforeForeground)beforeLayers.foreground=Uint8Array.from(beforeForeground);
+  if(beforeSurface)beforeLayers.surface=Uint8Array.from(beforeSurface);
+
   let changedPixels=0,visiblePixels=0;
   for(let by=0;by<brush.height;by++)for(let bx=0;bx<brush.width;bx++){
     const v=brush.pixels[by*brush.width+bx];
@@ -474,11 +479,33 @@ function placeFixedBackdropEntry(idOrEntry){
     const i=(top+by)*320+(left+bx);
     if(pixels[i]!==v){pixels[i]=v;changedPixels++;}
   }
-  if(!changedPixels)return {changed:false,entry,x:left,y:top,visiblePixels,changedPixels:0};
-  const encoded=D.encodeTrackPlanar(pixels);
-  if(!syncLayerBytes(0,encoded))throw new Error('No active editor model accepted the fixed brush placement.');
-  refreshPlacementView();
-  return {changed:true,entry,x:left,y:top,visiblePixels,changedPixels};
+  if(changedPixels){
+    const encoded=D.encodeTrackPlanar(pixels);
+    if(!syncLayerBytes(0,encoded))throw new Error('No active editor model accepted the fixed brush placement.');
+    afterLayers.backdrop=currentBackdropSnapshot();
+    changedLayers.push('Backdrop');
+  }else afterLayers.backdrop=Uint8Array.from(before);
+
+  const anchor=[[left+brush.hotspotX,top+brush.hotspotY]];
+  if(beforeForeground&&entry.placement.foreground){
+    const out=stampForegroundBytes(beforeForeground,brush,anchor,entry.placement.foreground);
+    if(!byteArraysEqual(out,beforeForeground)){
+      if(!syncLayerBytes(1,out))throw new Error('No active editor model accepted the fixed brush Foreground placement.');
+      afterLayers.foreground=Uint8Array.from(out);changedLayers.push('Foreground');
+    }else afterLayers.foreground=Uint8Array.from(beforeForeground);
+  }
+  if(beforeSurface&&entry.placement.surface){
+    const out=stampSurfaceBytes(beforeSurface,brush,anchor,entry.placement.surface);
+    if(!byteArraysEqual(out,beforeSurface)){
+      if(!syncLayerBytes(2,out))throw new Error('No active editor model accepted the fixed brush Surface placement.');
+      afterLayers.surface=Uint8Array.from(out);changedLayers.push('Surface');
+    }else afterLayers.surface=Uint8Array.from(beforeSurface);
+  }
+
+  const changed=changedLayers.length>0;
+  if(changed)root.IndyHeatBackdropWorkspace?.recordHistory?.({beforeLayers,afterLayers,label:entry.name});
+  if(changed)refreshPlacementView();
+  return {changed,entry,x:left,y:top,visiblePixels,changedPixels,layers:changedLayers};
 }
 function refreshPlacementView(){
   const sel=document.getElementById('trackSelect');
@@ -650,41 +677,7 @@ function patternSurfaceBytes(bytes,brush,maskPoints,anchorX,anchorY,definition){
   }
   return out;
 }
-function historyFor(map,key=placementSourceKey()){
-  if(!map.has(key))map.set(key,[]);
-  return map.get(key);
-}
-function editHistory(){return historyFor(editHistoryBySource);}
-function redoHistory(){return historyFor(redoHistoryBySource);}
-function cloneLayerSnapshot(bytes){return bytes?Uint8Array.from(bytes):null;}
-function syncHistoryUi(){
-  const undo=document.getElementById('backdropPaintUndo');
-  const redo=document.getElementById('backdropPaintRedo');
-  if(backdropScratchActive()){root.IndyHeatBackdropWorkspace?.syncUi?.();if(redo)redo.disabled=true;return;}
-  if(undo)undo.disabled=!editHistory().length;
-  if(redo)redo.disabled=!redoHistory().length;
-}
-function pushEditRecord(record){
-  if(!record)return null;
-  const key=record.sourceKey||placementSourceKey(),stack=historyFor(editHistoryBySource,key);
-  stack.push(record);if(stack.length>30)stack.shift();
-  historyFor(redoHistoryBySource,key).length=0;
-  syncHistoryUi();
-  return record;
-}
-function makeEditRecord(beforeBackdrop,afterBackdrop){
-  if(!beforeBackdrop||!afterBackdrop||byteArraysEqual(beforeBackdrop,afterBackdrop))return null;
-  const beforeForeground=snapshotLayer(1),beforeSurface=snapshotLayer(2);
-  return {
-    sourceKey:placementSourceKey(),
-    beforeBackdrop:Uint8Array.from(beforeBackdrop),
-    afterBackdrop:Uint8Array.from(afterBackdrop),
-    beforeForeground:cloneLayerSnapshot(beforeForeground),
-    afterForeground:cloneLayerSnapshot(beforeForeground),
-    beforeSurface:cloneLayerSnapshot(beforeSurface),
-    afterSurface:cloneLayerSnapshot(beforeSurface)
-  };
-}
+function syncHistoryUi(){root.IndyHeatBackdropWorkspace?.syncHistory?.();}
 function finalisePendingPlacement(p,encodedBackdrop){
   if(!p||p.sourceKey!==placementSourceKey())return;
   const afterBackdrop=currentBackdropSnapshot();
@@ -708,9 +701,14 @@ function finalisePendingPlacement(p,encodedBackdrop){
       if(syncLayerBytes(2,surfaceAfter)){changed=true;surfaceChanged=true;}
     }
   }
-  if(p.historyRecord){
-    if(foregroundAfter)p.historyRecord.afterForeground=Uint8Array.from(foregroundAfter);
-    if(surfaceAfter)p.historyRecord.afterSurface=Uint8Array.from(surfaceAfter);
+  if(changed){
+    const beforeLayers={},afterLayers={};
+    if(fgChanged){beforeLayers.foreground=Uint8Array.from(p.beforeForeground);afterLayers.foreground=Uint8Array.from(foregroundAfter);}
+    if(surfaceChanged){beforeLayers.surface=Uint8Array.from(p.beforeSurface);afterLayers.surface=Uint8Array.from(surfaceAfter);}
+    root.IndyHeatBackdropWorkspace?.augmentHistory?.({
+      beforeLayers,afterLayers,label:entry.name,
+      matchBackdropBefore:p.beforeBackdrop,matchBackdropAfter:encodedBackdrop
+    });
   }
   if(!changed)return;
   queueMicrotask(()=>{
@@ -747,80 +745,13 @@ function installPlacementCommitHooks(){
   D.encodeTrackPlanar=function(pixels,...rest){
     const encoded=encode(pixels,...rest);if(backdropScratchActive())return encoded;
     const before=currentBackdropSnapshot(),pending=pendingPlacement;
-    let historyRecord=null;
-    const backdropActive=!!document.getElementById('layerEditBackdrop')?.classList.contains('active');
-    if(backdropActive&&before&&!byteArraysEqual(before,encoded)){
-      historyRecord=pushEditRecord(makeEditRecord(before,encoded));
-    }
     if(pending&&byteArraysEqual(before,pending.beforeBackdrop)){
       pendingPlacement=null;
-      if(historyRecord)pending.historyRecord=historyRecord;
       queueMicrotask(()=>finalisePendingPlacement(pending,encoded));
     }
     return encoded;
   };
   return true;
-}
-function restoreEditRecord(record,toAfter){
-  if(!record)return false;
-  const targetBackdrop=toAfter?record.afterBackdrop:record.beforeBackdrop;
-  const targetForeground=toAfter?record.afterForeground:record.beforeForeground;
-  const targetSurface=toAfter?record.afterSurface:record.beforeSurface;
-  if(!syncLayerBytes(0,targetBackdrop))return false;
-  if(targetForeground)syncLayerBytes(1,targetForeground);
-  if(targetSurface)syncLayerBytes(2,targetSurface);
-  return true;
-}
-function undoEdit(e){
-  if(backdropScratchActive())return;
-  e?.preventDefault?.();e?.stopImmediatePropagation?.();
-  const stack=editHistory(),record=stack[stack.length-1];
-  if(!record){syncHistoryUi();return;}
-  const current=currentBackdropSnapshot();
-  if(!byteArraysEqual(current,record.afterBackdrop)){syncHistoryUi();return;}
-  stack.pop();
-  if(!restoreEditRecord(record,false)){stack.push(record);syncHistoryUi();return;}
-  const redo=redoHistory();redo.push(record);if(redo.length>30)redo.shift();
-  pendingPlacement=null;
-  refreshPlacementView();syncHistoryUi();
-  const state=document.getElementById('backdropPaintState');
-  if(state)state.textContent='Backdrop edit undone.';
-}
-function redoEdit(e){
-  if(backdropScratchActive())return;
-  e?.preventDefault?.();e?.stopImmediatePropagation?.();
-  const redo=redoHistory(),record=redo[redo.length-1];
-  if(!record){syncHistoryUi();return;}
-  const current=currentBackdropSnapshot();
-  if(!byteArraysEqual(current,record.beforeBackdrop)){syncHistoryUi();return;}
-  redo.pop();
-  if(!restoreEditRecord(record,true)){redo.push(record);syncHistoryUi();return;}
-  const stack=editHistory();stack.push(record);if(stack.length>30)stack.shift();
-  pendingPlacement=null;
-  refreshPlacementView();syncHistoryUi();
-  const state=document.getElementById('backdropPaintState');
-  if(state)state.textContent='Backdrop edit redone.';
-}
-function captureExternalBackdropChange(){
-  if(backdropScratchActive())return;
-  const before=currentBackdropSnapshot();
-  if(!before)return;
-  const beforeForeground=snapshotLayer(1),beforeSurface=snapshotLayer(2),sourceKey=placementSourceKey();
-  queueMicrotask(()=>{
-    if(sourceKey!==placementSourceKey())return;
-    const after=currentBackdropSnapshot();
-    if(!after||byteArraysEqual(before,after))return;
-    const record={
-      sourceKey,
-      beforeBackdrop:Uint8Array.from(before),
-      afterBackdrop:Uint8Array.from(after),
-      beforeForeground:cloneLayerSnapshot(beforeForeground),
-      afterForeground:cloneLayerSnapshot(snapshotLayer(1)),
-      beforeSurface:cloneLayerSnapshot(beforeSurface),
-      afterSurface:cloneLayerSnapshot(snapshotLayer(2))
-    };
-    pushEditRecord(record);
-  });
 }
 const placementApi=Object.freeze({
   select:selectPlacementEntry,
@@ -857,7 +788,7 @@ function installPlacementListeners(){
         else{
           state.classList.remove('bad');
           state.textContent=result?.changed
-            ?`${entry.name} placed at fixed position X ${result.x}, Y ${result.y} · ${result.changedPixels} pixels changed.`
+            ?`${entry.name} placed at fixed position X ${result.x}, Y ${result.y} · ${result.layers?.join(' + ')||'Backdrop'} applied${result.changedPixels?` · ${result.changedPixels} Backdrop pixels changed`:''}.`
             :`${entry.name} already matches its fixed position X ${result?.x}, Y ${result?.y}.`;
         }
       }
@@ -869,9 +800,6 @@ function installPlacementListeners(){
   document.getElementById('backdropBrushLoad')?.addEventListener('click',clearPlacementEntry);
   document.querySelectorAll('[data-backdrop-brush-capture]').forEach(button=>button.addEventListener('click',clearPlacementEntry));
   document.querySelectorAll('[data-backdrop-draw-tool]').forEach(button=>button.addEventListener('click',()=>{pendingPlacement=null;syncHistoryUi();}));
-  document.getElementById('backdropPaintUndo')?.addEventListener('click',undoEdit,true);
-  document.getElementById('backdropPaintRedo')?.addEventListener('click',redoEdit,true);
-  document.getElementById('backdropPaintRestore')?.addEventListener('click',()=>{pendingPlacement=null;captureExternalBackdropChange();},true);
   document.addEventListener('pointercancel',()=>{pendingPlacement=null;},true);
   document.addEventListener('keydown',e=>{if(e.key==='Escape')pendingPlacement=null;},true);
   document.addEventListener('indyheat-circuit-content-refreshed',()=>{pendingPlacement=null;setTimeout(syncHistoryUi,0);});

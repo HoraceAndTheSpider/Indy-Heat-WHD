@@ -3,7 +3,10 @@
 
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.5';
+const VERSION='0.1.7';
+const MASK_FOREGROUND=0;
+const MASK_BACKGROUND=1;
+
 const settings={
   family:'red',
   boardHeight:8,
@@ -66,11 +69,6 @@ function setBackdrop(ctx,layer,x,y,index){
   if(!inBounds(ctx.width,ctx.height,x,y))return false;
   layer[y*ctx.width+x]=validIndex(ctx,index);return true;
 }
-function setForeground(ctx,layer,x,y){
-  x=Math.round(x);y=Math.round(y);
-  if(!inBounds(ctx.width,ctx.height,x,y))return false;
-  layer[y*ctx.width+x]=1;return true;
-}
 function getBackdrop(layer,width,x,y){
   x=Math.round(x);y=Math.round(y);
   if(x<0||y<0||x>=width)return 0;
@@ -114,12 +112,15 @@ function rectColumns(x,w){
 function lerpPoint(a,b,t){return {x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};}
 function boardGeometry(g){
   if(!g?.start||!g?.end)return null;
-  const a=roundPoint(g.start),b=roundPoint(g.end),bh=clamp(Math.round(Number(settings.boardHeight)||8),2,32),lh=clamp(Math.round(Number(settings.legHeight)||8),1,32);
+  const p0=roundPoint(g.start),p1=roundPoint(g.end);
+  // Endpoint order has no semantic meaning. Canonicalise it so drawing the
+  // same line in reverse produces identical artwork and mask footprints.
+  const [a,b]=(p0.x<p1.x||(p0.x===p1.x&&p0.y<=p1.y))?[p0,p1]:[p1,p0];
+  const bh=clamp(Math.round(Number(settings.boardHeight)||8),2,32),lh=clamp(Math.round(Number(settings.legHeight)||8),1,32);
   const tl={x:a.x,y:a.y-(bh+lh)},tr={x:b.x,y:b.y-(bh+lh)};
   const bl={x:a.x,y:a.y-lh},br={x:b.x,y:b.y-lh};
   return {a,b,bh,lh,tl,tr,bl,br,poly:[tl,tr,br,bl]};
 }
-function translatedPoly(poly,dx,dy){return poly.map(p=>({x:p.x+dx,y:p.y+dy}));}
 function shadowShift(){
   const dx=(settings.shadowDirection==='left'?-1:1)*clamp(Math.round(Number(settings.shadowLength)||5),1,16);
   const dy=clamp(Math.round(Number(settings.shadowDrop)||3),0,16);
@@ -137,22 +138,13 @@ function shadowIndex(index){
     3:7,2:6,18:30
   });
   if(Object.prototype.hasOwnProperty.call(map,index))return map[index];
-  return 4; // fallback dark grey if already at family minimum or unknown
+  return 4;
 }
 function applyShadowPixel(ctx,backdrop,sourceBackdrop,x,y){
   x=Math.round(x);y=Math.round(y);
   if(!inBounds(ctx.width,ctx.height,x,y))return false;
   const src=getBackdrop(sourceBackdrop,ctx.width,x,y);
   return setBackdrop(ctx,backdrop,x,y,shadowIndex(src));
-}
-function paintShadowRect(ctx,backdrop,sourceBackdrop,x0,y0,x1,y1){
-  let count=0;
-  for(let x=Math.min(x0,x1);x<=Math.max(x0,x1);x++){
-    for(let y=Math.min(y0,y1);y<=Math.max(y0,y1);y++){
-      if(applyShadowPixel(ctx,backdrop,sourceBackdrop,x,y))count++;
-    }
-  }
-  return count;
 }
 function paintShadow(ctx,backdrop,sourceBackdrop,geo){
   if(!settings.shadow)return 0;
@@ -161,13 +153,11 @@ function paintShadow(ctx,backdrop,sourceBackdrop,geo){
 
   /* Ground-plane projection:
      the feet line on the track is the near edge of the banner shadow.
-     The banner itself is above ground, so its shadow should lie on the
-     road/grass from the feet line outward, not hang directly beneath the
-     banner as a conventional drop shadow. */
+     The banner itself is above ground, so its shadow lies on the road/grass
+     from the feet line outward. It never changes the occlusion mask. */
   const groundShadow=[geo.a,geo.b,{x:geo.b.x+dx,y:geo.b.y+dy},{x:geo.a.x+dx,y:geo.a.y+dy}];
   fillPolygon(groundShadow,(x,y)=>{if(applyShadowPixel(ctx,backdrop,sourceBackdrop,x,y))count++;});
 
-  // Leg shadows start at each foot and project away along the same vector.
   for(const foot of [geo.a,geo.b]){
     const cols=rectColumns(foot.x,settings.legWidth);
     for(const col of cols){
@@ -178,34 +168,28 @@ function paintShadow(ctx,backdrop,sourceBackdrop,geo){
   }
   return count;
 }
-function paintBevel(ctx,backdrop,foreground,geo){
+function paintBevel(ctx,backdrop,geo){
   if(settings.edgeBevel==='off')return 0;
   const colour=settings.edgeBevel==='lighter'?familyColour('light'):familyColour('dark');
   const edges=[[geo.tl,geo.tr],[geo.tr,geo.br],[geo.br,geo.bl],[geo.bl,geo.tl]];
   let count=0;
   for(const [p0,p1] of edges){
-    for(const p of drawLinePoints(p0,p1)){
-      if(setBackdrop(ctx,backdrop,p.x,p.y,colour))count++;
-      setForeground(ctx,foreground,p.x,p.y);
-    }
+    for(const p of drawLinePoints(p0,p1))if(setBackdrop(ctx,backdrop,p.x,p.y,colour))count++;
   }
   return count;
 }
-function paintInnerShade(ctx,backdrop,foreground,geo){
+function paintInnerShade(ctx,backdrop,geo){
   if(!settings.innerShade||geo.bh<3)return 0;
   const shade=settings.innerShadeMode==='lighter'?familyColour('light'):familyColour('soft');
   const left=lerpPoint(geo.tl,geo.bl,Math.min(.22,1-1/Math.max(2,geo.bh)));
   const right=lerpPoint(geo.tr,geo.br,Math.min(.22,1-1/Math.max(2,geo.bh)));
   let count=0;
   for(const p of drawLinePoints({x:left.x+1,y:left.y+1},{x:right.x-1,y:right.y+1})){
-    if(pointInPoly(p.x+.5,p.y+.5,geo.poly)){
-      if(setBackdrop(ctx,backdrop,p.x,p.y,shade))count++;
-      setForeground(ctx,foreground,p.x,p.y);
-    }
+    if(pointInPoly(p.x+.5,p.y+.5,geo.poly)&&setBackdrop(ctx,backdrop,p.x,p.y,shade))count++;
   }
   return count;
 }
-function paintFauxText(ctx,backdrop,foreground,geo){
+function paintFauxText(ctx,backdrop,geo){
   if(!settings.fauxText||geo.bh<4)return 0;
   const rows=geo.bh>=7?[.48,.66]:[.56];
   const seed=((geo.a.x&255)<<24)^((geo.a.y&255)<<16)^((geo.b.x&255)<<8)^(geo.b.y&255)^(geo.bh<<4);
@@ -217,7 +201,7 @@ function paintFauxText(ctx,backdrop,foreground,geo){
     let i=0;
     while(i<line.length){
       state=(Math.imul(state,1664525)+1013904223)>>>0;
-      const gap=1+(state%3); i+=gap;
+      const gap=1+(state%3);i+=gap;
       state=(Math.imul(state,1664525)+1013904223)>>>0;
       const run=1+(state%5);
       state=(Math.imul(state,1664525)+1013904223)>>>0;
@@ -230,10 +214,8 @@ function paintFauxText(ctx,backdrop,foreground,geo){
         const pixelColour=(state&7)===0?darkerFamily:runColour;
         if(pointInPoly(p.x+.5,p.y+.5,geo.poly)){
           if(setBackdrop(ctx,backdrop,p.x,p.y,pixelColour))count++;
-          setForeground(ctx,foreground,p.x,p.y);
-          if(useDouble && pointInPoly(p.x+.5,p.y-0.5,geo.poly)){
+          if(useDouble&&pointInPoly(p.x+.5,p.y-.5,geo.poly)){
             if(setBackdrop(ctx,backdrop,p.x,p.y-1,pixelColour))count++;
-            setForeground(ctx,foreground,p.x,p.y-1);
           }
         }
       }
@@ -242,71 +224,79 @@ function paintFauxText(ctx,backdrop,foreground,geo){
   }
   return count;
 }
-function paintBanner(ctx,backdrop,foreground,geo){
+function paintBanner(ctx,backdrop,geo){
   const main=familyColour('main');
-  let fillCount=0,fgCount=0;
-  fillPolygon(geo.poly,(x,y)=>{
-    if(setBackdrop(ctx,backdrop,x,y,main))fillCount++;
-    if(setForeground(ctx,foreground,x,y))fgCount++;
-  });
-  const bevelCount=paintBevel(ctx,backdrop,foreground,geo);
-  const shadeCount=paintInnerShade(ctx,backdrop,foreground,geo);
-  const textCount=paintFauxText(ctx,backdrop,foreground,geo);
-  return {fillCount,fgCount,bevelCount,shadeCount,textCount};
+  let fillCount=0;
+  fillPolygon(geo.poly,(x,y)=>{if(setBackdrop(ctx,backdrop,x,y,main))fillCount++;});
+  const bevelCount=paintBevel(ctx,backdrop,geo);
+  const shadeCount=paintInnerShade(ctx,backdrop,geo);
+  const textCount=paintFauxText(ctx,backdrop,geo);
+  return {fillCount,bevelCount,shadeCount,textCount};
 }
-function paintLeg(ctx,backdrop,foreground,foot,topY,makeForeground){
+function paintLeg(ctx,backdrop,foot,topY){
   const cols=rectColumns(foot.x,settings.legWidth),grey=validIndex(ctx,settings.legGrey);
   let count=0;
   for(const x of cols){
     for(let y=Math.min(foot.y,topY);y<=Math.max(foot.y,topY);y++){
       if(setBackdrop(ctx,backdrop,x,y,grey))count++;
-      if(makeForeground)setForeground(ctx,foreground,x,y);
     }
   }
   return count;
 }
 
-function applyOcclusionMask(ctx,foreground,geo,legAIsBackdrop){
-  const before=foreground.slice();
-  let setCount=0,clearCount=0;
+function addMaskPixel(set,ctx,x,y){
+  x=Math.round(x);y=Math.round(y);
+  if(!inBounds(ctx.width,ctx.height,x,y))return;
+  set.add(y*ctx.width+x);
+}
+function addSupportFootprint(set,ctx,foot,topY){
+  for(const x of rectColumns(foot.x,settings.legWidth)){
+    for(let y=Math.min(foot.y,topY);y<=Math.max(foot.y,topY);y++)addMaskPixel(set,ctx,x,y);
+  }
+}
+function applyOcclusionMask(ctx,mask,geo){
+  const bannerPixels=new Set();
+  fillPolygon(geo.poly,(x,y)=>addMaskPixel(bannerPixels,ctx,x,y));
+  for(const [p0,p1] of [[geo.tl,geo.tr],[geo.tr,geo.br],[geo.br,geo.bl],[geo.bl,geo.tl]]){
+    for(const p of drawLinePoints(p0,p1))addMaskPixel(bannerPixels,ctx,p.x,p.y);
+  }
 
-  // Entire banner is driven under.
-  fillPolygon(geo.poly,(x,y)=>{
-    x=Math.round(x);y=Math.round(y);
-    if(!inBounds(ctx.width,ctx.height,x,y))return;
-    const i=y*ctx.width+x;
-    if(foreground[i]!==1){foreground[i]=1;setCount++;}
-  });
+  const farIsA=geo.a.y<=geo.b.y;
+  const farFoot=farIsA?geo.a:geo.b;
+  const farTop=farIsA?geo.bl.y:geo.br.y;
+  const nearFoot=farIsA?geo.b:geo.a;
+  const nearTop=farIsA?geo.br.y:geo.bl.y;
 
-  // Nearer support (larger Y foot) is driven under.
-  const nearFoot=legAIsBackdrop?geo.b:geo.a;
-  const nearTop=legAIsBackdrop?geo.br.y:geo.bl.y;
-  for(const x of rectColumns(nearFoot.x,settings.legWidth)){
-    for(let y=Math.min(nearFoot.y,nearTop);y<=Math.max(nearFoot.y,nearTop);y++){
-      if(!inBounds(ctx.width,ctx.height,x,y))continue;
-      const i=y*ctx.width+x;
-      if(foreground[i]!==1){foreground[i]=1;setCount++;}
+  const nearPixels=new Set();
+  const farPixels=new Set();
+  addSupportFootprint(nearPixels,ctx,nearFoot,nearTop);
+  addSupportFootprint(farPixels,ctx,farFoot,farTop);
+
+  const foregroundPixels=new Set([...bannerPixels,...nearPixels]);
+  let changed=0;
+  const write=(indices,value)=>{
+    for(const i of indices){
+      if(mask[i]!==value)changed++;
+      mask[i]=value;
     }
-  }
+  };
 
-  // Farther support (smaller Y foot) is explicitly background, even where
-  // its visible pixels overlap the banner artwork.
-  const farFoot=legAIsBackdrop?geo.a:geo.b;
-  const farTop=legAIsBackdrop?geo.bl.y:geo.br.y;
-  for(const x of rectColumns(farFoot.x,settings.legWidth)){
-    for(let y=Math.min(farFoot.y,farTop);y<=Math.max(farFoot.y,farTop);y++){
-      if(!inBounds(ctx.width,ctx.height,x,y))continue;
-      const i=y*ctx.width+x;
-      if(foreground[i]!==0){foreground[i]=0;clearCount++;}
-    }
-  }
+  // One authoritative occlusion pass. Raw 0 = Foreground (car under artwork).
+  write(foregroundPixels,MASK_FOREGROUND);
 
-  let changed=0,active=0;
-  for(let i=0;i<foreground.length;i++){
-    if(foreground[i]!==before[i])changed++;
-    if(foreground[i])active++;
-  }
-  return {setCount,clearCount,changed,active};
+  // Far support is written last so it stays Background even where it crosses
+  // the banner artwork. Raw 1 = Background (car over/in front of artwork).
+  write(farPixels,MASK_BACKGROUND);
+  const foregroundWritten=[...foregroundPixels].filter(i=>!farPixels.has(i)).length;
+  const backgroundWritten=farPixels.size;
+
+  return {
+    foregroundWritten,
+    backgroundWritten,
+    changed,
+    farFoot,
+    nearFoot
+  };
 }
 
 function render(ctx){
@@ -314,18 +304,16 @@ function render(ctx){
   const backdrop=ctx.layer('backdrop'),foreground=ctx.layer('foreground');
   const sourceBackdrop=backdrop.slice?backdrop.slice():Array.from(backdrop);
 
-  const shadowCount=paintShadow(ctx,backdrop,sourceBackdrop,geo);
-  const legAIsBackdrop=(geo.a.y<=geo.b.y); // smaller Y = further up-screen = background-only support
-  const banner=paintBanner(ctx,backdrop,foreground,geo);
+  paintShadow(ctx,backdrop,sourceBackdrop,geo);
+  paintBanner(ctx,backdrop,geo);
 
   // Legs are deliberately painted last so they remain visibly on top of the banner.
-  const legA=paintLeg(ctx,backdrop,foreground,geo.a,geo.bl.y,!legAIsBackdrop);
-  const legB=paintLeg(ctx,backdrop,foreground,geo.b,geo.br.y,legAIsBackdrop);
+  paintLeg(ctx,backdrop,geo.a,geo.bl.y);
+  paintLeg(ctx,backdrop,geo.b,geo.br.y);
 
-  // Authoritative final mask pass: banner + near support foreground, far support background.
-  const occ=applyOcclusionMask(ctx,foreground,geo,legAIsBackdrop);
+  const occ=applyOcclusionMask(ctx,foreground,geo);
 
-  return {message:`Overhead Advert Board committed · board ${geo.bh}px · legs ${geo.lh}px × ${settings.legWidth}px${settings.shadow?` · ground shadow ${settings.shadowDirection} ${settings.shadowLength}/${settings.shadowDrop}`:''} · Foreground ${occ.active} px (${occ.changed} changed)${settings.fauxText?' · faux text angled with darker family variation':''}.`};
+  return {message:`Overhead Advert Board committed · board ${geo.bh}px · legs ${geo.lh}px × ${settings.legWidth}px${settings.shadow?` · ground shadow ${settings.shadowDirection} ${settings.shadowLength}/${settings.shadowDrop}`:''} · Foreground written ${occ.foregroundWritten} px · Background written ${occ.backgroundWritten} px · far leg BG @ ${occ.farFoot.x},${occ.farFoot.y} · near leg FG @ ${occ.nearFoot.x},${occ.nearFoot.y}${settings.fauxText?' · faux text angled with darker family variation':''}.`};
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Board family',value:settings.family,options:FAMILY_OPTIONS,onChange:value=>{settings.family=value;}});
@@ -352,7 +340,7 @@ S.register({
   version:VERSION,
   category:'Scenery',
   status:'prototype',
-  description:'Line-only overhead sponsor board. The drawn line defines the two feet, with variable board height, leg height/width, grey support colour, full edge bevel, optional inner shade, slanted randomized faux text with darker family variation, an explicit banner/near-support foreground mask, far-support background mask, and a ground-projected shadow cast from the feet line and supports.',
+  description:'Line-only overhead sponsor board. The drawn line defines the two feet, with variable board height, leg height/width, grey support colour, full edge bevel, optional inner shade, slanted randomized faux text with darker family variation, banner/near-support Foreground occlusion, far-support Background occlusion, and a ground-projected shadow cast from the feet line and supports.',
   supportedModes:['backdrop'],
   supportedTools:['line'],
   layers:['backdrop','foreground'],
