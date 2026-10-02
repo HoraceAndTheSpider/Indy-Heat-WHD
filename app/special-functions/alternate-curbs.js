@@ -12,7 +12,7 @@ const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
 const settings={
   colourA:'red',
-  colourB:'white',
+  colourB:'grey',
   edgeLine:true,
   edgeColour:4,
   edgeGap:0
@@ -26,8 +26,9 @@ const COLOURS=Object.freeze([
   {value:'orange',label:'Orange',pair:[8,9]},
   {value:'green',label:'Green',pair:[25,26]},
   {value:'dark-green',label:'Dark green',pair:[24,25]},
-  {value:'white',label:'White',pair:[5,6]},
-  {value:'grey',label:'Grey',pair:[4,5]}
+  {value:'white',label:'White',pair:[6,7]},
+  {value:'grey',label:'Grey',pair:[5,6]},
+  {value:'black',label:'Black',pair:[4,5]}
 ]);
 const PAIRS=Object.freeze(Object.fromEntries(COLOURS.map(c=>[c.value,Object.freeze(c.pair)])));
 const BLOCK=3;
@@ -142,7 +143,7 @@ function mountControls(container,ctx){
 S.register({
   id:'alternate-curbs',
   name:'Alternate Curbs',
-  version:'0.1.2',
+  version:'0.1.3',
   category:'Track',
   status:'prototype',
   description:'Two-pixel alternating coloured curb with one-pixel dark end tapers and optional palette-selectable edge line with 0-2 pixel transparent gap.',

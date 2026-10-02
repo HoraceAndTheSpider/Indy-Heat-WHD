@@ -1,7 +1,7 @@
 (function(root){
 'use strict';
 
-/* Trees & Bushes Special Function v0.1.4.
+/* Trees & Bushes Special Function v0.1.6.
  *
  * Scale correction pass:
  * - Standard, Tropical and Bush pools are direct connected-component extracts
@@ -11,7 +11,7 @@
  * - Autumnal, Evergreen and Dead are derived at the same source-scale bands.
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
-const VERSION='0.1.5';
+const VERSION='0.1.6';
 
 const settings={
   type:'standard',
@@ -23,6 +23,7 @@ const settings={
   trunk:'mixed',
   leavesOnGround:false,
   leavesDensity:35,
+  outlineDepth:0,
   shadow:true,
   foreground:'split'
 };
@@ -332,42 +333,74 @@ function markOccupied(occupied,w,h,sprite,ax,ay,pad=1,actualOnly=false){
   const left=ax-sprite.anchorX-pad,right=left+sprite.w-1+pad,top=ay-sprite.anchorY-pad,bottom=top+sprite.h-1+pad;for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++)if(inBounds(w,h,x,y))occupied.add(y*w+x);
 }
 function darkerIndex(ctx,index){const fn=root.IndyHeatPeopleTools?.darkerIndex;if(typeof fn==='function')return fn(ctx,index);index=ctx.helpers.validIndex(index);return index===0?5:Math.max(0,index-1);}
-function paintShadow(ctx,pixels,base,sprite,ax,ay,mask){if(!settings.shadow)return 0;const width=Math.max(1,Math.round(sprite.w*.35)),y=ay,x0=ax-Math.max(1,Math.round(sprite.w*.30));let n=0;for(let j=0;j<2;j++)for(let x=x0-j;x<x0+width;x++){const yy=y+j;if(!inBounds(ctx.width,ctx.height,x,yy))continue;const i=yy*ctx.width+x;if(mask&&mask[i]!==1)continue;pixels[i]=darkerIndex(ctx,base[i]);n++;}return n;}
+function outlineGreen(index,depth){
+  let value=Number(index),steps=clamp(Math.round(Number(depth)||0),0,2);
+  while(steps-->0){
+    if(value===27)value=26;
+    else if(value===26)value=25;
+    else if(value===25)value=24;
+    else if(value===24)value=4;
+    else break;
+  }
+  return value;
+}
+function paintShadow(ctx,pixels,base,sprite,ax,ay,mask,protectedPixels){if(!settings.shadow)return 0;const width=Math.max(1,Math.round(sprite.w*.35)),y=ay,x0=ax-Math.max(1,Math.round(sprite.w*.30));let n=0;for(let j=0;j<2;j++)for(let x=x0-j;x<x0+width;x++){const yy=y+j;if(!inBounds(ctx.width,ctx.height,x,yy))continue;const i=yy*ctx.width+x;if(mask&&mask[i]!==1)continue;pixels[i]=darkerIndex(ctx,base[i]);if(protectedPixels)protectedPixels[i]=1;n++;}return n;}
+function paintOutline(ctx,pixels,sprite,ax,ay,mask,protectedPixels){
+  const depth=clamp(Math.round(Number(settings.outlineDepth)||0),0,2);if(!depth)return 0;
+  const footprint=new Uint8Array(ctx.width*ctx.height),points=[];
+  for(const [sx,sy] of sprite.cells){
+    const x=ax+sx-sprite.anchorX,y=ay+sy-sprite.anchorY;if(!inBounds(ctx.width,ctx.height,x,y))continue;
+    const i=y*ctx.width+x;if(mask&&mask[i]!==1)continue;footprint[i]=1;points.push({x,y});
+  }
+  let n=0;
+  for(const p of points)for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){
+    if(!ox&&!oy)continue;const x=p.x+ox,y=p.y+oy;if(!inBounds(ctx.width,ctx.height,x,y))continue;
+    const i=y*ctx.width+x;if(footprint[i]||(mask&&mask[i]!==1)||protectedPixels?.[i])continue;
+    const current=pixels[i];if(!GREEN_SET.has(current))continue;
+    const next=outlineGreen(current,depth);if(next===current)continue;pixels[i]=next;if(protectedPixels)protectedPixels[i]=1;n++;
+  }
+  return n;
+}
 function leafColours(type){return type==='autumn'||type==='dead'?[20,10,9,5]:[24,25,26,20];}
-function paintLeaves(ctx,pixels,sprite,ax,ay,seed,mask){if(!settings.leavesOnGround)return 0;const density=clamp(Number(settings.leavesDensity)||0,0,100)/100;if(!density)return 0;const colours=leafColours(settings.type),span=Math.max(2,Math.round(sprite.w*.7)),y0=ay+1;let n=0;for(let y=y0;y<=y0+2;y++)for(let x=ax-span;x<=ax+span;x++){if(!inBounds(ctx.width,ctx.height,x,y))continue;const i=y*ctx.width+x;if(mask&&mask[i]!==1)continue;if((hashAt(seed,x,y,83)/0xffffffff)>(0.03+0.30*density))continue;pixels[i]=choose(colours,hashAt(seed,x,y,89));n++;}return n;}
+function paintLeaves(ctx,pixels,sprite,ax,ay,seed,mask,protectedPixels){if(!settings.leavesOnGround)return 0;const density=clamp(Number(settings.leavesDensity)||0,0,100)/100;if(!density)return 0;const colours=leafColours(settings.type),span=Math.max(2,Math.round(sprite.w*.7)),y0=ay+1;let n=0;for(let y=y0;y<=y0+2;y++)for(let x=ax-span;x<=ax+span;x++){if(!inBounds(ctx.width,ctx.height,x,y))continue;const i=y*ctx.width+x;if(mask&&mask[i]!==1)continue;if((hashAt(seed,x,y,83)/0xffffffff)>(0.03+0.30*density))continue;pixels[i]=choose(colours,hashAt(seed,x,y,89));if(protectedPixels)protectedPixels[i]=1;n++;}return n;}
 function applyForeground(fg,sprite,ax,ay,mode,w,h){if(mode==='none')return 0;const split=Math.floor((sprite.h-1)/2);let n=0;for(const [sx,sy] of sprite.cells){if(mode==='split'&&sy>split)continue;const x=ax+sx-sprite.anchorX,y=ay+sy-sprite.anchorY;if(!inBounds(w,h,x,y))continue;fg[y*w+x]=1;n++;}return n;}
-function paintSprite(ctx,backdrop,base,foreground,sprite,ax,ay,seed,mask){paintShadow(ctx,backdrop,base,sprite,ax,ay,mask);let px=0;for(const [sx,sy,v] of sprite.cells){const x=ax+sx-sprite.anchorX,y=ay+sy-sprite.anchorY;if(!inBounds(ctx.width,ctx.height,x,y))continue;const i=y*ctx.width+x;if(mask&&mask[i]!==1)continue;backdrop[i]=v;px++;}const leaves=paintLeaves(ctx,backdrop,sprite,ax,ay,seed,mask),fg=applyForeground(foreground,sprite,ax,ay,settings.foreground,ctx.width,ctx.height);return {px,leaves,fg};}
+function paintSprite(ctx,backdrop,base,foreground,sprite,ax,ay,seed,mask,protectedPixels){
+  paintShadow(ctx,backdrop,base,sprite,ax,ay,mask,protectedPixels);
+  const outline=paintOutline(ctx,backdrop,sprite,ax,ay,mask,protectedPixels);
+  let px=0;for(const [sx,sy,v] of sprite.cells){const x=ax+sx-sprite.anchorX,y=ay+sy-sprite.anchorY;if(!inBounds(ctx.width,ctx.height,x,y))continue;const i=y*ctx.width+x;if(mask&&mask[i]!==1)continue;backdrop[i]=v;if(protectedPixels)protectedPixels[i]=1;px++;}
+  const leaves=paintLeaves(ctx,backdrop,sprite,ax,ay,seed,mask,protectedPixels),fg=applyForeground(foreground,sprite,ax,ay,settings.foreground,ctx.width,ctx.height);return {px,leaves,fg,outline};
+}
 
 function scatterArea(ctx,backdrop,base,foreground,mask,seed){
-  const occupied=new Set(),anchors=[],area=countMask(mask);if(area<4)return {placed:0,leaves:0,fg:0};
+  const occupied=new Set(),protectedPixels=new Uint8Array(ctx.width*ctx.height),anchors=[],area=countMask(mask);if(area<4)return {placed:0,leaves:0,fg:0,outline:0};
   const density=clamp(Number(settings.density)||1,1,100)/100,candidates=[];
   for(let y=0;y<ctx.height;y++)for(let x=0;x<ctx.width;x++)if(mask[y*ctx.width+x])candidates.push({x,y,h:hashAt(seed,x,y,97)});
   candidates.sort((a,b)=>a.h-b.h);
-  const probe=prepareSprite(settings.type,seed);if(!probe)return {placed:0,leaves:0,fg:0};
+  const probe=prepareSprite(settings.type,seed);if(!probe)return {placed:0,leaves:0,fg:0,outline:0};
   const packing=.03+.97*Math.pow(density,1.15),target=Math.max(1,Math.round(area/Math.max(12,probe.w*probe.h)*packing));
   const maxOverlap=density<=.68?0:Math.min(.68,(density-.68)/.32*.68),pad=density<.35?2:density<.72?1:0,actualOnly=density>=.72;
-  let placed=0,leaves=0,fg=0;
+  let placed=0,leaves=0,fg=0,outline=0;
   for(const c of candidates){if(placed>=target)break;const s=prepareSprite(settings.type,hashAt(seed,c.x,c.y,101));if(!s)continue;
     const minSep=Math.max(2,s.w*(.92-.60*density));let tooClose=false;for(const a of anchors){const dx=c.x-a.x,dy=c.y-a.y;if(dx*dx+dy*dy<minSep*minSep){tooClose=true;break;}}if(tooClose)continue;
     if(!footprintFits(mask,ctx.width,ctx.height,s,c.x,c.y,occupied,maxOverlap))continue;
-    const r=paintSprite(ctx,backdrop,base,foreground,s,c.x,c.y,hashAt(seed,c.x,c.y,103),mask);placed++;leaves+=r.leaves;fg+=r.fg;anchors.push({x:c.x,y:c.y});markOccupied(occupied,ctx.width,ctx.height,s,c.x,c.y,pad,actualOnly);
+    const r=paintSprite(ctx,backdrop,base,foreground,s,c.x,c.y,hashAt(seed,c.x,c.y,103),mask,protectedPixels);placed++;leaves+=r.leaves;fg+=r.fg;outline+=r.outline;anchors.push({x:c.x,y:c.y});markOccupied(occupied,ctx.width,ctx.height,s,c.x,c.y,pad,actualOnly);
   }
-  return {placed,leaves,fg};
+  return {placed,leaves,fg,outline};
 }
 function scatterPencil(ctx,backdrop,base,foreground,seed){
-  const points=uniquePoints(ctx.geometry.points),occupied=new Set(),anchors=[];if(!points.length)return {placed:0,leaves:0,fg:0};
+  const points=uniquePoints(ctx.geometry.points),occupied=new Set(),protectedPixels=new Uint8Array(ctx.width*ctx.height),anchors=[];if(!points.length)return {placed:0,leaves:0,fg:0,outline:0};
   const density=clamp(Number(settings.density)||1,1,100)/100,maxOverlap=density<=.68?0:Math.min(.68,(density-.68)/.32*.68),pad=density<.35?2:density<.72?1:0,actualOnly=density>=.72;
-  let placed=0,leaves=0,fg=0;
+  let placed=0,leaves=0,fg=0,outline=0;
   for(const p of points){const s=prepareSprite(settings.type,hashAt(seed,p.x,p.y,107));if(!s)continue;const spacing=Math.max(2,Math.round(s.w*(1.25-.88*density)));let tooClose=false;for(const a of anchors){const dx=p.x-a.x,dy=p.y-a.y;if(dx*dx+dy*dy<spacing*spacing){tooClose=true;break;}}if(tooClose)continue;
-    if(!footprintFits(null,ctx.width,ctx.height,s,p.x,p.y,occupied,maxOverlap))continue;const r=paintSprite(ctx,backdrop,base,foreground,s,p.x,p.y,hashAt(seed,p.x,p.y,109),null);placed++;leaves+=r.leaves;fg+=r.fg;anchors.push({x:p.x,y:p.y});markOccupied(occupied,ctx.width,ctx.height,s,p.x,p.y,pad,actualOnly);
+    if(!footprintFits(null,ctx.width,ctx.height,s,p.x,p.y,occupied,maxOverlap))continue;const r=paintSprite(ctx,backdrop,base,foreground,s,p.x,p.y,hashAt(seed,p.x,p.y,109),null,protectedPixels);placed++;leaves+=r.leaves;fg+=r.fg;outline+=r.outline;anchors.push({x:p.x,y:p.y});markOccupied(occupied,ctx.width,ctx.height,s,p.x,p.y,pad,actualOnly);
   }
-  if(!placed){const p=points[0],s=prepareSprite(settings.type,seed);if(s&&footprintFits(null,ctx.width,ctx.height,s,p.x,p.y,occupied,maxOverlap)){const r=paintSprite(ctx,backdrop,base,foreground,s,p.x,p.y,seed,null);placed=1;leaves=r.leaves;fg=r.fg;}}
-  return {placed,leaves,fg};
+  if(!placed){const p=points[0],s=prepareSprite(settings.type,seed);if(s&&footprintFits(null,ctx.width,ctx.height,s,p.x,p.y,occupied,maxOverlap)){const r=paintSprite(ctx,backdrop,base,foreground,s,p.x,p.y,seed,null,protectedPixels);placed=1;leaves=r.leaves;fg=r.fg;outline=r.outline;}}
+  return {placed,leaves,fg,outline};
 }
 
 function seedFor(ctx){const g=ctx.geometry||{},a=point(g.start)||point(g.seed)||{x:0,y:0},b=point(g.end)||a;return mix32(0x54524545^Math.imul(generation,0x9e3779b1)^Math.imul((a.x+1)>>>0,0x85ebca6b)^Math.imul((a.y+1)>>>0,0xc2b2ae35)^Math.imul((b.x+3)>>>0,0x27d4eb2d)^Math.imul((b.y+5)>>>0,0x165667b1));}
 
-function render(ctx){const backdrop=ctx.layer('backdrop'),base=ctx.baseLayer('backdrop'),foreground=ctx.layer('foreground'),seed=seedFor(ctx);let r={placed:0,leaves:0,fg:0};if(ctx.geometry.tool==='freehand')r=scatterPencil(ctx,backdrop,base,foreground,seed);else{const mask=areaMask(ctx);if(mask&&countMask(mask)>=4)r=scatterArea(ctx,backdrop,base,foreground,mask,seed);}if(ctx.phase==='apply')generation++;const name={standard:'Standard',tropical:'Tropical',evergreen:'Evergreen',autumn:'Autumnal',dead:'Dead',bush:'Bush'}[settings.type]||settings.type;return {message:`${name} committed · ${r.placed} ${settings.type==='bush'?'bushes':'trees'} · base size ${settings.baseSize}${settings.leavesOnGround?` · ${r.leaves} ground leaves`:''}.`};}
+function render(ctx){const backdrop=ctx.layer('backdrop'),base=ctx.baseLayer('backdrop'),foreground=ctx.layer('foreground'),seed=seedFor(ctx);let r={placed:0,leaves:0,fg:0,outline:0};if(ctx.geometry.tool==='freehand')r=scatterPencil(ctx,backdrop,base,foreground,seed);else{const mask=areaMask(ctx);if(mask&&countMask(mask)>=4)r=scatterArea(ctx,backdrop,base,foreground,mask,seed);}if(ctx.phase==='apply')generation++;const name={standard:'Standard',tropical:'Tropical',evergreen:'Evergreen',autumn:'Autumnal',dead:'Dead',bush:'Bush'}[settings.type]||settings.type;return {message:`${name} committed · ${r.placed} ${settings.type==='bush'?'bushes':'trees'} · base size ${settings.baseSize}${settings.leavesOnGround?` · ${r.leaves} ground leaves`:''}${settings.outlineDepth?` · outline ${settings.outlineDepth} (${r.outline} px)`:''}.`};}
 
 function mountControls(container,ctx){
   const types=[['standard','Standard'],['tropical','Tropical'],['evergreen','Evergreen'],['autumn','Autumnal'],['dead','Dead'],['bush','Bush']].map(([value,label])=>({value,label}));
@@ -381,6 +414,7 @@ function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Trunk',value:settings.trunk,options:[{value:'mixed',label:'Mixed'},{value:'brown',label:'Brown'},{value:'grey',label:'Dark grey'}],onChange:value=>{settings.trunk=value;}});
   ctx.ui.checkbox(container,{label:'Leaves on ground',checked:settings.leavesOnGround,onChange:value=>{settings.leavesOnGround=value;}});
   ctx.ui.slider(container,{label:'Leaves density',min:0,max:100,step:1,value:settings.leavesDensity,onInput:value=>{settings.leavesDensity=value;}});
+  ctx.ui.select(container,{label:'Outline depth',value:String(settings.outlineDepth),options:[{value:'0',label:'0'},{value:'1',label:'1'},{value:'2',label:'2'}],onChange:value=>{settings.outlineDepth=Number(value)||0;}});
   ctx.ui.checkbox(container,{label:'Shadow',checked:settings.shadow,onChange:value=>{settings.shadow=value;}});
   ctx.ui.select(container,{label:'Foreground',value:settings.foreground,options:[{value:'none',label:'None'},{value:'split',label:'50%'},{value:'full',label:'100%'}],onChange:value=>{settings.foreground=value;}});
 }
@@ -392,7 +426,7 @@ S.register({
   version:VERSION,
   category:'Scenery',
   status:'prototype',
-  description:'Scatter native Indy Heat source trees/bushes and derived evergreen/autumnal/dead variants over Pencil or filled areas, with real source-scale sizing, density, ground leaves, shadow and Foreground options.',
+  description:'Scatter native Indy Heat source trees/bushes and derived evergreen/autumnal/dead variants over Pencil or filled areas, with real source-scale sizing, density, optional grass-darkening outline, ground leaves, shadow and Foreground options.',
   supportedModes:['backdrop'],
   supportedTools:['freehand','rectangle','rectangle-filled','ellipse','ellipse-filled','fill'],
   layers:['backdrop','foreground'],

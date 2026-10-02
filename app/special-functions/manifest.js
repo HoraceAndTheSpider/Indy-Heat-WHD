@@ -3,12 +3,15 @@
 const modules=Object.freeze([
     'alternate-curbs.js',
     'gravel-trap.js',
+    'grass.js',
     'mesh-fence.js',
     'overhead-advert-board.js',
+    'parapet-walls.js',
     'pit-wall.js',
     'random-people.js',
     'rough-track.js',
     'run-off-areas.js',
+    'track-gradients.js',
     'trees-foliage.js',
     'tyre-wall.js',
     'water.js'

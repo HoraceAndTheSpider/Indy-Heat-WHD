@@ -13,6 +13,12 @@
 
 
 ;
+; Development 1.3 test 51 keeps the test-50 custom-route architecture but corrects
+; explicit IHWP boundary validation.  Boundary records remain present as descriptor-end
+; records and valid link targets, but their own +4.w field is not treated as route-local
+; topology.  Ordinary waypoint links retain strict arena-bounds and six-byte-alignment
+; validation.
+;
 ; Development 1.3 test 50 retains the runtime-proven test-49 private resource /
 ; MiniMap path and removes the remaining custom-circuit retail structural identity.
 ; circuit_10..99 is now selected only by its authored circuit ID and package data: the
@@ -299,7 +305,7 @@ _memcfg
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 50"
+	dc.b	"1.3 test 51"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -2630,13 +2636,21 @@ load_active_custom_routes
 	cmp.l	#CUSTOM_ROUTE_ARENA_END,d7
 	bhi.w	.failed
 
-	; Validate every decoded +4.w relative link.  Valid targets must land on a
-	; six-byte record in the decoded arena.  Only the final boundary may target
-	; the one-past-final +6 sentinel.
+	; Validate ordinary-point +4.w relative links.  Explicit boundary records are
+	; retained as descriptor-end records and valid targets, but their own +4.w may
+	; originate from retail shared/aliased endpoint storage and is not route-local
+	; topology once the three custom routes are private and independent.
 	lea	CUSTOM_ROUTE_ARENA_BASE,a0
+	lea	active_route_ends(pc),a4
 .validate_link
 	cmpa.l	d7,a0
 	bhs.b	.links_ok
+	cmpa.l	(a4),a0
+	beq.b	.next_link
+	cmpa.l	4(a4),a0
+	beq.b	.next_link
+	cmpa.l	8(a4),a0
+	beq.b	.next_link
 	moveq	#0,d0
 	move.w	4(a0),d0
 	ext.l	d0
@@ -2645,18 +2659,13 @@ load_active_custom_routes
 	cmp.l	#CUSTOM_ROUTE_ARENA_BASE,d0
 	blo.w	.failed
 	cmp.l	d7,d0
-	blo.b	.target_in_arena
-	bne.w	.failed
-	move.l	d7,d1
-	subq.l	#6,d1
-	cmp.l	d1,a0
-	bne.w	.failed
-.target_in_arena
+	bhs.w	.failed
 	sub.l	#CUSTOM_ROUTE_ARENA_BASE,d0
 	divu	#6,d0
 	swap	d0
 	tst.w	d0
 	bne.w	.failed
+.next_link
 	lea	6(a0),a0
 	bra.b	.validate_link
 
