@@ -2,6 +2,7 @@
 'use strict';
 const modules=Object.freeze([
     'alternate-curbs.js',
+    'footbridge.js',
     'gravel-trap.js',
     'grass.js',
     'mesh-fence.js',
