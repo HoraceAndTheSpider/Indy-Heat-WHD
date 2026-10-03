@@ -9,7 +9,10 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.3';
+const VERSION='1.004';
+const COLLISION=1;
+const MASK_FOREGROUND=0;
+const MASK_BACKGROUND=1;
 const settings={
   farWall:'fence',
   centre:'concrete',
@@ -204,7 +207,8 @@ function buildPeopleAnchors(ctx,peopleMask,columnsByX,seed){
 /* Generate each person against one immutable pre-people Backdrop snapshot.
  * Body pixels are then committed first; shadows are committed afterwards only
  * where no person's body exists. This lets people stand pixel-adjacent without
- * one person's shadow darkening or overwriting another person. */
+ * one person's shadow darkening or overwriting another person.
+ */
 function scatterPeople(ctx,pixels,peopleMask,columnsByX,seed){
   if(!settings.people)return 0;
   const P=root.IndyHeatPeopleTools;if(!P?.paintPerson||!P?.personFootprint)return 0;
@@ -223,7 +227,22 @@ function scatterPeople(ctx,pixels,peopleMask,columnsByX,seed){
 }
 function applyForeground(ctx,foreground,columns){
   if(!settings.foreground)return;
-  for(const col of columns){const split=(col.top+col.bottom)/2;for(let y=col.top;y<=col.bottom;y++)foreground[y*ctx.width+col.x]=y<=split?1:0;}
+  /* Project invariant: raw 0 = Foreground / artwork in front of the car,
+   * raw 1 = Background / car passes in front. The visually upper/far half of
+   * the island is Foreground; the lower/near half is Background. */
+  for(const col of columns){
+    const split=(col.top+col.bottom)/2;
+    for(let y=col.top;y<=col.bottom;y++)foreground[y*ctx.width+col.x]=y<=split?MASK_FOREGROUND:MASK_BACKGROUND;
+  }
+}
+function applyCollision(ctx,surface,columns){
+  const helper=ctx.helpersFor('surface'),info=ctx.layerInfo('surface'),written=new Set();
+  for(const col of columns)for(let y=col.top;y<=col.bottom;y++){
+    const p=helper.screenToLayer(col.x,y);if(!p)continue;
+    const i=p.y*info.width+p.x;
+    surface[i]=COLLISION;written.add(i);
+  }
+  return written.size;
 }
 function seedFor(bounds){return mix32(0x50495457^Math.imul(generation,0x9e3779b1)^Math.imul(bounds.x0+1,0x85ebca6b)^Math.imul(bounds.y0+1,0xc2b2ae35)^Math.imul(bounds.x1+1,0x27d4eb2d)^Math.imul(bounds.y1+1,0x165667b1));}
 function render(ctx){
@@ -231,19 +250,20 @@ function render(ctx){
   const width=bounds.x1-bounds.x0+1,height=bounds.y1-bounds.y0+1;
   if(width<8||height<7)return {message:'Pit Wall: placement is too small (minimum 8×7 px).'};
 
-  const pixels=ctx.layer('backdrop'),base=ctx.baseLayer('backdrop'),foreground=ctx.layer('foreground'),columns=shapeColumns(bounds);
+  const pixels=ctx.layer('backdrop'),base=ctx.baseLayer('backdrop'),foreground=ctx.layer('foreground'),surface=ctx.layer('surface'),columns=shapeColumns(bounds);
   const wall=renderCentreAndFarWall(ctx,pixels,base,columns,bounds);
   const peopleMask=buildPeopleMask(ctx,columns,wall.farDepth,wall.nearDepth);
   const columnsByX=Array(ctx.width);for(const col of columns)columnsByX[col.x]=col;
 
   applyForeground(ctx,foreground,columns);
+  const collisionCells=applyCollision(ctx,surface,columns);
 
   // Rear wall first, then people, then the front wall for proper depth/occlusion.
   const people=scatterPeople(ctx,pixels,peopleMask,columnsByX,seedFor(bounds));
   renderNearWall(ctx,pixels,columns);
 
   if(ctx.phase==='apply')generation++;
-  return {message:`Pit Wall committed · ${width}×${height}px${settings.ends==='curved'?` · middle width ${settings.middleWidth}%`:''}${settings.people?` · ${people} ${people===1?'person':'people'}`:''}${settings.foreground?' · Foreground split applied':''}.`};
+  return {message:`Pit Wall committed · ${width}×${height}px${settings.ends==='curved'?` · middle width ${settings.middleWidth}%`:''}${settings.people?` · ${people} ${people===1?'person':'people'}`:''}${settings.foreground?' · Foreground split applied':''} · collision ${collisionCells} cells.`};
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Far wall',value:settings.farWall,options:[{value:'solid',label:'Solid wall'},{value:'fence',label:'Yellow / black fence'}],onChange:value=>{settings.farWall=value;}});
@@ -261,10 +281,10 @@ S.register({
   version:VERSION,
   category:'Scenery',
   status:'prototype',
-  description:'Build a stretchable pit-wall island with rounded-width control, three-band concrete far wall or lowered transparent-backed fence, concrete/grass centre, staggered reusable random people depth-layered between the rear and front walls, with rear-wall overlap and non-overpainting shadows, and an upper/lower Foreground split.',
+  description:'Build a stretchable pit-wall island with rounded-width control, three-band concrete far wall or lowered transparent-backed fence, concrete/grass centre, staggered reusable random people, upper-half Foreground occlusion and automatic Surface collision.',
   supportedModes:['backdrop'],
   supportedTools:['rectangle-filled'],
-  layers:['backdrop','foreground'],
+  layers:['backdrop','foreground','surface'],
   mountControls,
   preview:render,
   apply:render

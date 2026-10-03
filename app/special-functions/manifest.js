@@ -2,6 +2,7 @@
 'use strict';
 const modules=Object.freeze([
     'alternate-curbs.js',
+    'bollard.js',
     'footbridge.js',
     'gravel-trap.js',
     'grass.js',
@@ -10,6 +11,9 @@ const modules=Object.freeze([
     'parapet-walls.js',
     'pit-wall.js',
     'random-people.js',
+    'grandstand-people.js',
+    'grandstand.js',
+    'racing-line.js',
     'rough-track.js',
     'run-off-areas.js',
     'track-gradients.js',
