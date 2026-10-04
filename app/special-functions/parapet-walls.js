@@ -18,9 +18,10 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.0';
+const VERSION='1.001';
 const COLLISION=1;
 const MASK_FOREGROUND=0;
+const MASK_BACKGROUND=1;
 
 const settings={
   family:'grey',
@@ -36,7 +37,7 @@ const settings={
   shadowLength:5,
   shadowDrop:3,
   ditherJoins:false,
-  foreground:'full',
+  foreground:'foreground',
   collision:true
 };
 
@@ -69,9 +70,10 @@ const SHADOW_DIR_OPTIONS=Object.freeze([
   Object.freeze({value:'left',label:'Cast left'})
 ]);
 const FG_OPTIONS=Object.freeze([
-  Object.freeze({value:'none',label:'0%'}),
-  Object.freeze({value:'half',label:'50%'}),
-  Object.freeze({value:'full',label:'100%'})
+  Object.freeze({value:'none',label:'None (leave existing)'}),
+  Object.freeze({value:'background',label:'Set background'}),
+  Object.freeze({value:'half',label:'Set 50%'}),
+  Object.freeze({value:'foreground',label:'Set foreground'})
 ]);
 const WALL_COLOURS=Object.freeze(new Set(Object.values(FAMILY_MAP).flatMap(f=>[f.top,f.face,f.dark,f.mid])));
 
@@ -131,9 +133,13 @@ function setBackdrop(ctx,pixels,x,y,index){
   pixels[y*ctx.width+x]=ctx.helpers.validIndex(Number(index)||0);return true;
 }
 function setForegroundPixel(ctx,foreground,x,y,top,bottom){
-  if(settings.foreground==='none')return;
+  const mode=settings.foreground;
+  if(mode==='none')return;
   x=Math.round(x);y=Math.round(y);if(!inBounds(ctx.width,ctx.height,x,y))return;
-  if(settings.foreground==='full'||y<=Math.floor((top+bottom)/2))foreground[y*ctx.width+x]=MASK_FOREGROUND;
+  const i=y*ctx.width+x;
+  if(mode==='background'){foreground[i]=MASK_BACKGROUND;return;}
+  if(mode==='foreground'){foreground[i]=MASK_FOREGROUND;return;}
+  if(mode==='half')foreground[i]=y<=Math.floor((top+bottom)/2)?MASK_FOREGROUND:MASK_BACKGROUND;
 }
 function setCollisionAt(ctx,surface,x,y){
   if(!settings.collision)return;
@@ -291,7 +297,8 @@ function render(ctx){
     setCollisionAt(ctx,surface,sample.x,sample.y);
   }
 
-  return {message:`Parapet Walls committed · ${samples.length} route px · height ${height}px${settings.lowerShade?' · lower shade':''}${settings.alternate?` · alternate ${settings.alternateLength}px`:''}${settings.detailMode==='line'?` · periodic lines ${settings.detailSpacing}px`:settings.detailMode==='gap'?` · gaps ${settings.detailSpacing}px`:''}${settings.shadow?` · ground shadow ${settings.shadowDirection} ${settings.shadowLength}/${settings.shadowDrop}`:''}${settings.ditherJoins?` · dither joins ${joins?'applied':'none detected'}`:''}${settings.collision?' · collision':''} · Foreground ${settings.foreground==='none'?'0':settings.foreground==='full'?'100':'50'}%.`};
+  const maskLabel=settings.foreground==='none'?'leave existing':settings.foreground==='background'?'set background':settings.foreground==='foreground'?'set foreground':'set 50%';
+  return {message:`Parapet Walls committed · ${samples.length} route px · height ${height}px${settings.lowerShade?' · lower shade':''}${settings.alternate?` · alternate ${settings.alternateLength}px`:''}${settings.detailMode==='line'?` · periodic lines ${settings.detailSpacing}px`:settings.detailMode==='gap'?` · gaps ${settings.detailSpacing}px`:''}${settings.shadow?` · ground shadow ${settings.shadowDirection} ${settings.shadowLength}/${settings.shadowDrop}`:''}${settings.ditherJoins?` · dither joins ${joins?'applied':'none detected'}`:''}${settings.collision?' · collision':''} · ${maskLabel}.`};
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Wall colour',value:settings.family,options:FAMILY_OPTIONS,onChange:value=>{settings.family=value;}});
@@ -307,7 +314,7 @@ function mountControls(container,ctx){
   ctx.ui.slider(container,{label:'Shadow length',min:1,max:12,step:1,value:settings.shadowLength,onInput:value=>{settings.shadowLength=value;}});
   ctx.ui.slider(container,{label:'Shadow drop',min:0,max:12,step:1,value:settings.shadowDrop,onInput:value=>{settings.shadowDrop=value;}});
   ctx.ui.checkbox(container,{label:'Dither joins',checked:settings.ditherJoins,onChange:value=>{settings.ditherJoins=value;}});
-  ctx.ui.select(container,{label:'Foreground',value:settings.foreground,options:FG_OPTIONS,onChange:value=>{settings.foreground=value;}});
+  ctx.ui.select(container,{label:'Occlusion',value:settings.foreground,options:FG_OPTIONS,onChange:value=>{settings.foreground=value;}});
   ctx.ui.checkbox(container,{label:'Set collision',checked:settings.collision,onChange:value=>{settings.collision=value;}});
 }
 
@@ -317,7 +324,7 @@ S.register({
   version:VERSION,
   category:'Scenery',
   status:'prototype',
-  description:'Low solid parapet walls for Pencil/Line/Curve with 3–12 px height, light top edge, optional dark lower edge, colour-family alternation, periodic dark joints or transparent gaps, optional ground-projected shadow, conservative adjacent-wall join dithering, Foreground and Surface collision.',
+  description:'Low solid parapet walls for Pencil/Line/Curve with 3–12 px height, light top edge, optional dark lower edge, colour-family alternation, periodic dark joints or transparent gaps, optional ground-projected shadow, conservative adjacent-wall join dithering, explicit occlusion modes and Surface collision.',
   supportedModes:['backdrop'],
   supportedTools:['freehand','line','curve'],
   layers:['backdrop','foreground','surface'],

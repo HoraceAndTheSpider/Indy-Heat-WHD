@@ -6,6 +6,7 @@ const modules=Object.freeze([
     'footbridge.js',
     'gravel-trap.js',
     'grass.js',
+    'hazard-hatching.js',
     'mesh-fence.js',
     'overhead-advert-board.js',
     'parapet-walls.js',
@@ -16,7 +17,9 @@ const modules=Object.freeze([
     'racing-line.js',
     'rough-track.js',
     'run-off-areas.js',
+    'toilet-blocks.js',
     'track-gradients.js',
+    'track-markings.js',
     'trees-foliage.js',
     'tyre-wall.js',
     'water.js'

@@ -13,11 +13,12 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.3';
+const VERSION='1.004';
 const MASK_BACKGROUND=1;
 const TONES=Object.freeze([1,4,5,0,6,7,3]);
 const TONE_POS=Object.freeze(new Map(TONES.map((value,index)=>[value,index])));
 const settings={direction:'up',steps:1,pattern:100};
+let generation=1;
 
 const DIRECTION_OPTIONS=Object.freeze([
   Object.freeze({value:'up',label:'Up / lighter'}),
@@ -29,7 +30,7 @@ const STEP_OPTIONS=Object.freeze([
 ]);
 
 /* 8x8 Bayer matrix. This gives the repeated diagonal/checker texture seen in
- * the retail track gradients without introducing random speckle. */
+ * the retail track gradients at the strongly patterned end of the control. */
 const BAYER8=Object.freeze([
    0,32, 8,40, 2,34,10,42,
   48,16,56,24,50,18,58,26,
@@ -205,14 +206,28 @@ function availableSteps(index,direction,requested){
 }
 function fract(v){return v-Math.floor(v);}
 function irregularThreshold(x,y){
-  /* Interleaved-gradient noise is deterministic and evenly distributed but
-   * avoids the repeated 8x8 Bayer lattice. It is used only as Pattern is
-   * reduced; 100% remains byte-for-byte the original ordered threshold. */
+  /* Historical lowest Pattern behaviour. It is deterministic and evenly
+   * distributed, but retains a faint mathematical texture. Pattern 50 now
+   * reproduces this exact threshold field. */
   return fract(52.9829189*fract(.06711056*x+.00583715*y));
 }
+function mix32(value){let x=Number(value)>>>0;x^=x>>>16;x=Math.imul(x,0x7feb352d);x^=x>>>15;x=Math.imul(x,0x846ca68b);x^=x>>>16;return x>>>0;}
+function randomThreshold(x,y){
+  /* Stable for preview, but generation changes after each committed stroke so
+   * separate gradients do not reuse one visible random field. */
+  const h=mix32(Math.imul((x+0x10001)>>>0,0x9e3779b1)^Math.imul((y+0x20003)>>>0,0x85ebca6b)^Math.imul((generation+1)>>>0,0xc2b2ae35));
+  return (h+.5)/0x100000000;
+}
 function ditherThreshold(x,y){
-  const ordered=(BAYER8[((y&7)<<3)|(x&7)]+.5)/64,p=clamp(Number(settings.pattern)||0,0,100)/100;
-  return ordered*p+irregularThreshold(x,y)*(1-p);
+  const ordered=(BAYER8[((y&7)<<3)|(x&7)]+.5)/64;
+  const irregular=irregularThreshold(x,y),random=randomThreshold(x,y);
+  const p=clamp(Number(settings.pattern)||0,0,100);
+  if(p<=50){
+    /* 0 = completely random, 50 = the old minimum/irregular pattern. */
+    const t=p/50;return random*(1-t)+irregular*t;
+  }
+  /* 50..100 continues from the old minimum into the ordered Bayer pattern. */
+  const t=(p-50)/50;return irregular*(1-t)+ordered*t;
 }
 function toneFor(index,t,direction,requested,x,y){
   const dir=direction==='up'?1:-1,steps=availableSteps(index,direction,requested);
@@ -246,13 +261,14 @@ function render(ctx){
     }
     if(foreground[i]!==MASK_BACKGROUND){foreground[i]=MASK_BACKGROUND;background++;}
   }
+  if(ctx.phase==='apply')generation++;
   const direction=settings.direction==='up'?'lighter':'darker';
-  return {message:`Track Gradients committed · ${requested} tone${requested===1?'':'s'} ${direction} · ${eligible} neutral px · ${changed} tone writes · Background written ${background} px${capped?` · ${capped} px capped to available tone range`:''}.`};
+  return {message:`Track Gradients committed · ${requested} tone${requested===1?'':'s'} ${direction} · Pattern ${Math.round(Number(settings.pattern)||0)} · ${eligible} neutral px · ${changed} tone writes · Background written ${background} px${capped?` · ${capped} px capped to available tone range`:''}.`};
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Direction',value:settings.direction,options:DIRECTION_OPTIONS,onChange:value=>{settings.direction=value;}});
   ctx.ui.select(container,{label:'Gradient',value:String(settings.steps),options:STEP_OPTIONS,onChange:value=>{settings.steps=Number(value)||1;}});
-  ctx.ui.slider(container,{label:'Pattern',min:0,max:100,step:5,value:settings.pattern,onInput:value=>{settings.pattern=value;}});
+  ctx.ui.slider(container,{label:'Pattern',min:0,max:100,step:1,value:settings.pattern,onInput:value=>{settings.pattern=value;}});
 }
 
 S.register({
@@ -261,7 +277,7 @@ S.register({
   version:VERSION,
   category:'Track',
   status:'prototype',
-  description:'Neutral track gradients. Line/Curve define gradient direction/length, use homogeneous adjacent 2×2 same-tone regions to establish safe track edges, recover thin neutral markings inside that accepted core, shift black/white/five greys one or two tones lighter/darker, and force the affected area to Background. Pattern control blends fixed ordered dithering with deterministic variation.',
+  description:'Neutral track gradients. Line/Curve define gradient direction/length, use homogeneous adjacent 2×2 same-tone regions to establish safe track edges, recover thin neutral markings inside that accepted core, shift black/white/five greys one or two tones lighter/darker, force the affected area to Background, and vary dither from fully random at Pattern 0 through the previous irregular minimum at 50 to ordered Bayer at 100.',
   supportedModes:['backdrop'],
   supportedTools:['line','curve'],
   layers:['backdrop','foreground'],
