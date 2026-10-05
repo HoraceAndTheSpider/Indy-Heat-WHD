@@ -19,8 +19,10 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.1';
+const VERSION='1.002';
 const COLLISION=1;
+const MASK_FOREGROUND=0;
+const MASK_BACKGROUND=1;
 const settings={colourA:'grey',colourB:'red',runLength:3,foreground:'half',collision:true};
 
 const COLOURS=Object.freeze({
@@ -37,9 +39,10 @@ const COLOURS=Object.freeze({
 });
 const COLOUR_OPTIONS=Object.freeze(Object.entries(COLOURS).map(([value,q])=>Object.freeze({value,label:q.label})));
 const FG_OPTIONS=Object.freeze([
-  Object.freeze({value:'none',label:'0%'}),
-  Object.freeze({value:'half',label:'50%'}),
-  Object.freeze({value:'full',label:'100%'})
+  Object.freeze({value:'none',label:'None (leave existing)'}),
+  Object.freeze({value:'background',label:'Set background'}),
+  Object.freeze({value:'half',label:'Set 50%'}),
+  Object.freeze({value:'foreground',label:'Set foreground'})
 ]);
 
 /* Exact source pattern. O=outer tyre shade, I=inner tyre shade, K=black.
@@ -109,9 +112,12 @@ function makeTyre(colour){
   }
   return {pixels,body};
 }
-function setForegroundForBody(foreground,w,h,x,y,localY,mode){
+function setOcclusionForBody(foreground,w,h,x,y,localY,mode){
   if(mode==='none'||!inBounds(w,h,x,y))return;
-  if(mode==='full'||localY<=2)foreground[y*w+x]=1;
+  const i=y*w+x;
+  if(mode==='background'){foreground[i]=MASK_BACKGROUND;return;}
+  if(mode==='foreground'){foreground[i]=MASK_FOREGROUND;return;}
+  if(mode==='half')foreground[i]=localY<=2?MASK_FOREGROUND:MASK_BACKGROUND;
 }
 function setCollisionAt(ctx,surface,x,y){
   if(!settings.collision)return;const helper=ctx.helpersFor('surface'),p=helper.screenToLayer(x,y);if(!p)return;surface[p.y*ctx.layerInfo('surface').width+p.x]=COLLISION;
@@ -120,7 +126,7 @@ function paintTyre(ctx,backdrop,foreground,surface,anchor,colour){
   const sprite=makeTyre(colour),ox=Math.round(anchor.x)-HOT_X,oy=Math.round(anchor.y)-HOT_Y;let bodyPx=0;
   for(let sy=0;sy<TYRE_H;sy++)for(let sx=0;sx<TYRE_W;sx++){
     const si=sy*TYRE_W+sx,value=sprite.pixels[si];if(value<0)continue;const x=ox+sx,y=oy+sy;if(!inBounds(ctx.width,ctx.height,x,y))continue;backdrop[y*ctx.width+x]=value;
-    if(sprite.body[si]){bodyPx++;setForegroundForBody(foreground,ctx.width,ctx.height,x,y,sy,settings.foreground);setCollisionAt(ctx,surface,x,y);}
+    if(sprite.body[si]){bodyPx++;setOcclusionForBody(foreground,ctx.width,ctx.height,x,y,sy,settings.foreground);setCollisionAt(ctx,surface,x,y);}
   }
   return bodyPx;
 }
@@ -155,7 +161,7 @@ function paintTyreTopLeft(ctx,backdrop,foreground,surface,sprite,ox,oy,mask=null
     const si=sy*TYRE_W+sx,value=sprite.pixels[si];if(value<0)continue;const x=ox+sx,y=oy+sy;if(!inBounds(ctx.width,ctx.height,x,y))continue;
     if(mask&&mask[y*ctx.width+x]!==1)continue;
     backdrop[y*ctx.width+x]=value;
-    if(sprite.body[si]){bodyPx++;setForegroundForBody(foreground,ctx.width,ctx.height,x,y,sy,settings.foreground);setCollisionAt(ctx,surface,x,y);}
+    if(sprite.body[si]){bodyPx++;setOcclusionForBody(foreground,ctx.width,ctx.height,x,y,sy,settings.foreground);setCollisionAt(ctx,surface,x,y);}
   }
   return bodyPx;
 }
@@ -204,18 +210,26 @@ function renderArea(ctx,backdrop,foreground,surface){
   }
   return {tyres,rows:rows.length,bodyPx,darkened};
 }
+function occlusionLabel(){
+  return settings.foreground==='none'?'leave existing':settings.foreground==='background'?'set background':settings.foreground==='foreground'?'set foreground':'set 50%';
+}
 function render(ctx){
   const backdrop=ctx.layer('backdrop'),foreground=ctx.layer('foreground'),surface=ctx.layer('surface');let result;
   if(ctx.geometry.tool==='line'||ctx.geometry.tool==='curve')result=renderPath(ctx,backdrop,foreground,surface);
   else result=renderArea(ctx,backdrop,foreground,surface);
   const a=tyreColour(settings.colourA).label,b=tyreColour(settings.colourB).label;
-  return {message:`Tyre Wall committed · ${result.tyres} tyres${result.rows?` · ${result.rows} rows`:''} · ${a}/${b} · run ${settings.runLength}${settings.collision?' · collision':''} · Foreground ${settings.foreground==='none'?'0':settings.foreground==='full'?'100':'50'}%.`};
+  return {message:`Tyre Wall committed · ${result.tyres} tyres${result.rows?` · ${result.rows} rows`:''} · ${a}/${b} · run ${settings.runLength}${settings.collision?' · collision':''} · ${occlusionLabel()}.`};
+}
+function remount(container,ctx){
+  if(container?.replaceChildren){container.replaceChildren();mountControls(container,ctx);}
+  ctx.requestRedraw?.();
 }
 function mountControls(container,ctx){
   ctx.ui.select(container,{label:'Colour A',value:settings.colourA,options:COLOUR_OPTIONS,onChange:value=>{settings.colourA=value;}});
   ctx.ui.select(container,{label:'Colour B',value:settings.colourB,options:COLOUR_OPTIONS,onChange:value=>{settings.colourB=value;}});
+  ctx.ui.button(container,{label:'Swap colours',onClick:()=>{const a=settings.colourA;settings.colourA=settings.colourB;settings.colourB=a;remount(container,ctx);}});
   ctx.ui.slider(container,{label:'Colour run',min:1,max:20,step:1,value:settings.runLength,onInput:value=>{settings.runLength=value;}});
-  ctx.ui.select(container,{label:'Foreground',value:settings.foreground,options:FG_OPTIONS,onChange:value=>{settings.foreground=value;}});
+  ctx.ui.select(container,{label:'Occlusion',value:settings.foreground,options:FG_OPTIONS,onChange:value=>{settings.foreground=value;}});
   ctx.ui.checkbox(container,{label:'Set collision',checked:settings.collision,onChange:value=>{settings.collision=value;}});
 }
 
@@ -225,7 +239,7 @@ S.register({
   version:VERSION,
   category:'Track',
   status:'prototype',
-  description:'Procedural single-row and staggered multi-row tyre walls using the supplied shadow, colour and overlap references, with colour runs, Foreground and Surface collision.',
+  description:'Procedural single-row and staggered multi-row tyre walls using the supplied shadow, colour and overlap references, with colour runs, colour swap, explicit occlusion modes and Surface collision.',
   supportedModes:['backdrop'],
   supportedTools:['line','curve','rectangle','rectangle-filled','ellipse','ellipse-filled','fill'],
   layers:['backdrop','foreground','surface'],

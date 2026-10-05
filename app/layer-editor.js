@@ -13,7 +13,8 @@ if(!view)return;
 let model=null,currentIndex=0,currentResources=null;
 let raceRecords=[],researchWaypoints=null;
 let bg=null,mask=null,surface=null,heading=null;
-let editMode=null,gesture=null,history=[];
+let editMode=null,gesture=null;
+const layerUndoByKey=new Map(),layerRedoByKey=new Map();
 let manualLoadSerial=0,manualLayerRequested=false,redrawPending=false;
 const originals=new Map();
 const dirtyResources=new Set();
@@ -85,7 +86,7 @@ function injectStyles(){
     #layerBrushHatch:disabled{opacity:.42;cursor:default}
     .layerActionBtns{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .layerActionBtns button{font-size:11px;padding:6px}
-    #layerInvert{grid-column:1/-1}
+    #layerRevert,#layerInvert{grid-column:1/-1}
     #layerEditorStatus{margin:8px 0 0;min-height:34px;font-size:11px;line-height:1.35}
     #circuitViewportToggle{display:block;width:100%;margin-top:9px;font-size:12px;padding:6px}
     #circuitViewportToggle.active{border-color:#d6b54a;background:#5a4a1c}
@@ -185,6 +186,7 @@ function setupControls(){
         </div>
         <div class="layerActionBtns">
           <button id="layerUndo" type="button">Undo</button>
+          <button id="layerRedo" type="button">Redo</button>
           <button id="layerRevert" type="button">Revert layer</button>
           <button id="layerInvert" type="button" hidden>Invert layer</button>
         </div>
@@ -225,7 +227,7 @@ function setupControls(){
     tools:$('layerEditorTools'),
     paintChoices:$('layerPaintChoices'),stencilPalette:$('layerStencilPalette'),
     brushSize:$('layerBrushSize'),brushSizeText:$('layerBrushSizeText'),brushShape:$('layerBrushShape'),brushHatch:$('layerBrushHatch'),
-    undo:$('layerUndo'),revert:$('layerRevert'),invert:$('layerInvert'),status:$('layerEditorStatus'),
+    undo:$('layerUndo'),redo:$('layerRedo'),revert:$('layerRevert'),invert:$('layerInvert'),status:$('layerEditorStatus'),
     viewportToggle:$('circuitViewportToggle')
   };
 }
@@ -340,7 +342,7 @@ function selectedTrack(index){
   currentResources.forEach(rememberOriginal);
   const race=raceRecords.find(r=>r.baseResourceId===base)||null;
   researchWaypoints=race?.waypointDescriptors||null;
-  decodeCurrent();history=[];
+  decodeCurrent();
   updateToolbar();queueRedraw(true);
 }
 
@@ -352,7 +354,7 @@ async function loadDiskBytes(bytes,label='Disk.1'){
       r.baseResourceId=T.raceBaseResourceId(r,model.resourceTableOffset+0x1000);
       r.waypointDescriptors=T.parseWaypointDescriptors(model.main,r);
     });
-    originals.clear();dirtyResources.clear();history=[];gesture=null;
+    originals.clear();dirtyResources.clear();layerUndoByKey.clear();layerRedoByKey.clear();gesture=null;
     selectedTrack(Number($('trackSelect')?.value)||0);
     setLayerStatus(`${label} ready for layer editing.`);
   }catch(e){
@@ -485,7 +487,9 @@ function updateToolbar(){
   if(!editMode)return;
 
   const res=activeResource(),dirty=resourceDirty(res);
-  ui.undo.disabled=!history.some(h=>h.resourceId===res?.id);
+  const name=layerNameForMode(),key=historyKey(name,res);
+  ui.undo.disabled=!historyStack(layerUndoByKey,key,false)?.length;
+  ui.redo.disabled=!historyStack(layerRedoByKey,key,false)?.length;
   ui.revert.disabled=!dirty;
   ui.invert.hidden=editMode!=='mask';
   ui.invert.disabled=editMode!=='mask'||!res;
@@ -820,28 +824,79 @@ function writeBrushedPoints(points,value,size=brushSize(),shape=brushShape(),hat
   writePoints(brushed(points,size,shape,hatched,hatchPhase),value);
 }
 
+function layerNameForMode(mode=editMode){return mode==='mask'?'foreground':mode==='surface'?'surface':null;}
+function resourceForLayer(name){if(!currentResources)return null;return name==='foreground'?currentResources[1]:name==='surface'?currentResources[2]:null;}
+function historySourceKey(){
+  const o=$('trackSelect')?.selectedOptions?.[0];
+  if(o?.dataset?.indyheatPackageKey)return `package:${o.dataset.indyheatPackageKey}`;
+  const retail=o?.dataset?.indyheatRetailIndex;
+  return `retail:${retail==null?(o?.value??currentIndex):retail}`;
+}
+function historyKey(name=layerNameForMode(),res=resourceForLayer(name)){return name&&res?`${historySourceKey()}:${name}:${res.id}`:null;}
+function historyStack(map,key,create=true){if(!key)return null;if(!map.has(key)&&create)map.set(key,[]);return map.get(key)||null;}
+function syncResourceAcrossModels(res){
+  if(!res?.data)return 0;
+  const C=globalThis.IndyHeatRaceSetupCapture,seen=new Set(),models=[C?.coreModel,C?.layerModel,C?.model,...(C?.models||[])];let n=0;
+  for(const m of models){
+    if(!m||seen.has(m)||typeof m.getResource!=='function')continue;seen.add(m);
+    try{const peer=m.getResource(res.id);if(peer&&peer!==res&&peer.data?.length===res.data.length){peer.data.set(res.data);n++;}}catch(_e){}
+  }
+  return n;
+}
+function pushLayerHistory(name,before,after,label='Layer edit',res=resourceForLayer(name)){
+  if(!name||!res||!before||!after||arraysEqual(before,after))return false;
+  const key=historyKey(name,res),undo=historyStack(layerUndoByKey,key),redo=historyStack(layerRedoByKey,key);
+  undo.push({resourceId:res.id,layer:name,before:Uint8Array.from(before),after:Uint8Array.from(after),label:String(label||'Layer edit')});
+  if(undo.length>30)undo.shift();redo.length=0;return true;
+}
 function beginHistory(){
-  const res=activeResource();if(!res)return null;
-  return {resourceId:res.id,before:res.data.slice(),trackIndex:currentIndex,mode:editMode};
+  const name=layerNameForMode(),res=activeResource();if(!name||!res)return null;
+  return {resourceId:res.id,layer:name,before:res.data.slice(),trackIndex:currentIndex,mode:editMode};
 }
 function commitHistory(entry){
   if(!entry)return;
-  const res=activeResource();
-  if(!res||arraysEqual(entry.before,res.data))return;
-  history.push(entry);updateDirty(res);updateSurfaceStats();updateToolbar();queueRedraw();
+  const res=activeResource();if(!res||entry.resourceId!==res.id)return;
+  const after=res.data.slice();
+  if(!pushLayerHistory(entry.layer,entry.before,after,`${entry.layer==='surface'?'Surface':'Foreground'} edit`,res))return;
+  syncResourceAcrossModels(res);updateDirty(res);updateSurfaceStats();updateToolbar();queueRedraw();
+}
+function recordExternalLayerHistory({beforeLayers,afterLayers,label='Special Function'}={}){
+  let recorded=false,surfaceChanged=false;
+  for(const name of ['foreground','surface']){
+    const before=beforeLayers?.[name],after=afterLayers?.[name],res=resourceForLayer(name);
+    if(!before||!after||!res||arraysEqual(before,after))continue;
+    if(!arraysEqual(res.data,after))res.data.set(after.subarray?after.subarray(0,res.data.length):after);
+    syncResourceAcrossModels(res);
+    if(pushLayerHistory(name,before,after,label,res)){recorded=true;surfaceChanged=surfaceChanged||name==='surface';updateDirty(res);}
+  }
+  if(recorded){if(surfaceChanged)updateSurfaceStats();updateToolbar();queueRedraw(true);}
+  return recorded;
 }
 function undo(){
-  const res=activeResource();if(!res)return;
-  let i=-1;for(let n=history.length-1;n>=0;n--)if(history[n].resourceId===res.id){i=n;break;}
-  if(i<0)return;
-  const h=history.splice(i,1)[0];res.data.set(h.before);decodeCurrent();updateDirty(res);updateToolbar();queueRedraw(true);
-  setLayerStatus(`${editMode==='surface'?'Surface':'Foreground'} edit undone.${resourceDirty(res)?' · Modified':''}`);
+  const name=layerNameForMode(),res=activeResource(),key=historyKey(name,res),stack=historyStack(layerUndoByKey,key,false);
+  if(!name||!res||!stack?.length)return;
+  const h=stack.pop();res.data.set(h.before);syncResourceAcrossModels(res);
+  const redo=historyStack(layerRedoByKey,key);redo.push(h);if(redo.length>30)redo.shift();
+  decodeCurrent();updateDirty(res);updateToolbar();queueRedraw(true);
+  setLayerStatus(`${name==='surface'?'Surface':'Foreground'} edit undone · ${h.label}.${resourceDirty(res)?' · Modified':''}`);
+}
+function redo(){
+  const name=layerNameForMode(),res=activeResource(),key=historyKey(name,res),stack=historyStack(layerRedoByKey,key,false);
+  if(!name||!res||!stack?.length)return;
+  const h=stack.pop();res.data.set(h.after);syncResourceAcrossModels(res);
+  const undo=historyStack(layerUndoByKey,key);undo.push(h);if(undo.length>30)undo.shift();
+  decodeCurrent();updateDirty(res);updateToolbar();queueRedraw(true);
+  setLayerStatus(`${name==='surface'?'Surface':'Foreground'} edit redone · ${h.label}.${resourceDirty(res)?' · Modified':''}`);
 }
 function revertLayer(){
-  const res=activeResource(),orig=res&&originals.get(res.id);if(!res||!orig)return;
-  res.data.set(orig);history=history.filter(h=>h.resourceId!==res.id);decodeCurrent();updateDirty(res);updateToolbar();queueRedraw(true);
-  setLayerStatus(`${editMode==='surface'?'Surface':'Foreground'} restored to the loaded disk.`);
+  const name=layerNameForMode(),res=activeResource(),orig=res&&originals.get(res.id);if(!name||!res||!orig)return;
+  res.data.set(orig);syncResourceAcrossModels(res);
+  const key=historyKey(name,res);layerUndoByKey.delete(key);layerRedoByKey.delete(key);
+  decodeCurrent();updateDirty(res);updateToolbar();queueRedraw(true);
+  setLayerStatus(`${name==='surface'?'Surface':'Foreground'} restored to the loaded disk.`);
 }
+globalThis.IndyHeatLayerHistory=Object.freeze({recordHistory:recordExternalLayerHistory,syncUi:updateToolbar});
+
 function invertForegroundLayer(){
   if(editMode!=='mask'||!currentResources)return;
   const res=currentResources[1];
@@ -869,9 +924,9 @@ function revertAllLayers(){
   if(!model||!dirtyResources.size)return;
   for(const id of Array.from(dirtyResources)){
     const orig=originals.get(id);if(!orig)continue;
-    try{model.getResource(id).data.set(orig);}catch(_){}
+    try{const res=model.getResource(id);res.data.set(orig);syncResourceAcrossModels(res);}catch(_){}
   }
-  dirtyResources.clear();history=[];
+  dirtyResources.clear();layerUndoByKey.clear();layerRedoByKey.clear();
   if(currentResources)decodeCurrent();
   updateToolbar();queueRedraw(true);
 }
@@ -1100,7 +1155,7 @@ ui.showSurface.addEventListener('change',()=>queueRedraw());
 ui.modeWaypoints.addEventListener('click',e=>{e.preventDefault();enterWaypointMode();});
 ui.editMask.addEventListener('click',e=>{e.preventDefault();enterEdit('mask');});
 ui.editSurface.addEventListener('click',e=>{e.preventDefault();enterEdit('surface');});
-ui.undo.addEventListener('click',undo);ui.revert.addEventListener('click',revertLayer);ui.invert.addEventListener('click',invertForegroundLayer);
+ui.undo.addEventListener('click',undo);ui.redo.addEventListener('click',redo);ui.revert.addEventListener('click',revertLayer);ui.invert.addEventListener('click',invertForegroundLayer);
 document.querySelectorAll('input[name="layerTool"]').forEach(r=>r.addEventListener('change',()=>{
   if(gesture?.multiClick)cancelClickShape('Shape cancelled.');
   else gesture=null;

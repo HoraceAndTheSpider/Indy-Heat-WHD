@@ -1,3 +1,12 @@
+## v0.189 — Isolated Backdrop / Foreground / Surface Undo/Redo
+
+- Split Backdrop, Foreground and Surface into independent Undo/Redo histories, scoped to the active circuit/package.
+- Added Redo beside Undo in Foreground and Surface mode.
+- Routed Special Function and multi-layer brush Foreground/Surface changes into the appropriate layer history instead of retaining them inside Backdrop history.
+- Synchronised committed manual Foreground/Surface edits across the live editor models, preventing another editor path from later restoring a stale copy.
+- Routed Auto collision map changes through the Surface history queue while retaining its legacy fallback when the layer-history bridge is unavailable.
+- Editor version advanced to v0.189.
+
 ## v0.118 — Waypoint structural controls restored
 
 - Restored the Waypoint mode structural controls (Add waypoint, Delete waypoint, Clean route data and Flip all waypoints L/R) to the visible main Waypoint panel.

@@ -120,19 +120,41 @@ function pushHistoryRecord(record){
   const stack=sourceUndo();stack.push(record);if(stack.length>30)stack.shift();
   sourceRedo().length=0;syncHistoryButtons();return record;
 }
+function routeLayerHistory(beforeLayers,afterLayers,label='Backdrop'){
+  // Scratch owns its three temporary layers as one isolated workspace. Normal
+  // circuit Foreground/Surface history belongs to layer-editor.js instead, so a
+  // later Backdrop Undo can never restore an old Foreground/Surface snapshot.
+  if(scratchActive||!root.IndyHeatLayerHistory?.recordHistory)return {beforeLayers,afterLayers,layerRecorded:false};
+  const layerBefore={},layerAfter={},backdropBefore={},backdropAfter={};
+  if(beforeLayers?.backdrop&&afterLayers?.backdrop){backdropBefore.backdrop=beforeLayers.backdrop;backdropAfter.backdrop=afterLayers.backdrop;}
+  for(const name of ['foreground','surface']){
+    const before=beforeLayers?.[name],after=afterLayers?.[name];
+    if(!before||!after||arraysEqual(before,after))continue;
+    layerBefore[name]=before;layerAfter[name]=after;
+  }
+  let layerRecorded=false;
+  if(Object.keys(layerBefore).length)layerRecorded=!!root.IndyHeatLayerHistory.recordHistory({beforeLayers:layerBefore,afterLayers:layerAfter,label});
+  // If the layer editor is not ready yet, keep the original combined record as
+  // a safe fallback rather than silently dropping undo coverage.
+  if(Object.keys(layerBefore).length&&!layerRecorded)return {beforeLayers,afterLayers,layerRecorded:false};
+  return {beforeLayers:backdropBefore,afterLayers:backdropAfter,layerRecorded};
+}
 function pushUndo(value){
   const item=historyBefore(value);if(!item)return null;
   const after={};for(const name of Object.keys(item.layers)){const bytes=rawLayerBytes(name);if(bytes)after[name]=bytes;}
-  return pushHistoryRecord(buildHistoryRecord(item.layers,after,item.label));
+  const routed=routeLayerHistory(item.layers,after,item.label),record=buildHistoryRecord(routed.beforeLayers,routed.afterLayers,item.label);
+  return pushHistoryRecord(record)||routed.layerRecorded;
 }
 function recordExternalHistory({beforeLayers,afterLayers,label='Backdrop'}={}){
-  return pushHistoryRecord(buildHistoryRecord(beforeLayers,afterLayers,label));
+  const routed=routeLayerHistory(beforeLayers,afterLayers,label),record=buildHistoryRecord(routed.beforeLayers,routed.afterLayers,label);
+  return pushHistoryRecord(record)||routed.layerRecorded;
 }
 function augmentLastHistory({beforeLayers,afterLayers,label='Backdrop',matchBackdropBefore=null,matchBackdropAfter=null}={}){
-  const extra=buildHistoryRecord(beforeLayers,afterLayers,label);if(!extra)return null;
+  const routed=routeLayerHistory(beforeLayers,afterLayers,label),extra=buildHistoryRecord(routed.beforeLayers,routed.afterLayers,label);
+  if(!extra){syncHistoryButtons();return routed.layerRecorded||null;}
   const stack=sourceUndo(),last=stack[stack.length-1];
   const canMerge=!!(last&&matchBackdropBefore&&matchBackdropAfter&&last.before?.layers?.backdrop&&last.after?.layers?.backdrop&&arraysEqual(last.before.layers.backdrop,matchBackdropBefore)&&arraysEqual(last.after.layers.backdrop,matchBackdropAfter));
-  if(!canMerge)return pushHistoryRecord(extra);
+  if(!canMerge)return pushHistoryRecord(extra)||routed.layerRecorded;
   for(const [name,bytes] of Object.entries(extra.before.layers))if(!last.before.layers[name])last.before.layers[name]=Uint8Array.from(bytes);
   for(const [name,bytes] of Object.entries(extra.after.layers))last.after.layers[name]=Uint8Array.from(bytes);
   last.label=String(label||last.label||'Backdrop');sourceRedo().length=0;syncHistoryButtons();return last;

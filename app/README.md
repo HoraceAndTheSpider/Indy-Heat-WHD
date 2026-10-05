@@ -1,6 +1,6 @@
 # Indy Heat Amiga Circuit Editor
 
-Current editor version: **v0.188**.
+Current editor version: **v0.189**.
 
 This directory is the complete deployable browser editor. It is intentionally kept separate from reverse-engineering probes, historical integration patches and Node test files so the live application has one clear runtime file set.
 
@@ -55,7 +55,7 @@ Foreground edit mode includes **Invert layer**. It flips the complete 320×256 1
 
 Foreground mask polarity is explicit and must not be inferred from object position: **`1` means circuit artwork is in front of the car (the car is driven under it); `0` means the artwork remains behind the car (the car is drawn over it)**. Screen Y increases downwards (`0` at the top, `255` at the bottom), so for perspective structures such as an overhead board the support with the smaller foot Y is farther up-screen and normally remains `0`, while the nearer support and banner are `1`. Special Functions and brush metadata must use this same polarity.
 
-Backdrop Undo/Redo is action-based. Each action records only the logical layers it actually changed; a Backdrop-only action therefore cannot roll back unrelated Foreground or Surface work. A multi-layer Special Function or brush placement records its Backdrop/Foreground/Surface changes as one action and is undone/redone together.
+Undo/Redo history is layer-isolated. Backdrop, Foreground and Surface each keep their own per-circuit/package Undo/Redo queue. Multi-layer Special Functions and brush placements register their Foreground/Surface changes with those layer queues rather than embedding old layer snapshots in Backdrop history, so undoing later Backdrop work cannot roll back unrelated manual Foreground or Surface edits. Foreground and Surface each expose their own Undo and Redo controls.
 
 Custom race length is **1–20 laps**. The editor uses the established runtime-supported range and does not widen the WHDLoad gameplay contract.
 

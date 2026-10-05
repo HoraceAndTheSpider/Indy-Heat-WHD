@@ -190,7 +190,8 @@ function run(){
     const q=calculate();
     if(!q.changed){status(`Auto collision map: no surface changes · ${q.areas} route-backed road areas · ${q.gaps} route gaps kept driveable · threshold ${q.threshold}px.`);return;}
     if(!syncBytes(2,q.bytes))throw new Error('No active editor model accepted the generated surface map.');
-    undo={source:sourceKey(),before:q.before,after:q.bytes.slice()};refreshView();
+    const recorded=!!root.IndyHeatLayerHistory?.recordHistory?.({beforeLayers:{surface:q.before},afterLayers:{surface:q.bytes.slice()},label:'Auto collision map'});
+    undo=recorded?null:{source:sourceKey(),before:q.before,after:q.bytes.slice()};refreshView();
     setTimeout(()=>status(`Auto collision map: ${q.changed} cells updated · ${q.normalCells} Normal · ${q.collisionCells} Collision · ${q.gaps} route gaps kept driveable${q.slowdownsCleared?` · ${q.slowdownsCleared} Slowdown cells reset`:''}.`),0);
   }catch(err){status(`ERROR: ${err.message}`,true);}
   finally{running=false;if(button)button.textContent='Auto collision map';setTimeout(syncUi,0);}
@@ -210,7 +211,7 @@ function install(){
   const style=document.createElement('style');style.id='autoCollisionStyle';style.textContent=`#autoCollisionTools{padding-top:7px;border-top:1px solid #343b46}#autoCollisionTools[hidden]{display:none!important}.autoCollisionThresholdRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center;font-size:10px;color:#b8bfca}.autoCollisionThresholdRow span{font:10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#d8dde6}#autoCollisionThreshold{width:100%;margin:5px 0 6px}#autoCollisionRun{width:100%;font-size:11px;padding:6px}.autoCollisionNote{margin-top:5px;font-size:9px;line-height:1.35;color:#8f98a6}`;document.head.appendChild(style);
   document.getElementById('autoCollisionThreshold')?.addEventListener('input',syncUi);
   document.getElementById('autoCollisionRun')?.addEventListener('click',run);
-  document.getElementById('layerUndo')?.addEventListener('click',e=>undoGenerated(e),true);
+  document.getElementById('layerUndo')?.addEventListener('click',e=>{if(!root.IndyHeatLayerHistory?.recordHistory)undoGenerated(e);},true);
   document.getElementById('layerRevert')?.addEventListener('click',()=>{undo=null;},true);
   document.getElementById('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{if(undo&&undo.source!==sourceKey())undo=null;syncUi();},0));
   document.getElementById('layerModeButtons')?.addEventListener('click',()=>setTimeout(syncUi,0),true);
