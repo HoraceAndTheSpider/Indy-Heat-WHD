@@ -7,6 +7,7 @@ const modules=Object.freeze([
     'gravel-trap.js',
     'grass.js',
     'hazard-hatching.js',
+    'hud-panels.js',
     'mesh-fence.js',
     'overhead-advert-board.js',
     'parapet-walls.js',

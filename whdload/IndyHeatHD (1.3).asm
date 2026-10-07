@@ -13,6 +13,13 @@
 
 
 ;
+; Development 1.3 test 52 retains the test-51 route validation and adds an authored
+; 0..12 pixel lower three-player HUD offset.  race_setup.bin grows to $76 with the new
+; +$74.w field.  At active-event preparation the original lower-HUD bar destinations,
+; PIT/status Y and speedometer Y are shifted by that amount; offset zero restores the
+; retail constants, so mixed retail/custom playlists remain unchanged outside authored
+; events.
+;
 ; Development 1.3 test 51 keeps the test-50 custom-route architecture but corrects
 ; explicit IHWP boundary validation.  Boundary records remain present as descriptor-end
 ; records and valid link targets, but their own +4.w field is not treated as route-local
@@ -37,7 +44,7 @@
 ; $93000 bypasses the retail allocator/decompressor.  The old $4440 retail-preview copy
 ; hook is no longer used.
 ;
-; race_setup.bin remains the editor v0.124 $74 layout.  The active event is still rebuilt
+; race_setup.bin uses the editor v0.190 $76 layout; legacy $74 input inherits lower-HUD offset 0.  The active event is still rebuilt
 ; immediately by custom_event_advance, preserving Gasoline Alley look-forward behaviour.
 ; Retail circuits 0..9 continue to use their normal pristine native race records.
 ;
@@ -86,8 +93,9 @@
 ; - the three race descriptors are repointed to the active route arena with
 ;   authored start/end/count values, then route_settings.bin writes the three
 ;   explicit minimum-previous-sequence lap guards at race+$0A/+$16/+$22;
-; - race_setup.bin is the current exact $74 package layout; it explicitly writes
-;   pit pickup centre X/top Y/half-width, Pit approach Y and race+$6C.l Route A/B polarity;
+; - race_setup.bin is the current exact $76 package layout; it explicitly writes
+;   pit pickup centre X/top Y/half-width, Pit approach Y, race+$6C.l Route A/B polarity
+;   and a 0..12 pixel lower three-player HUD offset;
 ; - custom routes retain each authored route's independent point-0 and explicit boundary;
 ;   no retail shared-boundary byte alias is required between route A/B or B/C;
 ; - after the ten pristine retail race records are captured into the high CUSTOM2
@@ -125,7 +133,20 @@ RACE_RECORD_COUNT       EQU     11
 RACE_SENTINEL           EQU     $5E98
 RACE_SETUP_LEGACY_SIZE  EQU     $68             ; indyheat_rXX_setup.bin legacy override only
 RACE_SETUP_V70_SIZE     EQU     $70             ; legacy circuit-package layout
-RACE_SETUP_SIZE         EQU     $74             ; current circuit package layout
+RACE_SETUP_V74_SIZE     EQU     $74             ; previous current layout, no lower-HUD field
+RACE_SETUP_SIZE         EQU     $76             ; current circuit package layout
+CUSTOM_HUD_LOWER_MAX    EQU     12
+LOWER_HUD_LINE_BYTES    EQU     42
+LOWER_HUD_STATUS_Y_IMM  EQU     $6780
+LOWER_HUD_SPEED_Y_IMM   EQU     $67E2
+LOWER_HUD_RED_BAR_IMM   EQU     $683E
+LOWER_HUD_WHITE_BAR_IMM EQU     $6854
+LOWER_HUD_BLUE_BAR_IMM  EQU     $686A
+LOWER_HUD_STATUS_Y_BASE EQU     $00E4
+LOWER_HUD_SPEED_Y_BASE  EQU     $00E7
+LOWER_HUD_RED_BAR_BASE  EQU     $24C8
+LOWER_HUD_WHITE_BAR_BASE EQU    $24D6
+LOWER_HUD_BLUE_BAR_BASE EQU     $24E2
 RACE_NAME_SIZE          EQU     $12             ; race+$70..+$81, 17 display bytes + NUL
 PIT_LONG_COUNT_MINUS1   EQU     21              ; $58 / 4 = 22 longs -> DBF 21
 TRACK_COUNT             EQU     10
@@ -305,7 +326,7 @@ _memcfg
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.3 test 51"
+	dc.b	"1.3 test 52"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -1169,7 +1190,7 @@ race_setup_buffer
 ; stock-package pass deliberately skips them.
 ;
 ; Boot-time sidecars:
-;   race_setup.bin       exact $74 current compact layout
+;   race_setup.bin       exact $76 current compact layout (+$74.w lower-HUD offset)
 ;   route_settings.bin   IHRS v1 / $0C, three route lap-guard values
 ;   presentation.bin     IHPR v2 / $14
 ;   waypoints.bin        IHWP v1, three route payloads
@@ -1345,6 +1366,8 @@ build_circuit_path
 apply_circuit_setup
 	movem.l	d1-d7/a0-a6,-(a7)
 	move.w	d0,d4			; circuit index
+	lea	current_hud_lower_offset(pc),a0
+	clr.w	(a0)			; no/missing legacy sidecar = retail lower-HUD position
 
 	lea	circuit_leaf_race_setup(pc),a1
 	bsr.w	build_circuit_path
@@ -1355,8 +1378,10 @@ apply_circuit_setup
 	move.l	d0,d5			; remember package layout for $6C handling
 	cmp.l	#RACE_SETUP_SIZE,d0
 	beq.b	.have_setup
-	; Keep test-47 $70 stock-package compatibility, but modern circuit_10+
-	; packages must provide the current exact $74 race_setup.bin.
+	cmp.l	#RACE_SETUP_V74_SIZE,d0
+	beq.b	.have_setup
+	; Keep test-47 $70 stock-package compatibility. Custom-library $74 packages
+	; remain valid and inherit lower-HUD offset zero; new exports are exact $76.
 	cmp.w	#TRACK_COUNT,d4
 	bhs.w	.failed
 	cmp.l	#RACE_SETUP_V70_SIZE,d0
@@ -1381,7 +1406,7 @@ apply_circuit_setup
 .stock_setup_src
 	lea	race_setup_buffer(pc),a0
 .parse_setup
-	movea.l	a0,a6			; preserve $74 setup base for appended fields
+	movea.l	a0,a6			; preserve setup base for appended fields
 	moveq	#0,d0
 	move.w	(a0),d0
 	cmp.w	#2,d0
@@ -1412,10 +1437,10 @@ apply_circuit_setup
 	move.w	(a0)+,$30(a3)		; pit pickup half-width
 	move.w	(a0)+,$60(a3)		; Pit approach Y
 
-	; v0.124 appends the authored race+$6C.l Route A/B starting-assignment
-	; polarity. $70 stock packages retain their existing retail value.
-	cmp.l	#RACE_SETUP_SIZE,d5
-	bne.b	.route_assignment_done
+	; v0.124 appended the authored race+$6C.l Route A/B starting-assignment.
+	; $70 stock packages retain their existing retail value; $74/$76 carry it.
+	cmp.l	#RACE_SETUP_V74_SIZE,d5
+	blo.b	.route_assignment_done
 	move.l	$70(a6),d0
 	tst.l	d0
 	beq.b	.route_assignment_ok
@@ -1424,6 +1449,18 @@ apply_circuit_setup
 .route_assignment_ok
 	move.l	d0,$6C(a3)
 .route_assignment_done
+
+	; v0.190 appends a 0..12 pixel lower three-player HUD offset at +$74.w.
+	; Previous $74 packages and stock $70 compatibility inherit zero.
+	cmp.l	#RACE_SETUP_SIZE,d5
+	bne.b	.hud_lower_done
+	moveq	#0,d0
+	move.w	$74(a6),d0
+	cmp.w	#CUSTOM_HUD_LOWER_MAX,d0
+	bhi.w	.failed
+	lea	current_hud_lower_offset(pc),a0
+	move.w	d0,(a0)
+.hud_lower_done
 
 	; Gasoline Alley renders race+$70..+$81. Custom-library name.bin uses its
 	; own high-Chip slot; stock package compatibility retains the local buffer.
@@ -2061,6 +2098,9 @@ active_event_index
 	even
 active_race_ptr
 	dc.l	RACE_RUNTIME_BASE
+current_hud_lower_offset
+	dc.w	0
+	even
 active_route_starts
 	ds.l	CIRCUIT_WAYPOINT_ROUTES
 active_route_ends
@@ -2070,6 +2110,46 @@ active_route_counts
 	even
 ; Pristine retail race-record snapshots live at CUSTOM_WORK_TRACK_SNAPSHOTS.
 	even
+
+;---------------------------------------------------------------------------
+; LOWER THREE-PLAYER HUD POSITION — TEST 52
+;
+; The original HUD bar compositor at $6836 writes masked colour planes into the
+; race bitmap using a 42-byte scanline. Its three destination immediates and the
+; $0E PIT/status / $0D speedometer Y immediates are constants in the retail code.
+; Patch only those operands for the active event. Offset zero writes the exact
+; retail values back, which is required when a retail event follows a custom one.
+;---------------------------------------------------------------------------
+apply_lower_hud_runtime
+	movem.l	d0-d2,-(a7)
+	moveq	#0,d0
+	move.w	current_hud_lower_offset(pc),d0
+
+	move.w	d0,d1
+	addi.w	#LOWER_HUD_STATUS_Y_BASE,d1
+	move.w	d1,LOWER_HUD_STATUS_Y_IMM
+
+	move.w	d0,d1
+	addi.w	#LOWER_HUD_SPEED_Y_BASE,d1
+	move.w	d1,LOWER_HUD_SPEED_Y_IMM
+
+	move.w	d0,d1
+	mulu	#LOWER_HUD_LINE_BYTES,d1
+
+	move.w	d1,d2
+	addi.w	#LOWER_HUD_RED_BAR_BASE,d2
+	move.w	d2,LOWER_HUD_RED_BAR_IMM
+
+	move.w	d1,d2
+	addi.w	#LOWER_HUD_WHITE_BAR_BASE,d2
+	move.w	d2,LOWER_HUD_WHITE_BAR_IMM
+
+	addi.w	#LOWER_HUD_BLUE_BAR_BASE,d1
+	move.w	d1,LOWER_HUD_BLUE_BAR_IMM
+
+	bsr.w	_flushcache
+	movem.l	(a7)+,d0-d2
+	rts
 
 ;---------------------------------------------------------------------------
 ; ACTIVE CUSTOM EVENT ARENA / WORKSPACE — TEST 50
@@ -2170,6 +2250,7 @@ activate_custom_event
 	bsr.w	apply_circuit_setup
 	tst.l	d0
 	beq.w	.asset_failed
+	bsr.w	apply_lower_hud_runtime
 	move.w	d6,d0
 	bsr.w	apply_circuit_cpu_choices
 	tst.l	d0
@@ -2581,7 +2662,7 @@ load_circuit_route_settings
 load_active_custom_pits
 	movem.l	d1-d7/a0-a6,-(a7)
 	; apply_circuit_setup has already exact-size validated and loaded the current
-	; $74 race_setup.bin into CUSTOM_RACE_SETUP_BASE. Reuse that resident copy.
+	; $76 race_setup.bin into CUSTOM_RACE_SETUP_BASE. Reuse that resident copy.
 	lea	CUSTOM_RACE_SETUP_BASE+$10,a0	; four $16 pit records begin at +$10
 	lea	CUSTOM_PIT_ARENA_BASE,a1
 	moveq	#PIT_LONG_COUNT_MINUS1,d6

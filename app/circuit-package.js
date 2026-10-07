@@ -4,11 +4,10 @@
 /*
  * Indy Heat circuit package / regional-presentation bridge.
  *
- * race_setup.bin is now an authored $74-byte package file. Bytes +$68..+$6F
+ * race_setup.bin is now an authored $76-byte package file. Bytes +$68..+$6F
  * carry the proved Pitlane controls; +$70..+$73 carries the Route A/B starting
- * assignment. Legacy $68/$70 packages remain editor-importable and are upgraded on export; the
- * current WHDLoad runtime will be updated separately rather than carrying dual
- * runtime-format checks.
+ * assignment and +$74.w carries the 0..12 px lower three-player HUD offset.
+ * Legacy $68/$70/$74 packages remain editor-importable and are upgraded on export.
  */
 
 const FORMAT='Indy Heat Amiga circuit package';
@@ -56,8 +55,9 @@ const TRACK_SURFACE_SIZE=0x1180;
 const TRACK_RECOVERY_SIZE=0x0460;
 const LEGACY_RACE_SETUP_SIZE=0x68;
 const LEGACY_RACE_SETUP_SIZE_V70=0x70;
-const RACE_SETUP_SIZE=0x74;
-const SUPPORTED_RACE_SETUP_SIZES=Object.freeze([LEGACY_RACE_SETUP_SIZE,LEGACY_RACE_SETUP_SIZE_V70,RACE_SETUP_SIZE]);
+const LEGACY_RACE_SETUP_SIZE_V74=0x74;
+const RACE_SETUP_SIZE=0x76;
+const SUPPORTED_RACE_SETUP_SIZES=Object.freeze([LEGACY_RACE_SETUP_SIZE,LEGACY_RACE_SETUP_SIZE_V70,LEGACY_RACE_SETUP_SIZE_V74,RACE_SETUP_SIZE]);
 const RESOURCE_ENTRY_SIZE=22;
 const RUNTIME_MAIN_BASE=0x1000;
 const REGIONAL_MAP_SCREEN_X=240;
@@ -541,7 +541,7 @@ function parseCircuitZip(bytes){
   if(!TRACK_FOREGROUND_SIZES.includes(resources.foreground.length))throw new Error('foreground.bin must be exactly $2800 or $2804 bytes');
   if(resources.surface.length!==TRACK_SURFACE_SIZE)throw new Error(`surface.bin must be exactly ${hex(TRACK_SURFACE_SIZE)} bytes`);
   if(resources.recovery.length!==TRACK_RECOVERY_SIZE)throw new Error(`recovery.bin must be exactly ${hex(TRACK_RECOVERY_SIZE)} bytes`);
-  validatePreviewBob(previewBin);const waypointRoutes=decodeWaypointsBin(waypointsBin);if(!SUPPORTED_RACE_SETUP_SIZES.includes(raceSetupBin.length))throw new Error(`race_setup.bin must be ${hex(LEGACY_RACE_SETUP_SIZE)}, ${hex(LEGACY_RACE_SETUP_SIZE_V70)} or ${hex(RACE_SETUP_SIZE)} bytes`);const presentation=decodePresentationBin(presentationBin),routeSettings=decodeRouteSettingsBin(routeSettingsBin);
+  validatePreviewBob(previewBin);const waypointRoutes=decodeWaypointsBin(waypointsBin);if(!SUPPORTED_RACE_SETUP_SIZES.includes(raceSetupBin.length))throw new Error(`race_setup.bin must be ${hex(LEGACY_RACE_SETUP_SIZE)}, ${hex(LEGACY_RACE_SETUP_SIZE_V70)}, ${hex(LEGACY_RACE_SETUP_SIZE_V74)} or ${hex(RACE_SETUP_SIZE)} bytes`);const presentation=decodePresentationBin(presentationBin),routeSettings=decodeRouteSettingsBin(routeSettingsBin);
   const legacyRaceSetup=raceSetupBin.length===LEGACY_RACE_SETUP_SIZE;
   return {circuitIndex,folder,resources,previewBin,waypointsBin,raceSetupBin,legacyRaceSetup,presentationBin,presentation,routeSettingsBin,routeSettings,routeLapGuards:routeSettings.lapGuards.slice(),waypointRoutes,routeCounts:waypointRoutes.map(r=>r.points.length)};
 }
@@ -568,7 +568,7 @@ function makePackageFiles({circuitIndex,resources={},previewBin=null,waypointsBi
   return files;
 }
 
-const api={VERSION,LEGACY_RACE_SETUP_SIZE,LEGACY_RACE_SETUP_SIZE_V70,RACE_SETUP_SIZE,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
+const api={VERSION,LEGACY_RACE_SETUP_SIZE,LEGACY_RACE_SETUP_SIZE_V70,LEGACY_RACE_SETUP_SIZE_V74,RACE_SETUP_SIZE,MAP_BOB_SIZE,MAP_WIDTH,MAP_HEIGHT,MAP_RESOURCE_ID,MARKER_RESOURCE_ID,MAP_FRAME_OFFSET,LAP_MIN,LAP_MAX,RACE_OFF,REGIONAL_MAPS,
   PREVIEW_WIDTH,PREVIEW_HEIGHT,PREVIEW_ORIGIN_X,PREVIEW_ORIGIN_Y,PREVIEW_TRANSPARENT,PREVIEW_PLANES,PREVIEW_SIZE,MINIMAP_TEMPLATE_TRANSPARENT,MINIMAP_TEMPLATES,REGIONAL_MAP_SCREEN_X,REGIONAL_MAP_SCREEN_Y,
   PRESENTATION_MAGIC,PRESENTATION_VERSION,PRESENTATION_SIZE,WAYPOINT_MAGIC,WAYPOINT_VERSION,WAYPOINT_ROUTE_COUNT,ROUTE_SETTINGS_MAGIC,ROUTE_SETTINGS_VERSION,ROUTE_SETTINGS_SIZE,ROUTE_LAP_GUARD_MIN,ROUTE_LAP_GUARD_MAX,CIRCUIT_INDEX_MIN,CIRCUIT_INDEX_MAX,
   PRESENTATION_PALETTE_WORDS,PRESENTATION_PALETTE_RGB,PLAYLIST_V1,PLAYLIST_V2,HUD_LAYOUT,HUD_DIGITS,GAME_HUD_DIGITS,HUD_CAR_COLOURS,

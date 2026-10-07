@@ -1,7 +1,7 @@
 (function(root){
 'use strict';
 
-/* Shared brush catalogue — v0.101.
+/* Shared brush catalogue — v0.102.
  *
  * IHBR v2 carries catalogue metadata with the raster; IHBR v1 remains readable.
  * Brush Manager UI lives in brush-manager.js. Auto Foreground lives in
@@ -9,7 +9,7 @@
  * discovery and brush-placement integration only. Procedural Special Functions
  * are isolated in special-functions-host.js and app/special-functions/.
  */
-const VERSION='0.101';
+const VERSION='0.102';
 const entries=new Map();
 const COMPANION_BASE_URL=(typeof document!=='undefined'&&document.currentScript?.src)?new URL('.',document.currentScript.src).href:null;
 function loadCompanionModule(filename,globalName){
@@ -29,7 +29,7 @@ function cloneBrush(brush){
 function normaliseTarget(value){const s=String(value||'').trim().toLowerCase();if(!s)throw new Error('Brush target is required.');return s;}
 function normalisePlacement(placement){
   const p=placement&&typeof placement==='object'?placement:{};
-  let foreground=null,surface=null,position=null;
+  let foreground=null,surface=null;
   if(p.foreground){
     const q=p.foreground===true?{}:p.foreground;
     foreground=Object.freeze({
@@ -53,16 +53,7 @@ function normalisePlacement(placement){
       data:q.data==null?null:Object.freeze(jsonClone(q.data)||{})
     });
   }
-  if(p.position){
-    const q=p.position===true?{}:p.position,mode=String(q.mode||'fixed').trim().toLowerCase();
-    if(mode==='fixed'){
-      const x=Number(q.x),y=Number(q.y),anchor=String(q.anchor||'top-left').trim().toLowerCase();
-      if(!Number.isInteger(x)||!Number.isInteger(y))throw new Error('Fixed brush placement requires integer X/Y coordinates.');
-      if(anchor!=='top-left'&&anchor!=='hotspot')throw new Error(`Unsupported fixed brush anchor ${anchor}.`);
-      position=Object.freeze({mode:'fixed',x,y,anchor,singleInstance:q.singleInstance!==false});
-    }
-  }
-  return Object.freeze({foreground,surface,position});
+  return Object.freeze({foreground,surface});
 }
 function jsonClone(value){
   if(value==null)return value;
@@ -124,6 +115,15 @@ function utf8Decode(bytes){
 function cleanBrushMetadata(metadata){
   if(!metadata||typeof metadata!=='object'||Array.isArray(metadata))return {};
   const out=jsonClone(metadata)||{};
+  // Fixed-position brush placement has been retired. Position-specific tags and
+  // actions from older IHBR files are ignored so those files load as ordinary
+  // movable brushes while retaining any general Foreground/Surface behaviour.
+  if(out.placement&&typeof out.placement==='object'){
+    delete out.placement.position;
+    if(!Object.keys(out.placement).length)delete out.placement;
+  }
+  if(Array.isArray(out.tags))out.tags=out.tags.filter(tag=>!['fixed-placement','single-instance'].includes(String(tag)));
+  if(Array.isArray(out.actions))out.actions=out.actions.filter(action=>String(action)!=='place-fixed');
   out.schema='indyheat.brush';
   out.schemaVersion=1;
   return out;
@@ -339,8 +339,7 @@ function refreshBuiltins(){
 
 const api={
   VERSION,register,remove,removeSource,get,list,materialise,refreshBuiltins,refreshFolderBrushes,scanLocalBrushFolder,
-  registerLocalBrushFiles,entryMetadata,brushFolderStatus,updateEntryMetadata,encodeEntryFile,writeEntryToLocalFolder,
-  placeFixed:placeFixedBackdropEntry
+  registerLocalBrushFiles,entryMetadata,brushFolderStatus,updateEntryMetadata,encodeEntryFile,writeEntryToLocalFolder
 };
 root.IndyHeatBrushLibrary=api;
 
@@ -451,62 +450,6 @@ function currentBackdropSnapshot(){
   const r=firstLayerResource(0),n=root.IndyHeatTrackBackdropTools?.TRACK_BYTES||0xC800;
   return r?Uint8Array.from(r.data.subarray(0,Math.min(n,r.data.length))):null;
 }
-function placeFixedBackdropEntry(idOrEntry){
-  const entry=typeof idOrEntry==='string'?get(idOrEntry):idOrEntry;
-  const position=entry?.placement?.position;
-  if(!entry||entry.target!=='backdrop'||position?.mode!=='fixed')throw new Error('Brush does not define a fixed Backdrop position.');
-  const D=root.IndyHeatTrackBackdropTools;
-  if(!D?.decodeTrackPlanar||!D?.encodeTrackPlanar)throw new Error('Backdrop tools are unavailable.');
-  const before=currentBackdropSnapshot(),brush=entry.brush;
-  if(!before||!brush?.pixels)throw new Error('Backdrop data is unavailable.');
-  const pixels=D.decodeTrackPlanar(before);
-  const left=position.anchor==='hotspot'?position.x-brush.hotspotX:position.x;
-  const top=position.anchor==='hotspot'?position.y-brush.hotspotY:position.y;
-  if(left<0||top<0||left+brush.width>320||top+brush.height>256)
-    throw new Error(`${entry.name} fixed position lies outside the 320×256 Backdrop.`);
-
-  const beforeLayers={backdrop:Uint8Array.from(before)},afterLayers={},changedLayers=[];
-  const beforeForeground=entry.placement.foreground?snapshotLayer(1):null;
-  const beforeSurface=entry.placement.surface?snapshotLayer(2):null;
-  if(beforeForeground)beforeLayers.foreground=Uint8Array.from(beforeForeground);
-  if(beforeSurface)beforeLayers.surface=Uint8Array.from(beforeSurface);
-
-  let changedPixels=0,visiblePixels=0;
-  for(let by=0;by<brush.height;by++)for(let bx=0;bx<brush.width;bx++){
-    const v=brush.pixels[by*brush.width+bx];
-    if(v===brush.transparent)continue;
-    visiblePixels++;
-    const i=(top+by)*320+(left+bx);
-    if(pixels[i]!==v){pixels[i]=v;changedPixels++;}
-  }
-  if(changedPixels){
-    const encoded=D.encodeTrackPlanar(pixels);
-    if(!syncLayerBytes(0,encoded))throw new Error('No active editor model accepted the fixed brush placement.');
-    afterLayers.backdrop=currentBackdropSnapshot();
-    changedLayers.push('Backdrop');
-  }else afterLayers.backdrop=Uint8Array.from(before);
-
-  const anchor=[[left+brush.hotspotX,top+brush.hotspotY]];
-  if(beforeForeground&&entry.placement.foreground){
-    const out=stampForegroundBytes(beforeForeground,brush,anchor,entry.placement.foreground);
-    if(!byteArraysEqual(out,beforeForeground)){
-      if(!syncLayerBytes(1,out))throw new Error('No active editor model accepted the fixed brush Foreground placement.');
-      afterLayers.foreground=Uint8Array.from(out);changedLayers.push('Foreground');
-    }else afterLayers.foreground=Uint8Array.from(beforeForeground);
-  }
-  if(beforeSurface&&entry.placement.surface){
-    const out=stampSurfaceBytes(beforeSurface,brush,anchor,entry.placement.surface);
-    if(!byteArraysEqual(out,beforeSurface)){
-      if(!syncLayerBytes(2,out))throw new Error('No active editor model accepted the fixed brush Surface placement.');
-      afterLayers.surface=Uint8Array.from(out);changedLayers.push('Surface');
-    }else afterLayers.surface=Uint8Array.from(beforeSurface);
-  }
-
-  const changed=changedLayers.length>0;
-  if(changed)root.IndyHeatBackdropWorkspace?.recordHistory?.({beforeLayers,afterLayers,label:entry.name});
-  if(changed)refreshPlacementView();
-  return {changed,entry,x:left,y:top,visiblePixels,changedPixels,layers:changedLayers};
-}
 function refreshPlacementView(){
   const sel=document.getElementById('trackSelect');
   if(sel){
@@ -550,9 +493,6 @@ function syncPlacementUi({resetDefaults=false}={}){
 }
 function selectPlacementEntry(id){
   const entry=get(id);
-  if(entry?.placement?.position?.mode==='fixed'){
-    placementEntryId=null;pendingPlacement=null;syncPlacementUi({resetDefaults:true});return;
-  }
   placementEntryId=entry?.target==='backdrop'?entry.id:null;
   pendingPlacement=null;
   syncPlacementUi({resetDefaults:true});
@@ -774,26 +714,6 @@ function installPlacementListeners(){
     if(!button)return;
     const entry=get(button.dataset.backdropLibraryId);
     if(backdropScratchActive()){clearPlacementEntry();return;}
-    if(entry?.placement?.position?.mode==='fixed'){
-      clearPlacementEntry();
-      let result=null,error=null;
-      try{result=placeFixedBackdropEntry(entry);}catch(err){error=err;}
-      // backdrop-brush-ui has already selected the library brush on the button's
-      // own click handler. Clear it immediately: fixed brushes have no movable
-      // cursor and no second placement click.
-      document.getElementById('backdropBrushClear')?.click();
-      const state=document.getElementById('backdropPaintState');
-      if(state){
-        if(error){state.textContent=`ERROR: ${error.message}`;state.classList.add('bad');}
-        else{
-          state.classList.remove('bad');
-          state.textContent=result?.changed
-            ?`${entry.name} placed at fixed position X ${result.x}, Y ${result.y} · ${result.layers?.join(' + ')||'Backdrop'} applied${result.changedPixels?` · ${result.changedPixels} Backdrop pixels changed`:''}.`
-            :`${entry.name} already matches its fixed position X ${result?.x}, Y ${result?.y}.`;
-        }
-      }
-      return;
-    }
     selectPlacementEntry(button.dataset.backdropLibraryId);
   });
   document.getElementById('backdropBrushClear')?.addEventListener('click',clearPlacementEntry);
@@ -1409,13 +1329,6 @@ function tidyBackdropUi(){
   const legacyIntro=[...pane.querySelectorAll('.muted')].find(el=>/Import an ILBM\/IFF backdrop/i.test(el.textContent||''));
   legacyIntro?.remove();
   configureSharedBrushUi();
-
-  document.querySelectorAll('#backdropBrushLibraryList [data-backdrop-library-id]').forEach(button=>{
-    const entry=get(button.dataset.backdropLibraryId),position=entry?.placement?.position;
-    if(position?.mode!=='fixed')return;
-    button.dataset.fixedPlacement='1';
-    button.title=`${entry.name} · fixed Backdrop position X ${position.x}, Y ${position.y} · click to place`;
-  });
 
   const brushHeader=document.getElementById('backdropBrushLibraryHeader');
   if(brushHeader)brushHeader.querySelector('.muted')?.remove();

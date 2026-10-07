@@ -8,7 +8,10 @@ const PIT_RECORD_COUNT=4;
 const PIT_BLOCK_SIZE=PIT_RECORD_SIZE*PIT_RECORD_COUNT; // $58
 const LEGACY_COMPACT_SIZE=0x68;
 const LEGACY_COMPACT_SIZE_V70=0x70;
-const COMPACT_SIZE=0x74;
+const LEGACY_COMPACT_SIZE_V74=0x74;
+const COMPACT_SIZE=0x76;
+const HUD_LOWER_OFFSET_MIN=0;
+const HUD_LOWER_OFFSET_MAX=12;
 const LAP_MIN=2;
 const LAP_MAX=20;
 const SCREEN_WIDTH=320;
@@ -56,7 +59,8 @@ const COMPACT_LAYOUT=Object.freeze({
   start:{offset:0x06,length:10,source:'race+$62.l/+$66.l/+$6A.w'},
   pits:{offset:0x10,length:PIT_BLOCK_SIZE,source:'four raw $16-byte pit records via race+$32.l'},
   pitlane:{offset:0x68,length:8,source:'race+$2C/+2E/+30/+60 pitlane controls'},
-  routeAssignment:{offset:0x70,length:4,source:'race+$6C.l Route A/B starting assignment'}
+  routeAssignment:{offset:0x70,length:4,source:'race+$6C.l Route A/B starting assignment'},
+  hudLowerOffset:{offset:0x74,length:2,source:'custom lower three-player HUD offset 0..12 pixels'}
 });
 
 // Four start-grid local offsets written by the race setup code into each car's
@@ -80,6 +84,9 @@ function fixedToNumber(v){return Number(v)/65536;}
 function numberToFixed(v){v=Number(v);if(!Number.isFinite(v))throw new Error('16.16 value must be numeric');const n=Math.round(v*65536);if(n<-0x80000000||n>0x7fffffff)throw new Error('16.16 value outside signed 32-bit range');return n;}
 function fixedText(v){const n=fixedToNumber(v);return Number.isInteger(n)?String(n):n.toFixed(4).replace(/0+$/,'').replace(/\.$/,'');}
 function fileOffsetFromRuntime(ptr,mainLength){const off=(Number(ptr)>>>0)-RUNTIME_MAIN_BASE;if(off<0||off+PIT_BLOCK_SIZE>mainLength)throw new Error(`Pit pointer $${(Number(ptr)>>>0).toString(16).toUpperCase()} is outside decrunched main`);return off;}
+function getHudLowerOffset(record){const n=Number(record?.hudLowerOffset);return Number.isInteger(n)?Math.max(HUD_LOWER_OFFSET_MIN,Math.min(HUD_LOWER_OFFSET_MAX,n)):0;}
+function getOriginalHudLowerOffset(record){const n=Number(record?.hudLowerOffsetOriginal);return Number.isInteger(n)?Math.max(HUD_LOWER_OFFSET_MIN,Math.min(HUD_LOWER_OFFSET_MAX,n)):0;}
+function setHudLowerOffset(record,value,{baseline=false}={}){if(!record)throw new Error('Race record required');value=clampInt(value,HUD_LOWER_OFFSET_MIN,HUD_LOWER_OFFSET_MAX,'Lower HUD offset');record.hudLowerOffset=value;if(baseline)record.hudLowerOffsetOriginal=value;else if(record.hudLowerOffsetOriginal==null)record.hudLowerOffsetOriginal=0;return value;}
 
 function parsePitRecord(main,off,index){
   if(off<0||off+PIT_RECORD_SIZE>main.length)throw new Error('Pit record outside decrunched main');
@@ -109,6 +116,7 @@ function parseRaceSetup(main,record){
     startX:s32(be32(main,o+OFF.startX)),startY:s32(be32(main,o+OFF.startY)),
     startOrient:s16(be16(main,o+OFF.startOrient)),
     routeAssignment:be32(main,o+OFF.routeAssignment),
+    hudLowerOffset:getHudLowerOffset(record),
     cpuChoices:Object.freeze({
       turbos:be16(main,o+0x50),brakes:be16(main,o+0x52),tyres:be16(main,o+0x54),
       crew:be16(main,o+0x56),mpg:be16(main,o+0x58),engine:be16(main,o+0x5A)
@@ -177,7 +185,7 @@ function writePit(main,pitFileOffset,index,values={}){
   if(values.slotWord!=null)wr16(main,o+PIT.slotWord,clampInt(values.slotWord,-32768,32767,'Pit slot/side word')&0xffff);
 }
 
-function makeCompactBin(main,record){
+function makeCompactBin(main,record,{hudLowerOffset=null}={}){
   const setup=parseRaceSetup(main,record),o=setup.recordOffset,out=new Uint8Array(COMPACT_SIZE);
   out.set(main.slice(o+OFF.laps,o+OFF.laps+2),COMPACT_LAYOUT.laps.offset);
   out.set(main.slice(o+OFF.flagX,o+OFF.flagX+4),COMPACT_LAYOUT.flag.offset);
@@ -188,11 +196,13 @@ function makeCompactBin(main,record){
   wr16(out,COMPACT_LAYOUT.pitlane.offset+4,setup.pitPickupHalfWidth);
   wr16(out,COMPACT_LAYOUT.pitlane.offset+6,setup.pitApproachY&0xffff);
   wr32(out,COMPACT_LAYOUT.routeAssignment.offset,setup.routeAssignment);
+  const hudOffset=hudLowerOffset==null?getHudLowerOffset(record):clampInt(hudLowerOffset,HUD_LOWER_OFFSET_MIN,HUD_LOWER_OFFSET_MAX,'Lower HUD offset');
+  wr16(out,COMPACT_LAYOUT.hudLowerOffset.offset,hudOffset);
   return out;
 }
-function applyCompactBin(main,record,bin){
+function applyCompactBin(main,record,bin,{baseline=true}={}){
   if(!(bin instanceof Uint8Array))bin=new Uint8Array(bin);
-  if(bin.length!==LEGACY_COMPACT_SIZE&&bin.length!==LEGACY_COMPACT_SIZE_V70&&bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be $68 (${LEGACY_COMPACT_SIZE}), $70 (${LEGACY_COMPACT_SIZE_V70}) or $74 (${COMPACT_SIZE}) bytes`);
+  if(bin.length!==LEGACY_COMPACT_SIZE&&bin.length!==LEGACY_COMPACT_SIZE_V70&&bin.length!==LEGACY_COMPACT_SIZE_V74&&bin.length!==COMPACT_SIZE)throw new Error(`Race setup bin must be $68 (${LEGACY_COMPACT_SIZE}), $70 (${LEGACY_COMPACT_SIZE_V70}), $74 (${LEGACY_COMPACT_SIZE_V74}) or $76 (${COMPACT_SIZE}) bytes`);
   const setup=parseRaceSetup(main,record),o=setup.recordOffset;
   const importedLaps=be16(bin,COMPACT_LAYOUT.laps.offset);
   wr16(main,o+OFF.laps,importedLaps<LAP_MIN?LAP_MIN:importedLaps);
@@ -205,13 +215,15 @@ function applyCompactBin(main,record,bin){
     wr16(main,o+OFF.pitPickupHalfWidth,be16(bin,COMPACT_LAYOUT.pitlane.offset+4));
     wr16(main,o+OFF.pitApproachY,be16(bin,COMPACT_LAYOUT.pitlane.offset+6));
   }
-  if(bin.length>=COMPACT_SIZE)wr32(main,o+OFF.routeAssignment,be32(bin,COMPACT_LAYOUT.routeAssignment.offset));
+  if(bin.length>=LEGACY_COMPACT_SIZE_V74)wr32(main,o+OFF.routeAssignment,be32(bin,COMPACT_LAYOUT.routeAssignment.offset));
+  const hudOffset=bin.length>=COMPACT_SIZE?be16(bin,COMPACT_LAYOUT.hudLowerOffset.offset):0;
+  setHudLowerOffset(record,hudOffset,{baseline});
   return parseRaceSetup(main,record);
 }
 function setupFilename(record){return `indyheat_r${String(Number(record.index)).padStart(2,'0')}_setup.bin`;}
 function arraysEqual(a,b){if(!a||!b||a.length!==b.length)return false;for(let i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true;}
-function isSetupDirty(main,originalMain,record){return !arraysEqual(makeCompactBin(main,record),makeCompactBin(originalMain,record));}
-function revertSetup(main,originalMain,record){return applyCompactBin(main,record,makeCompactBin(originalMain,record));}
+function isSetupDirty(main,originalMain,record){return !arraysEqual(makeCompactBin(main,record),makeCompactBin(originalMain,record,{hudLowerOffset:getOriginalHudLowerOffset(record)}));}
+function revertSetup(main,originalMain,record){return applyCompactBin(main,record,makeCompactBin(originalMain,record,{hudLowerOffset:getOriginalHudLowerOffset(record)}),{baseline:false});}
 
 // $B082 / main+$A082 specialised to X/Z 16.16 with vertical input zero.
 // This is the same code-derived projection already used by the waypoint editor,
@@ -336,8 +348,8 @@ function clampProjectedPairToBounds(xRaw,zRaw,bounds=screenBounds(),iterations=4
 }
 
 
-const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,LEGACY_COMPACT_SIZE_V70,COMPACT_SIZE,LAP_MIN,LAP_MAX,SCREEN_WIDTH,SCREEN_HEIGHT,PIT_PICKUP_HEIGHT,RACE_POINT_MARGIN,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
-  be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,parsePitRecord,parseRaceSetup,
+const api={RUNTIME_MAIN_BASE,RACE_RECORD_SIZE,PIT_RECORD_SIZE,PIT_RECORD_COUNT,PIT_BLOCK_SIZE,LEGACY_COMPACT_SIZE,LEGACY_COMPACT_SIZE_V70,LEGACY_COMPACT_SIZE_V74,COMPACT_SIZE,HUD_LOWER_OFFSET_MIN,HUD_LOWER_OFFSET_MAX,LAP_MIN,LAP_MAX,SCREEN_WIDTH,SCREEN_HEIGHT,PIT_PICKUP_HEIGHT,RACE_POINT_MARGIN,OFF,CPU_CHOICES_OFFSET,CPU_CHOICES_SIZE,LEGACY_CPU_CHOICES_SIZE,CPU_CHOICES,PIT,COMPACT_LAYOUT,GRID_CAR_OFFSETS,
+  be16,be32,s16,s32,wr16,wr32,fixedToNumber,numberToFixed,fixedText,fileOffsetFromRuntime,getHudLowerOffset,getOriginalHudLowerOffset,setHudLowerOffset,parsePitRecord,parseRaceSetup,
   writeCommon,writeCpuChoices,encodeCpuChoicesBin,decodeCpuChoicesBin,applyCpuChoicesBin,writePit,makeCompactBin,applyCompactBin,setupFilename,arraysEqual,isSetupDirty,revertSetup,projectFixedXZ,replaceHighWord,
   mergeProjectedFixed,projectFixed22_6,inverseFixedXZ,
   addFixed32,gridCarPositions,angle16ToCanvasRadians,angle16FromWorldVector,pitHeadingFromRoute,clampNumber,screenBounds,clampScreenPoint,clampProjectedPairToBounds};
@@ -360,6 +372,7 @@ function currentRecord(){
   return records.find(r=>r.baseResourceId===base)||null;
 }
 function currentSetup(){const r=currentRecord();return r&&C.model?parseRaceSetup(C.model.main,r):null;}
+root.IndyHeatRaceSetupState=Object.freeze({currentHudLowerOffset:()=>{const r=currentRecord();return r?getHudLowerOffset(r):0;}});
 function setStatus(s){const el=$('raceSetupStatus');if(el)el.textContent=s;}
 function dirty(){const r=currentRecord();const raceDirty=!!(r&&C.model&&C.originalMain&&isSetupDirty(C.model.main,C.originalMain,r));const hudDirty=!!root.IndyHeatRaceHud?.isDirty?.();return raceDirty||hudDirty;}
 
@@ -418,6 +431,7 @@ function injectUi(){
       </div>
       <div class="raceSetupGrid">
         <label>Laps <span class="raceLapSliderRow"><input id="raceLaps" type="range" min="2" max="20" step="1" title="Authored custom range: 2–20"><output id="raceLapsSliderValue" class="raceLapSliderValue" for="raceLaps">2 laps</output></span></label>
+        <label>Lower HUD <span class="raceLapSliderRow"><input id="raceHudLowerOffset" type="range" min="0" max="12" step="1" title="Moves the live lower HUD graphics down by 0–12 pixels; HUD Panels uses the same offset when placing the three Backdrop panels."><output id="raceHudLowerOffsetValue" class="raceLapSliderValue" for="raceHudLowerOffset">0 px</output></span></label>
         <label>Start orient <input id="raceStartOrient" type="number" min="-32768" max="32767" step="1"></label>
         <input id="raceFlagX" type="hidden"><input id="raceFlagY" type="hidden"><input id="raceStartX" type="hidden"><input id="raceStartY" type="hidden">
         <label>Flag X <span class="racePositionSliderRow"><input id="raceFlagXSlider" type="range" min="0" max="319" step="1"><output id="raceFlagXValue" class="racePositionSliderValue" for="raceFlagXSlider">0</output></span></label>
@@ -457,6 +471,7 @@ function injectUi(){
   mode.addEventListener('click',activate);
   ['layerModeWaypoints','layerEditSurface','layerEditMask','layerEditRecovery','layerEditBackdrop'].forEach(id=>$(id)?.addEventListener('click',()=>{if(active)deactivate();}));
   $('raceLaps').addEventListener('input',commitLapSlider);
+  $('raceHudLowerOffset').addEventListener('input',commitHudLowerOffsetSlider);
   $('racePitSlot').addEventListener('change',e=>{currentPit=Number(e.target.value)||0;const finish=()=>{refreshPanel();draw();};if(EG)EG.frame('race-pit-slot',finish);else requestAnimationFrame(finish);});
   $('raceCopyPitsA').addEventListener('click',()=>copyPitsFromCompare('A'));
   $('raceCopyPitsB').addEventListener('click',()=>copyPitsFromCompare('B'));
@@ -468,8 +483,8 @@ function injectUi(){
   // Hidden compatibility hook for older internal helpers; users no longer need an Apply step.
   $('raceApply').addEventListener('click',applyPanel);
   $('raceRevert').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model||!C.originalMain)return;revertSetup(C.model.main,C.originalMain,r);root.IndyHeatRaceHud?.revertCurrent?.();refreshPanel();draw();setStatus('Selected circuit race setup and HUD position restored to the loaded Disk.1 data.');});
-  $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($74).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8 · Route A/B assignment 4.`);});
-  $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $74 authored race setup.`);});
+  $('raceExport').addEventListener('click',()=>{const r=currentRecord();if(!r||!C.model)return;const b=makeCompactBin(C.model.main,r);downloadBytes(b,setupFilename(r));setStatus(`Exported ${setupFilename(r)} · ${b.length} bytes ($76).\nLayout: laps 2 · flag 4 · start 10 · pits 88 · Pitlane controls 8 · Route A/B assignment 4 · Lower HUD offset 2.`);});
+  $('raceExportAll').addEventListener('click',()=>{if(!C.model||!C.records)return;const seen=new Set(),out=[];for(const base of T.TRACK_BASE_IDS||[]){const r=C.records.find(q=>q.baseResourceId===base);if(!r||seen.has(r.index))continue;seen.add(r.index);downloadBytes(makeCompactBin(C.model.main,r),setupFilename(r));out.push(setupFilename(r));}setStatus(`Exported ${out.length} circuit setup files · ${out.length*COMPACT_SIZE} bytes total.\nEach file is an independent $76 authored race setup.`);});
   $('raceExportMain').addEventListener('click',()=>{if(C.model){const v=String(root.INDY_HEAT_EDITOR_VERSION||'').replace(/\./g,'');downloadBytes(C.model.main,`indyheat_main_modified_v${v}.bin`);}});
   cv.addEventListener('pointerdown',pointerDown);cv.addEventListener('pointermove',pointerMove);cv.addEventListener('pointerup',pointerUp);cv.addEventListener('pointercancel',pointerUp);cv.addEventListener('contextmenu',e=>{if(active)e.preventDefault();});
   $('trackSelect')?.addEventListener('change',()=>setTimeout(()=>{currentPit=0;refreshPanel();draw();},0));
@@ -491,6 +506,22 @@ function activate(){
 }
 function deactivate(){active=false;drag=null;$('layerEditRaceSetup')?.classList.remove('active');$('raceSetupPane').hidden=true;const c=overlayCanvas();c?.classList.remove('editing','dragging');draw();}
 
+function syncHudLowerOffsetReadout(){
+  const input=$('raceHudLowerOffset'),out=$('raceHudLowerOffsetValue');if(!input||!out)return false;
+  let value=Math.round(Number(input.value));if(!Number.isFinite(value))value=0;value=Math.max(HUD_LOWER_OFFSET_MIN,Math.min(HUD_LOWER_OFFSET_MAX,value));
+  const label=`${value} px`;out.value=label;out.textContent=label;out.setAttribute('aria-label',label);return true;
+}
+function commitHudLowerOffsetSlider(){
+  if(!syncHudLowerOffsetReadout())return false;
+  const input=$('raceHudLowerOffset'),r=currentRecord();if(!input||!r)return false;
+  try{
+    const value=setHudLowerOffset(r,Math.round(Number(input.value)),{baseline:false}),d=dirty(),revert=$('raceRevert');
+    if(revert)revert.disabled=!d;
+    document.dispatchEvent(new CustomEvent('indyheat-hud-lower-offset-changed',{detail:{offset:value,recordIndex:r.index}}));
+    setStatus(`${r.name||`Race ${r.index}`} · ${d?'Modified':'Unmodified'} · lower HUD +${value} px. HUD Panels places at Y ${212+value}.`);
+    return true;
+  }catch(e){setStatus(`ERROR: ${e.message}`);return false;}
+}
 function syncLapReadout(){
   const input=$('raceLaps'),out=$('raceLapsSliderValue');if(!input||!out)return false;
   let value=Math.round(Number(input.value));if(!Number.isFinite(value))value=2;value=Math.max(2,Math.min(20,value));
@@ -605,15 +636,15 @@ function commitPositionSlider(e){
 }
 
 function refreshPanel(){
-  const s=currentSetup();if(!s){setStatus('Race setup data is not available for this circuit yet.');return;}
+  const r=currentRecord(),s=currentSetup();if(!s||!r){setStatus('Race setup data is not available for this circuit yet.');return;}
   const put=(id,value)=>{const el=$(id);if(!el)return;if(EG)EG.setValue(el,value);else el.value=String(value??'');};
-  put('raceLaps',s.laps);syncLapReadout();put('racePitPickupX',s.pitPickupX);put('racePitPickupY',s.pitPickupY);put('racePitPickupHalfWidth',s.pitPickupHalfWidth);put('racePitApproachY',s.pitApproachY);put('raceFlagX',s.flagX);put('raceFlagY',s.flagY);put('raceStartX',fixedText(s.startX));put('raceStartY',fixedText(s.startY));put('raceStartOrient',s.startOrient);
+  put('raceLaps',s.laps);syncLapReadout();put('raceHudLowerOffset',s.hudLowerOffset);syncHudLowerOffsetReadout();put('racePitPickupX',s.pitPickupX);put('racePitPickupY',s.pitPickupY);put('racePitPickupHalfWidth',s.pitPickupHalfWidth);put('racePitApproachY',s.pitApproachY);put('raceFlagX',s.flagX);put('raceFlagY',s.flagY);put('raceStartX',fixedText(s.startX));put('raceStartY',fixedText(s.startY));put('raceStartOrient',s.startOrient);
   currentPit=Math.max(0,Math.min(3,currentPit));put('racePitSlot',currentPit);const p=s.pits[currentPit];
   put('raceServiceX',fixedText(p.serviceX));put('raceServiceY',fixedText(p.serviceY));put('raceBoardX',fixedText(p.boardX));put('raceBoardY',fixedText(p.boardY));put('raceScreenX',p.screenX);put('raceScreenY',p.screenY);put('raceSlotWord',p.slotWord);
   syncCompatibilityPositionFields(s);syncPositionSliders(s);
-  const r=currentRecord(),d=dirty();
+  const d=dirty();
   setStatus(`${s.name||`Race ${s.recordIndex}`} · race record ${s.recordIndex} · pit block $${s.pitPointer.toString(16).toUpperCase()}
-${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($74). Drag visible anchors or edit fields.`);
+${d?'Modified':'Unmodified'} · compact export ${COMPACT_SIZE} bytes ($76) · Lower HUD +${s.hudLowerOffset} px. Drag visible anchors or edit fields.`);
   $('raceRevert').disabled=!d;syncRaceCompareCopyButtons();
 }
 function syncRaceCompareCopyButtons(){
@@ -630,11 +661,11 @@ function copyPitsFromCompare(slot){
     if(api?.isCurrent?.(slot))throw new Error(`Comparison ${slot} is the current circuit.`);
     if(!r||!C.model)throw new Error('Race setup data is unavailable for the current circuit.');
     const src=q.raceSetupBin;
-    if(src.length!==LEGACY_COMPACT_SIZE&&src.length!==LEGACY_COMPACT_SIZE_V70&&src.length!==COMPACT_SIZE)throw new Error('Comparison pit data has an unsupported race setup size.');
+    if(src.length!==LEGACY_COMPACT_SIZE&&src.length!==LEGACY_COMPACT_SIZE_V70&&src.length!==LEGACY_COMPACT_SIZE_V74&&src.length!==COMPACT_SIZE)throw new Error('Comparison pit data has an unsupported race setup size.');
     const merged=makeCompactBin(C.model.main,r);
     merged.set(src.slice(COMPACT_LAYOUT.pits.offset,COMPACT_LAYOUT.pits.offset+COMPACT_LAYOUT.pits.length),COMPACT_LAYOUT.pits.offset);
     if(src.length>=LEGACY_COMPACT_SIZE_V70)merged.set(src.slice(COMPACT_LAYOUT.pitlane.offset,COMPACT_LAYOUT.pitlane.offset+COMPACT_LAYOUT.pitlane.length),COMPACT_LAYOUT.pitlane.offset);
-    applyCompactBin(C.model.main,r,merged);currentPit=0;
+    applyCompactBin(C.model.main,r,merged,{baseline:false});currentPit=0;
     const finish=()=>{refreshPanel();draw();setStatus(`Copied all pit/service, crew, board and pitlane data from ${slot} · ${q.label}.`);};
     if(EG)EG.frame('copy-compare-pits',finish);else finish();
   }catch(e){setStatus(`ERROR: ${e.message}`);}
