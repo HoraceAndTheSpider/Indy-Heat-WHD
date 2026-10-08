@@ -247,8 +247,7 @@ function mergeProjectedFixed(raw,new22_6){
   return s32(((((new22_6<<10)>>>0)|(Number(raw)&0x3ff))>>>0));
 }
 function projectFixed22_6(x6,z6){
-  x6=Math.round(Number(x6));z6=Math.round(Number(z6));
-  if(!Number.isFinite(x6)||!Number.isFinite(z6))return null;
+  x6=Math.round(Number(x6));z6=Math.round(Number(z6));  if(!Number.isFinite(x6)||!Number.isFinite(z6))return null;
   const denominator=0x3200+((z6*0x31)>>6);
   if(!denominator)return null;
   return {
@@ -752,9 +751,6 @@ function constrainRacePositions(){
   for(const pit of now.pits){
     changed=writeProjectedInside(now.pitFileOffset,pit.index,'service',pit.serviceX,pit.serviceY,serviceBounds)||changed;
     const latest=currentSetup()?.pits?.[pit.index]||pit;
-    // Retail $08 uses 16-frame player families; $05 uses 76-frame player families.
-    // Use the whole relevant family so an animation frame cannot extend beyond
-    // the canvas even when its anchor itself is still technically on-screen.
     const boardBounds=spriteFamilyAnchorBounds(0x08,pit.index*16,16,0);
     changed=writeProjectedInside(now.pitFileOffset,pit.index,'board',latest.boardX,latest.boardY,boardBounds)||changed;
     const p2=currentSetup()?.pits?.[pit.index]||latest,crewBounds=spriteFamilyAnchorBounds(0x05,pit.index*76,76,0),crew=clampScreenPoint(p2.screenX,p2.screenY,crewBounds);
@@ -809,8 +805,6 @@ function anchor(ctx,x,y,S,text,kind,index=null,drawText=true){
   if(!Number.isFinite(x)||!Number.isFinite(y))return;hitTargets.push({kind,index,x,y});const px=x*S,py=y*S;ctx.save();ctx.lineWidth=Math.max(1.5,.7*S);ctx.strokeStyle='#ffd84a';ctx.fillStyle='rgba(0,0,0,.65)';ctx.beginPath();ctx.arc(px,py,3.2*S,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(px-5*S,py);ctx.lineTo(px+5*S,py);ctx.moveTo(px,py-5*S);ctx.lineTo(px,py+5*S);ctx.stroke();if(drawText)label(ctx,text,px+4*S,py+4*S,S);ctx.restore();
 }
 function drawSprite(ctx,id,index,x,y,S,text,kind,slot=null){
-  // Register/draw the edit cursor first, then draw the authentic sprite over it.
-  // This mirrors the requested layer order: positioned graphic above cursor.
   anchor(ctx,x,y,S,text,kind,slot,false);
   const img=spriteCanvas(id,index);if(img){const {canvas,frame}=img;ctx.save();ctx.imageSmoothingEnabled=false;ctx.drawImage(canvas,(x-frame.xOrigin)*S,(y-frame.yOrigin)*S,canvas.width*S,canvas.height*S);ctx.restore();}
   label(ctx,text,x*S+4*S,y*S+4*S,S);
@@ -840,8 +834,6 @@ function drawPitlaneOverlay(ctx,s,S){
     }
     if(points.length){
       const x1=Math.min(...points.map(q=>q.x))-8,x2=Math.max(...points.map(q=>q.x))+8,y=points[0].y;
-      // The visible race-graphics overlay owns the presentation.  This hidden
-      // canvas owns only editing hit targets: the entire line plus both ends.
       hitTargets.push({kind:'approachLine',x1,y1:y,x2,y2:y});
       hitTargets.push({kind:'approachLine',x:x1,y});
       hitTargets.push({kind:'approachLine',x:x2,y});
@@ -865,8 +857,6 @@ function draw(){
     if($('raceShowBoards')?.checked){const q=projectFixedXZ(p.boardX,p.boardY);if(q)drawSprite(ctx,0x08,0,q.x,q.y,S,`P${p.index+1} PIT`,'board',p.index);}
   }
   if($('raceShowFlag')?.checked&&s.flagX>=0&&s.flagX<320&&s.flagY>=0&&s.flagY<256)drawSprite(ctx,0x0F,26,s.flagX,s.flagY,S,'FLAG','flag');
-  // The old top-left browser-only "LAPS n" diagnostic is intentionally omitted.
-  // The authentic on-track lap presentation is rendered by the Race HUD layer.
   ctx.globalAlpha=1;
 }
 function eventXY(e){const c=overlayCanvas(),r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*320/r.width,y:(e.clientY-r.top)*256/r.height};}
@@ -878,12 +868,10 @@ function segmentDistanceSq(px,py,x1,y1,x2,y2){
 }
 function nearestTarget(x,y){
   let best=null,bd=14*14;
-  // Point handles retain the normal generous hit radius.
   for(const t of hitTargets){
     if(!Number.isFinite(t.x)||!Number.isFinite(t.y))continue;
     const dx=t.x-x,dy=t.y-y,d=dx*dx+dy*dy;if(d<bd){bd=d;best=t;}
   }
-  // Approach line is also directly draggable anywhere along its visible span.
   for(const t of hitTargets){
     if(!Number.isFinite(t.x1)||!Number.isFinite(t.y1)||!Number.isFinite(t.x2)||!Number.isFinite(t.y2))continue;
     const d=segmentDistanceSq(x,y,t.x1,t.y1,t.x2,t.y2);if(d<8*8&&d<bd){bd=d;best=t;}
@@ -899,20 +887,15 @@ function writeDrag(t,x,y){
   if(t.kind==='pitWidth'){writeCommon(C.model.main,r.offset,{pitPickupHalfWidth:Math.max(0,Math.round(Math.abs(x-s.pitPickupX)))});return;}
   if(t.kind==='approachLine'){
     const pit=s.pits[currentPit]||s.pits[0];if(!pit)return;
-    // Pit approach Y is shared by all four pits.  Use the X at which the drag
-    // began only as an inverse-projection reference; horizontal pointer motion
-    // does not edit any service-X value here.
     const xRaw=s16((Number(pit.serviceX)>>>16)&0xffff)<<16,preferY=s.pitApproachY<<16;
     const inv=inverseFixedXZ(Number.isFinite(t.clickX)?t.clickX:x,y,xRaw,preferY);if(!inv)return;
     writeCommon(C.model.main,r.offset,{pitApproachY:s16((Number(inv.zRaw)>>>16)&0xffff)});return;
   }
-
   if(t.kind==='start'){
     const inv=inverseFixedXZ(x,y,s.startX,s.startY);if(!inv)return;
     writeCommon(C.model.main,r.offset,{startX:inv.xRaw,startY:inv.zRaw});
     return;
   }
-
   const pit=s.pits[t.index];if(!pit)return;
   if(t.kind==='service'){
     const inv=inverseFixedXZ(x,y,pit.serviceX,pit.serviceY);if(!inv)return;
@@ -945,7 +928,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
  *   and '@' as invisible alignment/fill glyphs around the readable name.
  *
  * Package compatibility:
- *   race_setup.bin is authored as the current $74 format; older $68/$70 package
+ *   race_setup.bin is authored as the current $76 format; older $68/$70/$74 package
  *   files remain importable and are upgraded on the next export.
  *   The editor adds an optional package sidecar, name.bin, containing the
  *   exact 18 raw bytes. Older editor builds ignore the extra ZIP member.
@@ -957,8 +940,8 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 const NAME_OFFSET=0x70;
 const NAME_SIZE=0x12;
 const NAME_DISPLAY_SIZE=0x11;
-const NAME_LEFT_FILL=0x3c; // '<'
-const NAME_RIGHT_FILL=0x40; // '@'
+const NAME_LEFT_FILL=0x3c;
+const NAME_RIGHT_FILL=0x40;
 
 function decodeNameBytes(bytes){
   if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(bytes||[]);
@@ -1013,16 +996,16 @@ const authoredNames=new Map();
 let pendingImportedName=null;
 let pendingImportedCpuChoices=null;
 const RETAIL_ROUTE_COUNTS=Object.freeze([
-  Object.freeze([46,46,45]), // Illinois
-  Object.freeze([55,61,49]), // New Jersey
-  Object.freeze([56,67,47]), // West Canada
-  Object.freeze([63,67,66]), // South California
-  Object.freeze([76,77,53]), // East Canada
-  Object.freeze([68,70,54]), // Indianapolis
-  Object.freeze([71,77,71]), // Michigan
-  Object.freeze([77,73,71]), // Colorado
-  Object.freeze([49,46,42]), // North California
-  Object.freeze([82,80,77])  // Kentucky
+  Object.freeze([46,46,45]),
+  Object.freeze([55,61,49]),
+  Object.freeze([56,67,47]),
+  Object.freeze([63,67,66]),
+  Object.freeze([76,77,53]),
+  Object.freeze([68,70,54]),
+  Object.freeze([71,77,71]),
+  Object.freeze([77,73,71]),
+  Object.freeze([49,46,42]),
+  Object.freeze([82,80,77])
 ]);
 
 function tools(){return root.IndyHeatTools||null;}
@@ -1120,7 +1103,7 @@ function commitPendingImportedCpuChoices(){
   const o=selectedOption();
   if(!o||(o.dataset?.indyheatCustom!=='1'&&!o.dataset?.indyheatPackageKey))return false;
   pendingImportedCpuChoices=null;
-  if(!pending.bytes)return true; // no sidecar = inherit the selected host/template values
+  if(!pending.bytes)return true;
   const R=root.IndyHeatRaceSetupTools,values=R?.decodeCpuChoicesBin?.(pending.bytes);
   if(!R||!values)return false;
   for(const model of loadedModels()){
@@ -1207,7 +1190,7 @@ function installNameImport(){
           pendingImportedName={circuitIndex:nameHit.circuitIndex,bytes:nameHit.bytes.slice()};
         }else pendingImportedName={circuitIndex,bytes:null};
         if(cpuHit){
-          root.IndyHeatRaceSetupTools.decodeCpuChoicesBin(cpuHit.bytes); // validates size/layout
+          root.IndyHeatRaceSetupTools.decodeCpuChoicesBin(cpuHit.bytes);
           pendingImportedCpuChoices={circuitIndex:cpuHit.circuitIndex,bytes:cpuHit.bytes.slice()};
         }else pendingImportedCpuChoices={circuitIndex,bytes:null};
         setTimeout(()=>{commitPendingImportedSidecars();syncNameUi(true);},50);
@@ -1343,7 +1326,8 @@ function verifyDirectPackage(P,zipBytes,circuitIndex,expectedName,expectedLaps,e
   const nameBytes=get('name.bin');
   if(decodeNameBytes(nameBytes)!==expectedName)throw new Error(`Internal export verification failed: name is ${decodeNameBytes(nameBytes)}, expected ${expectedName}`);
   const setup=get('race_setup.bin');
-  if(setup.length!==0x74)throw new Error(`Internal export verification failed: race_setup.bin is $${setup.length.toString(16).toUpperCase()} bytes, expected $74`);
+  const expectedSetupSize=root.IndyHeatRaceSetupTools.COMPACT_SIZE;
+  if(setup.length!==expectedSetupSize)throw new Error(`Internal export verification failed: race_setup.bin is $${setup.length.toString(16).toUpperCase()} bytes, expected $${expectedSetupSize.toString(16).toUpperCase()}`);
   const laps=(setup[0]<<8)|setup[1];
   const routeAssignment=root.IndyHeatRaceSetupTools.be32(setup,0x70);
   if(routeAssignment!==0&&routeAssignment!==0xffffffff)throw new Error('Internal export verification failed: Route A/B starting assignment is not $00000000 or $FFFFFFFF');
@@ -1364,8 +1348,6 @@ function installNameExport(){
   const button=$('circuitPackageZip'),P=packageTools();if(!button||!P)return false;
   if(button.dataset.circuitNameHook)return true;
   button.dataset.circuitNameHook='1';
-  // v0.32 owns circuit ZIP serialisation here.  Stop circuit-package.js's older
-  // click handler completely so stale parallel editor models cannot win later.
   button.addEventListener('click',e=>{
     e.preventDefault();e.stopImmediatePropagation();
     if(zipHookBusy)return;

@@ -10,7 +10,7 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='1.000';
+const VERSION='1.002';
 const BASE_Y=212;
 const MAX_OFFSET=12;
 const FOREGROUND_VALUE=0;
@@ -19,6 +19,7 @@ const PANELS=Object.freeze([
   Object.freeze({id:'builtin:backdrop:hud-white',x:112}),
   Object.freeze({id:'builtin:backdrop:hud-blue',x:216})
 ]);
+let brushLoadPromise=null;
 
 function hudOffset(){
   let value=Number(root.IndyHeatRaceSetupState?.currentHudLowerOffset?.()??0);
@@ -27,8 +28,21 @@ function hudOffset(){
 }
 function brushFor(id){
   const entry=root.IndyHeatBrushLibrary?.get?.(id),brush=entry?.brush;
-  if(!brush?.pixels)throw new Error(`HUD panel brush ${id} is unavailable.`);
-  return brush;
+  return brush?.pixels?brush:null;
+}
+function brushesReady(){return PANELS.every(panel=>!!brushFor(panel.id));}
+function ensureBrushes(){
+  if(brushesReady())return Promise.resolve(true);
+  const refresh=root.IndyHeatBrushLibrary?.refreshFolderBrushes;
+  if(typeof refresh!=='function')return Promise.resolve(false);
+  if(!brushLoadPromise){
+    brushLoadPromise=Promise.resolve()
+      .then(()=>refresh.call(root.IndyHeatBrushLibrary))
+      .then(()=>brushesReady())
+      .catch(()=>false)
+      .finally(()=>{brushLoadPromise=null;});
+  }
+  return brushLoadPromise;
 }
 function stamp(ctx,backdrop,foreground,brush,left,top){
   let changed=0;
@@ -49,6 +63,10 @@ function render(ctx){
   let changed=0;
   for(const panel of PANELS){
     const brush=brushFor(panel.id);
+    if(!brush){
+      ensureBrushes();
+      throw new Error('HUD panel brushes are still loading. Try HUD Panels again once the brush catalogue has loaded.');
+    }
     if(brush.width!==97||brush.height!==28)throw new Error(`${panel.id} must remain 97×28 pixels.`);
     if(top+brush.height>ctx.height)throw new Error(`HUD offset ${offset} places the panels outside the 320×256 Backdrop.`);
     changed+=stamp(ctx,backdrop,foreground,brush,panel.x,top);
@@ -66,8 +84,11 @@ S.register({
   supportedModes:['backdrop'],
   supportedTools:['fill'],
   layers:['backdrop','foreground'],
+  activate:()=>{ensureBrushes();},
   preview:render,
   apply:render
 });
+
+ensureBrushes();
 
 })(typeof globalThis!=='undefined'?globalThis:this);

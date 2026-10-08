@@ -91,9 +91,22 @@ T.makeDiskModel=function(disk){
   return model;
 };
 
+function preserveRaceAuthoringState(previous,records){
+  if(!Array.isArray(previous)||!Array.isArray(records)||!previous.length)return records;
+  const byOffset=new Map();
+  for(const r of previous)if(Number.isInteger(Number(r?.offset)))byOffset.set(Number(r.offset),r);
+  for(const r of records){
+    const old=byOffset.get(Number(r?.offset));if(!old)continue;
+    if(Object.prototype.hasOwnProperty.call(old,'hudLowerOffset'))r.hudLowerOffset=old.hudLowerOffset;
+    if(Object.prototype.hasOwnProperty.call(old,'hudLowerOffsetOriginal'))r.hudLowerOffsetOriginal=old.hudLowerOffsetOriginal;
+  }
+  return records;
+}
+
 const parseRaceRecords=T.parseRaceRecords.bind(T);
 T.parseRaceRecords=function(main,...args){
-  const records=parseRaceRecords(main,...args);
+  const previous=raceCapture.recordsByMain.get(main)||null;
+  const records=preserveRaceAuthoringState(previous,parseRaceRecords(main,...args));
   raceCapture.recordsByMain.set(main,records);
   if(raceCapture.model&&main===raceCapture.model.main){raceCapture.records=records;emitRaceCapture('records');}
   return records;
