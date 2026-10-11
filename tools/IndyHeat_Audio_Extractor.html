@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Indy Heat Amiga – Audio Resource Extractor</title>
+<style>
+body{font:14px system-ui,sans-serif;max-width:920px;margin:28px auto;padding:0 18px;color:#222}button,.filebtn{display:inline-block;margin:6px 8px 6px 0;padding:7px 11px;border:1px solid #999;border-radius:5px;background:#eee;cursor:pointer}input[type=file]{display:none}table{border-collapse:collapse;width:100%;margin-top:15px}th,td{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left;font-variant-numeric:tabular-nums}code{background:#eee;padding:1px 4px}.ok{color:#176b2c}.warn{color:#8a5100}#status{white-space:pre-wrap;margin:12px 0}.downloads a{display:inline-block;min-width:210px;margin:2px 10px 2px 0}
+</style>
+<h1>Indy Heat Amiga – Audio Resource Extractor</h1>
+<p>This extracts the exact decompressed payloads for resources <code>$01</code>, <code>$51</code> and <code>$24..$37</code> from the current Indy Heat <code>Disk.1</code>. <code>KLUD</code> is treated as its settled 8-byte wrapper (<code>KLUD</code> + big-endian output length); Imploder resources use the project's canonical <code>indyheat.js</code> decoder.</p>
+<div>
+  <button id="online">Load current GitHub master</button>
+  <label class="filebtn">Or select local Disk.1<input id="disk" type="file"></label>
+  <button id="zip" disabled>Download ZIP of all 22 files</button>
+</div>
+<div id="status">Not loaded.</div>
+<table><thead><tr><th>Resource</th><th>Bytes</th><th>Storage</th><th>Header</th><th>Download</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+const RAW='https://raw.githubusercontent.com/HoraceAndTheSpider/Indy-Heat-WHD/master/';
+const $=id=>document.getElementById(id); let decoderReady=false, extracted=[];
+function status(s,cls=''){ $('status').className=cls; $('status').textContent=s; }
+async function ensureDecoder(){
+ if(globalThis.IndyHeatTools?.makeDiskModel){decoderReady=true;return}
+ const src=await (await fetch(RAW+'app/indyheat.js',{cache:'no-store'})).text();
+ (0,eval)(src+'\n//# sourceURL=indyheat.js');
+ if(!globalThis.IndyHeatTools?.makeDiskModel)throw Error('indyheat.js did not initialise'); decoderReady=true;
+}
+function be32(b,o){return (((b[o]<<24)>>>0)|(b[o+1]<<16)|(b[o+2]<<8)|b[o+3])>>>0}
+function safeSig(d){return Array.from(d.slice(0,12),b=>b>=32&&b<127?String.fromCharCode(b):'.').join('')}
+function blobLink(d,name){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([d],{type:'application/octet-stream'}));a.download=name;a.textContent=name;return a}
+function extract(bytes){
+ const T=globalThis.IndyHeatTools, model=T.makeDiskModel(bytes), ids=[0x01,0x51,...Array.from({length:20},(_,i)=>0x24+i)];
+ extracted=[]; $('rows').replaceChildren();
+ for(const id of ids){
+  const e=model.resources[id], off=e.sector*512; let data,storage;
+  if(String.fromCharCode(...bytes.slice(off,off+4))==='KLUD'){
+    const n=be32(bytes,off+4); if(n!==e.outLen)throw Error(`$${id.toString(16)} KLUD length ${n} != table ${e.outLen}`);
+    data=bytes.slice(off+8,off+8+n); storage='KLUD wrapper stripped';
+  } else { data=model.getResource(id).data; storage='Imploder decompressed'; }
+  const hex=id.toString(16).toUpperCase().padStart(2,'0');
+  const name=id===1?'resource_01_BIGRUN.bin':id===0x51?'resource_51_BIGRUNHISCORE.bin':`resource_${hex}.bin`;
+  const sig=safeSig(data), is8=String.fromCharCode(...data.slice(0,4))==='8SVX';
+  extracted.push({id,hex,name,data,storage,sig,is8});
+  const tr=document.createElement('tr');
+  for(const v of [`$${hex}`,data.length.toLocaleString(),storage,sig+(is8?'  [8SVX]':'')]){const td=document.createElement('td');td.textContent=v;tr.append(td)}
+  const td=document.createElement('td');td.append(blobLink(data,name));tr.append(td);$('rows').append(tr);
+ }
+ $('zip').disabled=false;
+ const n8=extracted.filter(x=>x.is8).length;
+ status(`Extracted ${extracted.length} resources. 8SVX headers found: ${n8}.`,n8?'warn':'ok');
+}
+$('online').onclick=async()=>{try{status('Loading current master…');await ensureDecoder();const r=await fetch(RAW+'whdload/data/Disk.1',{cache:'no-store'});if(!r.ok)throw Error(`Disk.1 HTTP ${r.status}`);extract(new Uint8Array(await r.arrayBuffer()))}catch(e){status('Online load failed: '+e.message+'\nUse the local Disk.1 selector instead.','warn')}};
+$('disk').onchange=async e=>{try{await ensureDecoder().catch(()=>{});if(!globalThis.IndyHeatTools?.makeDiskModel){const s=document.createElement('script');s.src='indyheat.js';document.head.append(s);await new Promise((ok,no)=>{s.onload=ok;s.onerror=no})}const f=e.target.files[0];if(f)extract(new Uint8Array(await f.arrayBuffer()))}catch(e){status('Local extraction failed: '+e.message,'warn')}};
+function crc32(d){let c=0xffffffff;for(const b of d){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0)}return(c^0xffffffff)>>>0}
+function p16(a,v){a.push(v&255,v>>>8&255)} function p32(a,v){a.push(v&255,v>>>8&255,v>>>16&255,v>>>24&255)}
+function zipStore(files){const out=[],cd=[];let off=0;for(const f of files){const nb=new TextEncoder().encode(f.name),crc=crc32(f.data),l=[];p32(l,0x04034b50);p16(l,20);p16(l,0);p16(l,0);p16(l,0);p16(l,0);p32(l,crc);p32(l,f.data.length);p32(l,f.data.length);p16(l,nb.length);p16(l,0);l.push(...nb);out.push(...l,...f.data);const c=[];p32(c,0x02014b50);p16(c,20);p16(c,20);p16(c,0);p16(c,0);p16(c,0);p16(c,0);p32(c,crc);p32(c,f.data.length);p32(c,f.data.length);p16(c,nb.length);p16(c,0);p16(c,0);p16(c,0);p16(c,0);p32(c,0);p32(c,off);c.push(...nb);cd.push(c);off+=l.length+f.data.length}const cs=out.length;for(const c of cd)out.push(...c);const cz=out.length-cs;p32(out,0x06054b50);p16(out,0);p16(out,0);p16(out,files.length);p16(out,files.length);p32(out,cz);p32(out,cs);p16(out,0);return new Uint8Array(out)}
+$('zip').onclick=()=>{const manifest=['Indy Heat Amiga audio resources','',...extracted.map(x=>`$${x.hex}\t${x.data.length}\t${x.storage}\t${x.name}\t${x.is8?'8SVX':'no 8SVX'}`)].join('\n')+'\n';const files=extracted.map(x=>({name:x.name,data:x.data}));files.push({name:'manifest.txt',data:new TextEncoder().encode(manifest)});const a=blobLink(zipStore(files),'IndyHeat_Audio_Resources_01_51_24-37.zip');a.click()};
+</script>

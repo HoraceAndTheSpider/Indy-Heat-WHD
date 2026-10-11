@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Circuit Editor (Amiga)</title>
-<link rel="stylesheet" href="style.css?v=0193">
+<link rel="stylesheet" href="style.css?v=0195">
 
 <style>
 header#appHeader{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"brand notice" "brand tools";align-items:start;column-gap:20px;row-gap:6px;padding:10px 14px}
@@ -70,7 +70,15 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 .viewSliderRow input[type=range]{width:100%!important;min-width:0;margin:0!important}
 .viewSliderRow>span:last-child{text-align:right;font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
 #legacyUiCompatibility{display:none!important}
-#cursorInfo{box-sizing:border-box!important;width:310px!important;min-width:310px!important;max-width:310px!important;height:58px!important;min-height:58px!important;max-height:58px!important;overflow:hidden!important}
+#cursorInfo{box-sizing:border-box!important;width:min(310px,100%)!important;min-width:0!important;max-width:100%!important;min-height:58px!important;height:auto!important;max-height:none!important;overflow-wrap:anywhere!important}
+body.indyheatHideDiagnostics .mobileDiagnostic{display:none!important}
+body.indyheatHideCanvasInfo .viewerFooter{display:none!important}
+#circuitViewportPanControls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-width:100%;margin:9px 0 3px;padding:7px;border:1px solid #343b46;border-radius:6px;background:#14181e}
+#circuitViewportPanControls[hidden]{display:none!important}
+#circuitViewportPanControls label{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:6px;min-width:0;margin:0;color:#bbc4d1;font-size:11px}
+#circuitViewportPanControls input[type=range]{min-width:0;width:100%;max-width:100%;margin:0;touch-action:manipulation}
+#circuitViewportPanControls input[type=range]:disabled{opacity:.35}
+@media(max-width:600px){#circuitViewportPanControls{grid-template-columns:1fr}#circuitViewportPanControls label{grid-template-columns:36px minmax(0,1fr)}}
 @media(max-width:1050px){main{grid-template-columns:1fr!important}}
 
 @media(max-width:1120px){
@@ -79,6 +87,11 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 }
 @media(min-width:1121px){aside{top:145px;max-height:calc(100vh - 160px)}}
 @media(min-width:761px) and (max-width:1120px){aside{top:185px;max-height:calc(100vh - 200px)}}
+body.indyheatMobileUi .content{display:flex;flex-direction:column;min-width:0}
+body.indyheatMobileUi #editorHelpControls{order:1000}
+body.indyheatMobileUi .viewerFooter{min-width:0;max-width:100%;gap:6px;flex-wrap:wrap}
+body.indyheatMobileUi .legend{white-space:normal;overflow-wrap:anywhere;line-height:1.8}
+body.indyheatMobileUi #cursorInfo{width:100%!important;min-width:0!important}
 @media(max-width:760px){
   header#appHeader{grid-template-columns:1fr;grid-template-areas:"brand" "notice" "tools";align-items:start;gap:7px;padding:8px 10px}
   #appIdentity{gap:3px}
@@ -94,7 +107,6 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
   .playlistRace{grid-row:1/5}
   .playlistCircuit,.playlistCircuitName,.playlistLapSelect,.playlistCpuMode{grid-column:2}
   .playlistCpuChoices{grid-column:1/-1}
-  body.indyheatMobileUi .mobileDiagnostic{display:none!important}
   body.indyheatMobileUi #layerModeButtons{position:static!important;top:auto!important;z-index:auto!important;background:#101217;padding:4px 0;touch-action:manipulation;-webkit-user-select:none;user-select:none}
   body.indyheatMobileUi #layerModeButtons button,body.indyheatMobileUi #editorModeSwitch button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 }
@@ -105,8 +117,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 <script>
 (() => {
   'use strict';
-  const EDITOR_VERSION='0.193';
-  const BUILD_TOKEN='0193';
+  const EDITOR_VERSION='0.195';
+  const BUILD_TOKEN='0195';
   Object.defineProperty(globalThis,'INDY_HEAT_EDITOR_VERSION',{
     configurable:false,
     enumerable:true,
@@ -134,7 +146,7 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
 </script>
 <header id="appHeader">
   <div id="appIdentity">
-    <img id="appLogo" src="indy-heat-logo.png?v=0193" alt="Indy Heat">
+    <img id="appLogo" src="indy-heat-logo.png?v=0195" alt="Indy Heat">
     <h1>Circuit Editor (Amiga)</h1>
   </div>
   <div id="headerNotice" aria-live="polite">
@@ -195,6 +207,8 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     <section>
       <h2>View</h2>
       <label class="mini" title="Stores only editor UI preferences in this browser. No cookies, analytics or tracking."><input id="rememberEditorSettings" type="checkbox"> Remember settings on this device</label>
+      <label title="Show the diagnostic and developer details beneath the canvas"><input id="showDeveloperPanels" type="checkbox" checked> Debug / developer panels</label>
+      <label title="Show the legend and live cursor information underneath the canvas"><input id="showCanvasInfo" type="checkbox" checked> Canvas legend / coordinates</label>
       <label><input id="showBg" type="checkbox" checked> Image</label>
       <label>Image opacity <input id="backgroundOpacity" type="range" min="0" max="100" value="100"><span id="backgroundOpacityText">100%</span></label>
       <label id="paletteModeControl" class="inlineControl" hidden>Colours
@@ -286,13 +300,13 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
       </div>
     </section>
 
-    <details>
+    <details id="editorHelpControls">
       <summary>Help / controls</summary>
       <div class="prose">
         <p><b>Waypoints:</b> click or drag a visible point; right-click toggles its AI Turbo marker. Add waypoint (+) splits the nearest visible logical route link and resequences following points; Delete waypoint (−) removes the hovered point, repairs incoming links and keeps at least five points per route. Clean route data rebuilds contiguous physical IDs/link displacements and removes only sequence ordinals unused by all three routes, preserving intentional branch gaps/duplicates.</p>
         <p><b>Foreground / Surface:</b> choose a drawing tool, paint value and brush. Curve uses three clicks; Free-form closes near its start point. Right-click uses the secondary paint action.</p>
         <p><b>Recovery:</b> rotate arrows with left/right mouse; Grab group supports multi-cell selection.</p>
-        <p><b>Fixed viewport:</b> enable the shared viewport, then drag its bottom-right corner to resize it. The chosen size is retained while switching between the circuit, Backdrop, MiniMap and GeoMap views; use the trackpad or scrollbars to move around larger zoomed content.</p>
+        <p><b>Fixed viewport:</b> enable the shared viewport, then drag its bottom-right corner to resize it. The chosen size is retained while switching between the circuit, Backdrop, MiniMap and GeoMap views; use the Pan X/Y sliders under the fixed canvas (or scrollbars/trackpad) to move around larger zoomed content.</p>
         <p><b>Race:</b> edit the start/grid, HUD, pitlane geometry, pit/service positions and presentation anchors. Drag visible edit anchors or use the Race fields. MiniMap and Backdrop use the shared drawing tools (Pencil, Line, shapes, Curve, Free-form and Fill) with pre-made, captured or loaded brushes, including multi-edge and traced captures. Backdrop paints in the verified 32-colour race palette and retains IFF import/remapping; GeoMap has its own edit mode.</p>
         <p>Full editor and package documentation: <a href="https://github.com/HoraceAndTheSpider/Indy-Heat-WHD/wiki/Editor-and-Track-Package-Workflow" target="_blank" rel="noopener">Editor and Track Package Workflow</a>.</p>
       </div>
@@ -371,32 +385,32 @@ main{grid-template-columns:300px minmax(0,1fr) 286px!important}
     </details>
   </div>
 </main>
-<script src="indyheat.js?v=0193"></script>
-<script src="edit-guard.js?v=0193"></script>
-<script src="recovery-hook.js?v=0193"></script>
-<script src="layer-tools.js?v=0193"></script>
-<script src="indyheat_race_graphics.js?v=0193"></script>
-<script src="app.js?v=0193"></script>
-<script src="palette-control.js?v=0193"></script>
-<script src="layer-editor.js?v=0193"></script>
-<script src="waypoint-actions.js?v=0193"></script>
-<script src="recovery-editor.js?v=0193"></script>
-<script src="race-setup.js?v=0193"></script>
-<script src="cpu-choices.js?v=0193"></script>
-<script src="race-validation.js?v=0193"></script>
-<script src="track-backdrop.js?v=0193"></script>
-<script src="circuit-package.js?v=0193"></script>
-<script src="route-ab-assignment.js?v=0193"></script>
-<script src="circuit-library.js?v=0193"></script>
-<script src="brush-tools.js?v=0193"></script>
-<script src="brush-library.js?v=0193"></script>
-<script src="special-functions-host.js?v=0193"></script>
-<script src="foreground-auto.js?v=0193"></script>
-<script src="minimap-brush-ui.js?v=0193"></script>
-<script src="backdrop-brush-ui.js?v=0193"></script>
-<script src="backdrop-ilbm-export.js?v=0193"></script>
-<script src="editor-ui.js?v=0193"></script>
-<script src="editor-preferences.js?v=0193"></script>
+<script src="indyheat.js?v=0195"></script>
+<script src="edit-guard.js?v=0195"></script>
+<script src="recovery-hook.js?v=0195"></script>
+<script src="layer-tools.js?v=0195"></script>
+<script src="indyheat_race_graphics.js?v=0195"></script>
+<script src="app.js?v=0195"></script>
+<script src="palette-control.js?v=0195"></script>
+<script src="layer-editor.js?v=0195"></script>
+<script src="waypoint-actions.js?v=0195"></script>
+<script src="recovery-editor.js?v=0195"></script>
+<script src="race-setup.js?v=0195"></script>
+<script src="cpu-choices.js?v=0195"></script>
+<script src="race-validation.js?v=0195"></script>
+<script src="track-backdrop.js?v=0195"></script>
+<script src="circuit-package.js?v=0195"></script>
+<script src="route-ab-assignment.js?v=0195"></script>
+<script src="circuit-library.js?v=0195"></script>
+<script src="brush-tools.js?v=0195"></script>
+<script src="brush-library.js?v=0195"></script>
+<script src="special-functions-host.js?v=0195"></script>
+<script src="foreground-auto.js?v=0195"></script>
+<script src="minimap-brush-ui.js?v=0195"></script>
+<script src="backdrop-brush-ui.js?v=0195"></script>
+<script src="backdrop-ilbm-export.js?v=0195"></script>
+<script src="editor-ui.js?v=0195"></script>
+<script src="editor-preferences.js?v=0195"></script>
 
 <script>
 /* Consolidate display controls and keep Waypoint edit controls mode-exclusive. */
@@ -517,6 +531,45 @@ function installResizableViewport(){
   const host=viewport.parentElement;
   if(!host)return false;
   if(getComputedStyle(host).position==='static')host.style.position='relative';
+  let panControls=$('circuitViewportPanControls');
+  if(!panControls){
+    panControls=document.createElement('div');
+    panControls.id='circuitViewportPanControls';
+    panControls.hidden=true;
+    panControls.setAttribute('aria-label','Fixed canvas pan controls');
+    panControls.innerHTML='<label for="circuitPanX">Pan X <input id="circuitPanX" type="range" min="0" max="0" step="1" value="0" aria-label="Pan canvas left or right"></label><label for="circuitPanY">Pan Y <input id="circuitPanY" type="range" min="0" max="0" step="1" value="0" aria-label="Pan canvas up or down"></label>';
+    viewport.after(panControls);
+  }
+  const panX=$('circuitPanX'),panY=$('circuitPanY');
+  const syncPanControls=()=>{
+    const fixed=viewport.classList.contains('fixed');
+    panControls.hidden=!fixed;
+    if(!fixed)return;
+    for(const [slider,extent,position] of [
+      [panX,viewport.scrollWidth-viewport.clientWidth,viewport.scrollLeft],
+      [panY,viewport.scrollHeight-viewport.clientHeight,viewport.scrollTop]
+    ]){
+      if(!slider)continue;
+      const max=Math.max(0,Math.round(extent));
+      slider.max=String(max);
+      slider.disabled=max===0;
+      slider.value=String(Math.max(0,Math.min(max,Math.round(position))));
+    }
+  };
+  if(!panControls.dataset.panListenersReady){
+    panControls.dataset.panListenersReady='1';
+    panX?.addEventListener('input',()=>{viewport.scrollLeft=Number(panX.value)||0;});
+    panY?.addEventListener('input',()=>{viewport.scrollTop=Number(panY.value)||0;});
+    viewport.addEventListener('scroll',syncPanControls,{passive:true});
+    if(typeof ResizeObserver!=='undefined'){
+      const panObserver=new ResizeObserver(syncPanControls);
+      panObserver.observe(viewport);
+      const stack=viewport.querySelector('.canvasStack');if(stack)panObserver.observe(stack);
+    }
+    for(const id of ['editorScale','circuitViewportToggle'])$(id)?.addEventListener('input',()=>requestAnimationFrame(syncPanControls));
+    document.addEventListener('change',e=>{if(e.target?.id==='editorScale')requestAnimationFrame(syncPanControls);},true);
+    window.addEventListener('resize',()=>requestAnimationFrame(syncPanControls),{passive:true});
+  }
   let handle=$('circuitViewportResizeHandle');
   if(!handle){
     handle=document.createElement('div');
@@ -530,6 +583,7 @@ function installResizableViewport(){
   const positionHandle=()=>{
     const fixed=viewport.classList.contains('fixed');
     handle.classList.toggle('visible',fixed);
+    syncPanControls();
     if(!fixed)return;
     const vr=viewport.getBoundingClientRect(),hr=host.getBoundingClientRect();
     const x=vr.right-hr.left+host.scrollLeft-handle.offsetWidth+1;

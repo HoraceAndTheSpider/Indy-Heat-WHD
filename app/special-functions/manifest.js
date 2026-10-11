@@ -3,6 +3,8 @@
 const modules=Object.freeze([
     'alternate-curbs.js',
     'bollard.js',
+    'buildings.js',
+    'desert-sand.js',
     'footbridge.js',
     'grandstand-people.js',
     'grandstand.js',
@@ -18,6 +20,7 @@ const modules=Object.freeze([
     'random-people.js',
     'rough-track.js',
     'run-off-areas.js',
+    'tents.js',
     'toilet-blocks.js',
     'track-gradients.js',
     'track-markings.js',

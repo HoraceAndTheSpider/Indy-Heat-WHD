@@ -496,7 +496,7 @@ function selectPlacementEntry(id){
   placementEntryId=entry?.target==='backdrop'?entry.id:null;
   pendingPlacement=null;
   syncPlacementUi({resetDefaults:true});
-  if(entry?.preferredTool){
+  if(entry?.preferredTool&&entry.allowedTools?.length&&!entry.allowedTools.includes(currentBackdropTool())){
     const button=document.querySelector(`[data-backdrop-draw-tool="${CSS.escape(entry.preferredTool)}"]`);
     if(button&&!button.disabled)button.click();
   }
@@ -715,6 +715,11 @@ function installPlacementListeners(){
     const entry=get(button.dataset.backdropLibraryId);
     if(backdropScratchActive()){clearPlacementEntry();return;}
     selectPlacementEntry(button.dataset.backdropLibraryId);
+  });
+  root.addEventListener?.('indyheat-special-function-selection-changed',event=>{
+    if(!event.detail?.item?.supportedModes?.includes('backdrop'))return;
+    activeBrushMirror.backdrop=null;activeBrushCatalogueEntry.backdrop=null;
+    clearPlacementEntry();cancelFreeRotation();queueMicrotask(circuitRecolourStatus);
   });
   document.getElementById('backdropBrushClear')?.addEventListener('click',clearPlacementEntry);
   document.getElementById('backdropBrushLoad')?.addEventListener('click',clearPlacementEntry);

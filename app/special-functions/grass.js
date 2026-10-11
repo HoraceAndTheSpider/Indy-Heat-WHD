@@ -13,7 +13,7 @@
  */
 const S=root.IndyHeatSpecialFunctions;if(!S?.register)return;
 
-const VERSION='0.1.2';
+const VERSION='1.001';
 const settings={
   style:'smooth',
   fillIntensity:'dark',
@@ -23,6 +23,8 @@ const settings={
   edgeDepth:2,
   soilBlend:true,
   dither:true,
+  pattern:0,
+  variation:55,
   stripeWidth:6
 };
 
@@ -54,6 +56,28 @@ function inBounds(w,h,x,y){return x>=0&&y>=0&&x<w&&y<h;}
 function hash(x,y,seed=0){
   let v=(Math.imul((x+0x9E37)>>>0,0x7feb352d)^Math.imul((y+0x85eb)>>>0,0x846ca68b)^Math.imul((seed+1)>>>0,0xc2b2ae35))>>>0;
   v^=v>>>15; v=Math.imul(v,0x2c1b3c6d); v^=v>>>12; return v>>>0;
+}
+/* Exactly the ordered 8x8 Bayer Pattern 1 from Track Gradients.
+ * Random at 0 keeps the original Grass pixel choices unchanged. The slider
+ * changes WHERE texture colours appear, not their coverage/strength settings.
+ */
+const BAYER8=Object.freeze([
+   0,32, 8,40, 2,34,10,42,
+  48,16,56,24,50,18,58,26,
+  12,44, 4,36,14,46, 6,38,
+  60,28,52,20,62,30,54,22,
+   3,35,11,43, 1,33, 9,41,
+  51,19,59,27,49,17,57,25,
+  15,47, 7,39,13,45, 5,37,
+  63,31,55,23,61,29,53,21
+]);
+function textureChoice(x,y,salt,levels=16,shift=0){
+  const h=hash(x,y,salt),original=(h>>>shift)&(levels-1);
+  const blend=clamp(Number(settings.pattern)||0,0,100)/100;
+  if(blend===0)return original;
+  const ordered=(BAYER8[((y&7)<<3)|(x&7)]+.5)/64;
+  const mixed=((original+.5)/levels)*(1-blend)+ordered*blend;
+  return clamp(Math.floor(mixed*levels),0,levels-1);
 }
 function point(p){return p&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))?{x:Number(p.x),y:Number(p.y)}:null;}
 function uniquePoints(raw){
@@ -183,7 +207,7 @@ function chooseSoil(seed,depth){
   return palette[seed%palette.length];
 }
 function grassAt(style,x,y,along,effect,sourceIndex){
-  const h=hash(x,y,along|0),n=h&15,existingGrass=GRASS_SET.has(sourceIndex);
+  const n=textureChoice(x,y,along|0),existingGrass=GRASS_SET.has(sourceIndex);
   let idx=GRASS.mid;
   if(style==='smooth'){
     idx=n<3?GRASS.light:n<13?GRASS.mid:GRASS.dark;
@@ -238,7 +262,7 @@ function grassAt(style,x,y,along,effect,sourceIndex){
 function fillIntensityGrass(index,intensity,x,y){
   intensity=String(intensity||'dark');
   if(intensity==='dark')return index;
-  const h=hash(x,y,73),n=h&15;
+  const n=textureChoice(x,y,73);
   // Treat the dark-grey shadow fleck used by Dark/Rough grass as the bottom
   // of the grass scale, then remap into an all-green intensity range. This
   // keeps the selected Style's spatial pattern while preventing Medium/Bright
@@ -252,6 +276,39 @@ function fillIntensityGrass(index,intensity,x,y){
   if(rank===2)return GRASS.light;
   if(rank===1)return n<3?GRASS.light:GRASS.mid;
   return n<2?GRASS.light:GRASS.mid;
+}
+
+
+/* Variation changes the amount of tonal detail, independently of Pattern.
+ * 55% reproduces the existing v1.000 Grass output pixel-for-pixel.
+ * At 0% the base style and fill tone remain but fine tonal speckling is
+ * suppressed; at 100% the same texture becomes more pronounced.
+ * Selection is routed through textureChoice, so even 100% Pattern retains an
+ * effective Variation slider without introducing random pixel placement.
+ */
+function varyGrass(index,source,style,effect,x,y,along,isFill){
+  const variation=clamp(Number(settings.variation)||0,0,100);
+  if(variation===55)return index;
+  const existing=GRASS_SET.has(source);
+  if(!GRASS_SET.has(index)&&!(index===4&&existing))return index;
+  const stripe=(((x+y)+Math.round(along||0))/Math.max(2,Math.round(settings.stripeWidth||6)))|0;
+  let neutral;
+  if(existing){
+    neutral=shiftGrass(source,effect==='lighten'?1:-1);
+    if(style==='mowed'&&(stripe&1)===0&&effect!=='lighten')neutral=source;
+  }else if(isFill&&settings.fillIntensity==='bright')neutral=GRASS.light;
+  else if(isFill&&settings.fillIntensity==='medium')neutral=GRASS.mid;
+  else neutral=style==='mowed'&&!(stripe&1)?GRASS.light:GRASS.mid;
+
+  if(variation<55){
+    const keep=variation/55;
+    return textureChoice(x+3,y+5,192,256,8)<Math.round(keep*256)?index:neutral;
+  }
+  const emphasis=(variation-55)/45;
+  const chance=emphasis*(style==='rough'?.58:style==='mowed'?.40:.33);
+  if(textureChoice(x+3,y+5,109,256,8)/256>=chance)return index;
+  const darken=existing?effect!=='lighten':textureChoice(x+2,y+7,203,16)<8;
+  return shiftGrass(GRASS_SET.has(index)?index:GRASS.dark,darken?-1:1);
 }
 
 function apply(ctx){
@@ -270,7 +327,7 @@ function apply(ctx){
 
     if(settings.edgeMode==='sharp'&&edgeDepth>0&&d>0&&d<=edgeDepth){
       const inwardBlend = feather>0 && d===edgeDepth && edgeStrength>.2;
-      if(inwardBlend && (hsh&7)<3){
+      if(inwardBlend && textureChoice(x,y,17,8)<3){
         index=grassAt(settings.style,x,y,along[i],effect,src);
       }else{
         index=chooseSoil(hsh,d); soilPx++;
@@ -283,23 +340,24 @@ function apply(ctx){
          At a heavy feather this produces an obvious dithered transition. */
       const soilBoost=blendSoil?(adjacentSoil?.42:.28)*edgeStrength:0;
       const keepGrassChance=clamp(1-edgeStrength*heavy-soilBoost,0,1);
-      const r=((hsh>>>8)&255)/255;
+      const r=textureChoice(x,y,17,256,8)/255;
       if(r>keepGrassChance){
         index=blendSoil?chooseSoil(hsh,d):src;
         soilPx++;
-      }else if(settings.dither && (hsh&3)===0 && edgeStrength>.45){
+      }else if(settings.dither && textureChoice(x,y,17,4)===0 && edgeStrength>.45){
         index=effect==='lighten'?GRASS.bright:GRASS.light;
       }
     }
 
     if(settings.soilBlend&&existingSoil&&effect!=='lighten'){
       const chance=d>0&&d<=Math.max(1,feather)?10:6; // 62.5% at edge, 37.5% inside
-      if((hsh&15)<chance){index=chooseSoil(hsh,Math.max(1,d));soilPx++;}
+      if(textureChoice(x,y,17,16)<chance){index=chooseSoil(hsh,Math.max(1,d));soilPx++;}
     }
     if(!(isFill&&settings.fillIntensity!=='dark')){
-      if(settings.dither&&!existingGrass&&settings.style==='rough'&&(hsh&7)===0)index=shiftGrass(index,-1);
-      if(settings.dither && settings.style==='smooth' && (hsh&15)===15)index=shiftGrass(index,1);
+      if(settings.dither&&!existingGrass&&settings.style==='rough'&&textureChoice(x,y,17,8)===0)index=shiftGrass(index,-1);
+      if(settings.dither && settings.style==='smooth' && textureChoice(x,y,17,16)===15)index=shiftGrass(index,1);
     }
+    index=varyGrass(index,src,settings.style,effect,x,y,along[i],isFill);
     backdrop[i]=validIndex(ctx,index); painted++;
   }
   return {message:`Grass committed · ${painted} px · ${settings.style}${isFill?` · fill ${settings.fillIntensity}`:''}${effect==='lighten'?' · lighten':' · darken'}${feather?` · feather ${feather}px`:''}${settings.edgeMode==='sharp'?` · earth edge ${edgeDepth}px`:''}${bumpPx?` · heavier over existing grass ${bumpPx}px`:''}.`};
@@ -313,6 +371,8 @@ function mountControls(container,ctx){
   ctx.ui.slider(container,{label:'Edge depth',min:0,max:6,step:1,value:settings.edgeDepth,onInput:value=>{settings.edgeDepth=value;}});
   ctx.ui.checkbox(container,{label:'Blend with soil',checked:settings.soilBlend,onChange:value=>{settings.soilBlend=value;}});
   ctx.ui.checkbox(container,{label:'Dither',checked:settings.dither,onChange:value=>{settings.dither=value;}});
+  ctx.ui.slider(container,{label:'Variation',min:0,max:100,step:5,value:settings.variation,onInput:value=>{settings.variation=value;}});
+  ctx.ui.slider(container,{label:'Pattern (Random → Pattern 1)',min:0,max:100,step:5,value:settings.pattern,onInput:value=>{settings.pattern=value;}});
   ctx.ui.slider(container,{label:'Stripe width',min:2,max:16,step:1,value:settings.stripeWidth,onInput:value=>{settings.stripeWidth=value;}});
 }
 
@@ -322,7 +382,7 @@ S.register({
   version:VERSION,
   category:'Track',
   status:'prototype',
-  description:'Dithered grass painter for Pencil/Line/Curve, Fill and filled shapes with smooth, rough or mowed-stripe styles, Bright/Medium/Dark Fill intensity, central brush-size control, feathering, strong soil-edge blending and left-click darken / right-click lighten behaviour.',
+  description:'Dithered grass painter with independent Variation and Random-to-Bayer Pattern sliders, smooth/rough/mowed styles, fill intensity, feathering, soil-edge blending and left-click darken / right-click lighten.', 
   supportedModes:['backdrop'],
   supportedTools:['freehand','line','curve','fill','rectangle-filled','ellipse-filled'],
   layers:['backdrop'],
@@ -332,3 +392,4 @@ S.register({
 });
 
 })(typeof globalThis!=='undefined'?globalThis:this);
+

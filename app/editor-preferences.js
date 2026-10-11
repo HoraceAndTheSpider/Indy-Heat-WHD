@@ -49,6 +49,8 @@ function snapshot(){
     backgroundOpacity:Number($('backgroundOpacity')?.value??100),
     overlayOpacity:Number($('opacity')?.value??55),
     showBg:!!$('showBg')?.checked,
+    showDeveloperPanels:!!$('showDeveloperPanels')?.checked,
+    showCanvasInfo:!!$('showCanvasInfo')?.checked,
     fixedViewport:!!viewport?.classList.contains('fixed'),
     fixedWidth:Number(viewport?.dataset?.fixedWidth)||null,
     fixedHeight:Number(viewport?.dataset?.fixedHeight)||null,
@@ -83,6 +85,10 @@ function markMobileDiagnostics(){
     if(DEBUG_SUMMARIES.has(text))d.classList.add('mobileDiagnostic');
   }
 }
+function applyCanvasVisibility(){
+  document.body.classList.toggle('indyheatHideDiagnostics',!$('showDeveloperPanels')?.checked);
+  document.body.classList.toggle('indyheatHideCanvasInfo',!$('showCanvasInfo')?.checked);
+}
 function controlsReady(){
   return !!($('layerEditBackdrop')&&$('layerModeButtons')&&$('editorScale')&&$('circuitViewportToggle')&&
     $('circuitViewport')&&$('circuitViewSurface')&&$('circuitViewWaypoints')&&$('circuitViewRecovery')&&
@@ -91,6 +97,7 @@ function controlsReady(){
 function defaultState(mobile){
   return {
     mode:'layerEditBackdrop',zoom:mobile?1:3,backgroundOpacity:100,overlayOpacity:55,showBg:true,
+    showDeveloperPanels:!mobile,showCanvasInfo:!mobile,
     fixedViewport:mobile,hideWaypointNumbers:mobile,waypointLabelMode:'index',
     overlays:Object.fromEntries([
       ...TOGGLE_IDS.map(id=>[id,false]),
@@ -134,6 +141,9 @@ function applyPreferences(){
   document.body.classList.toggle('indyheatMobileUi',mobile);
   if($('rememberEditorSettings'))$('rememberEditorSettings').checked=saved.remember===true;
   markMobileDiagnostics();
+  setCheck($('showDeveloperPanels'),q.showDeveloperPanels!==false);
+  setCheck($('showCanvasInfo'),q.showCanvasInfo!==false);
+  applyCanvasVisibility();
 
   setCheck($('showBg'),q.showBg!==false);
   setRange('backgroundOpacity',q.backgroundOpacity,'input');
@@ -154,6 +164,7 @@ function applyPreferences(){
   });
 }
 function installPersistence(){
+  for(const id of ['showDeveloperPanels','showCanvasInfo'])$(id)?.addEventListener('change',()=>{applyCanvasVisibility();saveSoon();});
   if(document.documentElement.dataset.indyheatPreferencesReady)return;
   document.documentElement.dataset.indyheatPreferencesReady='1';
   $('rememberEditorSettings')?.addEventListener('change',e=>{
