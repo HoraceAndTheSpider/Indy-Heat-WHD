@@ -320,3 +320,15 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 
 root.IndyHeatEditorPreferences=Object.freeze({storageKey:STORAGE_KEY,snapshot,save:()=>store(snapshot())});
 })(typeof globalThis!=='undefined'?globalThis:this);
+
+// Keyboard shortcuts are a separate editor responsibility and load after the
+// existing UI and settings. The build query prevents reusing an earlier copy.
+(function(){
+  if(typeof document==='undefined')return;
+  if(document.getElementById('indyheatKeyboardScript'))return;
+  const script=document.createElement('script');
+  script.id='indyheatKeyboardScript';
+  script.src=new URL('indyheat-keyboard-shortcuts.js?v=0196',document.currentScript?.src||document.baseURI).href;
+  script.defer=true;
+  document.head.appendChild(script);
+})();
