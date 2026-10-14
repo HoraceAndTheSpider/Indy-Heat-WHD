@@ -1,295 +1,108 @@
 # Indy Heat project instructions
 
-## Purpose
+## Purpose and authority
 
-This repository is a continuing reverse-engineering and authoring project. The primary failure modes to avoid are:
+This repository is an ongoing reverse-engineering, WHDLoad, HTML5 circuit authoring and original Motorola 68000 engine-extraction project. The primary failure modes to avoid are repeating settled research, turning focused implementation work into open-ended exploration, and supplying instructions/partial patches instead of complete requested deliverables.
 
-- repeating research that has already been settled;
-- allowing a small implementation task to turn into an open-ended investigation;
-- diagnosing or describing a requested fix instead of delivering the changed file.
+**The Wiki is the single source of durable technical truth before and after every research and development pass.** Read `AGENTS.md` first, then the current canonical Wiki subject page(s), then only the relevant owner source. The current Dropbox Wiki mirror, when identified by the user as the latest version, takes precedence over an older GitHub Wiki; the current production source, checked-in tests and user's last Amiga/browser results are also authoritative. Explicitly identify genuine conflicts instead of silently choosing an older assertion.
 
-The GitHub Wiki is the project's durable technical memory. Its research/data pages should be detailed enough that a new thread can implement from them without rediscovering offsets, formats, graphics resources or runtime behaviour.
+The user owns source control. All GitHub and Dropbox access is **read-only** unless the user explicitly asks for a particular write. Do not commit, push, branch, delete remote files, reorganise remote folders, or rewrite history on the user's behalf.
 
-## Mandatory startup protocol
+## MANDATORY: Wiki replacement and delivery protocol
 
-1. Read this `AGENTS.md` first.
-2. Treat the current checked-in `master`, current pushed Wiki, checked-in tests and latest explicit user/runtime handover as authority.
-3. Repository access is read-only/reference work unless the user explicitly asks otherwise. Do not commit, push, create branches or rewrite history. The user owns commits/pushes.
-4. Before new reverse-engineering, read the relevant Wiki subject page first. Do not re-prove a finding already documented there.
-5. A user-reported live editor or Amiga/FS-UAE runtime result is the acceptance result. Static inspection is not a substitute for that observation.
-6. If current source/data genuinely contradicts a Wiki statement, identify the contradiction explicitly and investigate only that point.
-7. Do not read every Wiki page for every small task. Read only the page(s) relevant to the named subsystem, then the owning source file(s).
+1. **Never create a `-append`, `-merge`, `-fix`, `-correct`, `-targeted merge`, `wiki-merge`, or similarly named Wiki file.** Such outputs are prohibited, even as temporary deliverables. Do not deliver paragraph fragments that must be inserted into an existing page.
+2. To change a page, obtain the **complete latest canonical `.md`** first. Merge confirmed findings into its appropriate existing section and deliver a **complete replacement with exactly the original filename** at `wiki/<canonical title>.md`.
+3. Preserve ALL existing settled content, addresses, code examples, tables, links, historical evidence and runtime reports. Correct only disproved or superseded statements; visibly distinguish older historical observations from current acceptance. Never recreate a large Wiki page from a shorter/older version or abstract summary.
+4. Include all new, enduring documentation directly in `wiki/`. Other than existing needed images/assets in `wiki/images/` or `wiki/data/`, **do not create `evidence/`, `passes/`, `tests/`, `host-audit/`, `analysis/`, `wiki-merge/`, `Research/`, or other side folders as documentation deliverables**. Test-vector tables, original byte ranges, source addresses and host differences necessary to reproduce a result must be embedded in the canonical Wiki page as text or tables, or linked to an already maintained canonical source/fixture.
+5. If the research concerns a new distinct, lasting subsystem that cannot reasonably fit an existing canonical page, a genuinely new complete Wiki page is permitted; cross-reference it from appropriate pages and `_Sidebar.md`. Do not create transient per-round research pages when a canonical subject page exists.
+6. **`Further Investigation.md` is the only unresolved-work/backlog page.** Put all genuinely unresolved questions there, with specific source/acceptance criteria. When evidence resolves an item, remove or update it in that same complete replacement file.
+7. **`AGENTS.md` replacements must also be complete** and placed at repository root, preserving unrelated rules.
+8. Deliver one clean ZIP with only full replacement files in repository-relative paths, ordinarily `AGENTS.md` and `wiki/*.md`. No generated README/instructions, test folders, intermediate packages, duplicate copies, or script-only merge directions. Each file must be ready to overwrite its counterpart without additional assembly.
+9. If a research round used temporary `.bin`, `.csv`, `.py` or host-audit fixtures, record the necessary source provenance, byte ranges, checksums or formulas in the Wiki and treat the temporary fixtures as deletable after verified documentation reconciliation. The original checked-in `Disk.1`, production `.s` source and accepted standalone candidate ZIP are not disposable research fixtures.
+10. For clean-up requests, provide a **separate, explicit deletion inventory** within a complete canonical Wiki page or handover, distinguishing confirmed staging material from files requiring human review. Do not delete or recommend deleting a file merely because its name contains `Research` or `Pass` when it contains unmerged authoritative evidence.
+11. Before claiming complete reconciliation, check every affected page's original length/content, the new page's retained headings, Wiki links and duplicate assertions, and the deletion inventory. **If a full up-to-date canonical baseline is unavailable, say so and do not fabricate a replacement or instruct the owner to delete the only copy.**
+12. The Wiki output must be sufficient for the next conversation to implement source-first without examining transient directories or rediscovering known offsets.
 
-## Hard execution gate for targeted fixes
+## Mandatory research and implementation modes
 
-This section is mandatory and overrides any tendency to broaden a small bug fix into research.
+### Implementation mode
 
-When the user reports a specific error, names the affected control/file, or asks for a clearly localised fix:
+When asked to fix, implement, add, change, proceed or modify a clearly localised component:
 
-1. Treat it as implementation mode immediately.
-2. Use the current local/current-session production file first. If it is unavailable, fetch the single canonical owner file once.
-3. Do not browse the web, search historical commits, inspect Disk.1, re-read unrelated Wiki pages, or run repository-wide searches unless the owner file proves one is genuinely required.
-4. If the error itself identifies the stale assertion/value/path, fix that exact point. Do not re-investigate the subsystem first.
-5. Inspect at most one direct dependency unless the code demonstrates another dependency is required.
-6. Begin the edit within three tool calls maximum after the task arrives. If three tool calls have occurred without an edit, stop investigating and make the smallest justified change.
-7. Run one focused verification only: a syntax/static check or the narrowest relevant local test.
-8. Deliver the requested complete replacement file/ZIP in the same response. Do not substitute a diagnosis, explanation, patch note or code snippet for the requested output.
-9. Do not repeat source retrieval after the required file has already been obtained.
-10. If artifact/file-transfer tooling causes friction, solve the transfer directly; do not turn that friction into source research.
-11. Never provide patch notes unless the user explicitly asks for them.
-12. If the user says a task is targeted, local, simple or already isolated, do not broaden it under any circumstances without a concrete code-level blocker.
+1. Use the current authoritative owner production file; fetch it only once if not already present.
+2. Inspect only direct dependencies needed for the change. Apply the smallest requested edit within the first three investigation tool calls where feasible.
+3. Preserve accepted features and original game behaviour. Do not re-investigate settled Disk.1 formats, sprite identities, palettes or waypoint encoding.
+4. Perform one focused build/static or runtime-relevant verification and deliver complete production replacement files/ZIP during the current response. Do not supply isolated code snippets or host-side fabricated behaviours instead.
+5. For editor changes, increment version labels. For engine/Amiga changes, maintain readable original Motorola 68000 `.s` and BarFly compatibility, verify extracted instruction parity, deliver original fixtures only where needed, and keep the user's Amiga test as final runtime acceptance.
+6. The user owns commits, pushes and host testing. Never claim that local assembly or a diagnostic-only branch proves original runtime behaviour.
 
-Default sequence for targeted fixes:
+### Research mode
 
-```text
-owner file -> edit -> one check -> deliver
-```
+Only when explicitly requested or when an unknown blocks implementation:
 
-Anything broader requires a concrete blocker visible in the code or an explicit user request for investigation.
+1. Identify the genuinely unresolved question and consult the relevant current canonical Wiki page before new source investigation.
+2. Investigate the shortest original code path that resolves the question; avoid broad repeating disassembly and duplication.
+3. State exact addresses, inputs, outputs, register/state dependencies, observed versus inferred semantics and the effect on the next extraction.
+4. End research when the question is answered. Record confirmed facts in the **complete canonical page replacement** and remaining unknowns only in `Further Investigation.md`.
+5. Research must not generate a new application or Amiga executable unless explicitly requested. Avoid standalone `evidence`/`tests` directory proliferation; preserve useful proof in Wiki text.
 
-## Two working modes
+### Anti-loop / stop rules
 
-### Implementation mode — default when the user says implement, fix, add, change or proceed
+After the canonical subject page and owner file, 2–3 speculative source inspections without clear progress is excessive. Stop and implement/deliver the narrow established change or explicitly state the precise blocker. Do not verify the verification. Prefer complete, testable outputs to prolonged exploration.
 
-When the user asks to implement a feature from already-established findings, treat the documented findings as a specification, not as hypotheses to re-investigate.
+## Important established facts — do not rediscover without contradictory evidence
 
-Workflow:
+- Disk.1 resource tables, decompression, original entry-point addressing and track group identities.
+- Six-byte complemented waypoints, signed relative links and descriptor boundary records; retail route-count fingerprints do **not** determine custom track template identity.
+- A/B/C are descriptor and linked-graph identities, not simply separate road/pit lanes; preserve branch/rejoin links and lap progress semantics.
+- High-memory reusable active custom circuit arena, private minimap descriptor and no `template.bin` dependency in current WHDLoad.
+- Race/circuit resources, including `$38` racing cars; `$10/$11` driver/face banks; `$05` pit crew; `$08` PIT-board attendants; `$0F` flag man; and their palette/frame families.
+- Female driver indices `03,04,05,08,09,13,19,22,28,37,40,43` (zero-based) and live driver `+$1B` female-presentation flag.
+- Existing 11-event original/playlist contract, current custom circuit IDs `0..99`, authored lap range, and custom `race_setup.bin` layout from the current production Wiki.
+- Four separate `$31A` car contexts, four `$124` player records, four `$16` pit records, original A5/A6 context ownership, scheduler roots and solved Stage 2C generation-triggered teardown.
+- Stage 3B Passes 58–67 are **user-accepted** on Amiga with **RC=0**. Pass 67 confirms real original collision-tail execution and an observed **native A/B route switch**. Its separate preference-conflict `PREF` diagnostic remained negative. P65 crew-task admission and P66 pit movement/lift calls do not establish retail pit lifecycle; human pickup, pit crew rendering and occasional apparent collision pass-through remain incomplete. Pass 68 is an untested candidate, not an accepted baseline.
 
-1. Read the relevant Wiki subject page only if needed.
-2. Inspect the canonical owning production file.
-3. Inspect only direct dependencies needed to make the change.
-4. Begin editing.
-5. Perform one focused verification pass over the edited behaviour and obvious regression points.
-6. Deliver the complete changed production files promptly for user runtime/browser testing.
+## Canonical Wiki organisation
 
-Do not during implementation mode:
+Research/data pages include `Disk Image, Loader and Runtime Resource Map.md`, `Track Data and Runtime Setup.md`, `Waypoint, AI and Car Behaviour.md`, `Race, Car and Pit Runtime Structures.md`, `Race Presentation and Graphics Resources.md`, `Player, Driver and Car Data Structures.md`, `Live Race Memory and Vehicle Contexts.md`, `Standalone 68000 Race Engine Interface Contract.md` and `Standalone 68000 Race Engine Extraction Manifest.md`. Stage 3B pass pages document test-specific acceptance. `Further Investigation.md` is the only open-work page.
 
-- re-run settled Disk.1/resource/decompression research;
-- search the entire repository “just in case”;
-- search historical commits or the web without a specific blocker;
-- revalidate a documented binary mapping merely because it is important;
-- broaden a local task into architecture cleanup or a new research milestone;
-- keep checking after the information needed to code is already available;
-- turn tool/file-transfer friction into a research project;
-- provide prose in place of the requested output.
+The editor's user/authoring guidance belongs in `Circuit Editor Operations.md` and `Editor and Track Package Workflow.md`. Do not move reverse-engineered game facts into editor documentation or implementation/UI ownership rules into game-data references.
 
-### Research mode — only when the user asks for investigation or a genuine unknown blocks implementation
+For new maps, sprites or visual research images, use `wiki/images/` and the actual decoded source palette, not guessed or editor-transformed artwork. Replace outdated diagrams when source/runtime proof supersedes their annotations. Preserve relevant existing images and references.
 
-Research mode should answer a clearly stated unknown.
+## Canonical editor ownership
 
-Before starting, identify:
+- Foreground/Surface: `app/layer-editor.js`; Auto Foreground: `app/foreground-auto.js`.
+- Waypoints: `app/app.js`, `app/waypoint-actions.js`; Recovery: `app/recovery-editor.js`.
+- Race setup: `app/race-setup.js`; racing graphics decoder: `app/indyheat_race_graphics.js`; graphics inspector: `app/race-graphics-inspector.js`.
+- Backdrop: `app/track-backdrop.js`; MiniMap/map/package: `app/circuit-package.js`.
+- Brush primitives: `app/brush-tools.js`; catalogue/IHBR/placement: `app/brush-library.js`; manager: `app/brush-manager.js`.
+- UI coordination: `app/editor-ui.js`; top-level shell/scripts/version: `app/index.html`.
 
-- the exact unresolved question;
-- which existing Wiki page was checked;
-- why the documented knowledge is insufficient or contradictory;
-- what evidence would resolve the question.
+Do not use `app/brush-library.js` as a catch-all. Existing independent Special Functions remain registered procedural modules. New Special Function revisions use `1.xxx`; reserve `2.xxx` for true rewrites. Catalogue raster brushes remain `.ihbrush`; retain IHBR v1 reading and IHBR v2 metadata support.
 
-When the question is answered, stop. Record the settled result on the relevant subject Wiki page during the next requested documentation pass. Do not leave a solved result only in chat history.
+## Editor and WHDLoad delivery
 
-## Anti-loop / stop rules
+The HTML5 editor is pre-v1: versions increment `v0.100`, `v0.101` and so on until the owner explicitly calls a release. Increment visible/internal versions for all editor changes, preserve shared painting transactions and Foreground polarity, deliver only complete production changes with paths, and do not duplicate modules with patch filenames.
 
-- After reading the relevant Wiki page and owning source file, 2–3 additional source inspections without beginning the requested edit means the task is drifting.
-- Once the requested implementation can be written from documented facts, stop researching and write it.
-- For a targeted editor task, one static verification pass is normally enough. User browser/runtime testing is the acceptance test.
-- If a tool path fails twice or begins consuming more effort than the requested code change, use a simpler available path or deliver the implementation without that optional check.
-- Do not verify the verification unless the first verification exposes an actual inconsistency.
-- Do not independently add a second milestone while the requested milestone is incomplete.
-- Prefer a usable targeted implementation over an indefinitely “better verified” non-delivery.
-- If genuinely blocked by one missing fact, state that exact fact. Do not fill the gap with broad speculative research.
+For the WHDLoad slave: preserve header/CUSTOM/trainer and proven runtime hooks; original retail mode and low-memory config must remain supported. The final release remains 1.3, with development versions `1.3 test N`. No silent fallback to retail when mandatory custom data fails. Custom graphics must not occupy transient retail decompression storage; the user builds/tests the `.asm` slave.
 
-## Settled areas that must not be re-opened without contradictory evidence
+## Standalone 68000 engine, Amiga-first
 
-The Wiki contains the canonical detail. In particular, do not restart:
+The goal is **standalone, relocatable, readable original Motorola 68000 race-engine extraction** for an Amiga host that supplies track/race/pit/player/resource data, followed later by possible AGA/From Lights to Flag integration. Preserve original code and semantics instead of developing a parallel synthetic physics/AI implementation; use narrow host adapters only for clearly external services (display, sound, scheduling/AmigaOS integration). Exact original instruction evidence is more authoritative than estimated user-visible effects, and user-reported Amiga acceptance is more authoritative than local assembly. All reported RC values, negative coverage and unexercised callbacks must be recorded faithfully.
 
-- Disk.1 sector/resource-directory/File Imploder mapping;
-- the established resource table and known track resource groups;
-- six-byte complemented waypoint encoding and explicit relative links;
-- stock route-count fingerprints merely to rediscover template identity;
-- playlist v1/v2 mapping and the current 11-event runtime contract;
-- the 1–20 lap gameplay/current-lap contract;
-- the reusable custom high-memory arena architecture;
-- racing-car graphics location: resource `$38`;
-- driver/face graphics identity: resources `$10/$11`;
-- `$05` pit-crew frame-family layout;
-- `$08` male/female PIT-board frame-family layout;
-- the confirmed zero-based female-driver lookup `03,04,05,08,09,13,19,22,28,37,40,43` and live `+$1B` female presentation flag;
-- the Gasoline Alley presentation palette used for `$10/$11`;
-- previously proved MiniMap/name/runtime presentation hooks.
+Stage 3B Pass 68 is the latest user-accepted Amiga HUNK baseline (`RC=0`); its original `$A6FE` ten-stage car dispatcher now runs, its original fuel-RNG state advanced, and native A/B switching was observed. Pass 69 is an untested pit-object-list reintegration candidate, preserving the G-key comparison with the earlier P67 split-update path. The owner will supply the P69 Amiga result before a comprehensive handover to a new thread. The original source authority is `whdload/data/Disk.1` with decompressed 73,834-byte programme SHA256 `f17172dab27fa5b33fc61ee26a8efe9a0628ca5fab8806c38b0a27e967c09e1c`. The next work is completion of the original cooperative task scheduler and genuine pit/effect coroutine lifetimes. Prioritise substantial connected original engine paths, **not** another research sweep, instrumentation-only pass or placeholder that masks missing native behaviour. The most useful previously documented gaps include original CPU-mode preservation, A/B candidate swapping, turbo request/activation, fuel/damage notification scheduling, pit entry/service/release and event-task graphics. Read relevant canonical Wiki evidence before implementing any subset.
 
-If an implementation needs one of those facts, use the Wiki result directly.
+## Mandatory original-source and final-code integrity (Stage 3B onward; 14 October 2026)
 
-## Wiki purpose and structure
+1. **Physical source availability is a hard precondition.** Before attempting any new code extraction, confirm that the actual original `whdload/data/Disk.1` binary, its verified `73,834`-byte unpacked main programme or an independently reproduced copy, and the latest owner-accepted `.s` source, HUNK, builder and necessary resource fixtures are accessible as bytes in the execution environment. Merely finding their names in Dropbox, reading file previews, or seeing a GitHub URL is **not** sufficient. If any required file is inaccessible or obsolete, **stop and request the exact file from the owner immediately; do not infer, reconstruct or fabricate original instructions**. Compute and record the source checksum and check every newly extracted byte range against the actual game image.
+2. **Original gameplay instructions are the only permissible final implementation.** Do not rewrite the AI, physics, steering, upgrades, lap logic, collision, damage, Turbo, fuel, pit logic or game rules as host-calculated equivalents. Permitted final modifications are confined to relocation of original addresses, offsets and memory placements; source-compatible preparation/adaptation of the engine's complete inputs; output adapters exposing its actual results; and compatible graphics/audio rendering interfaces for original outputs, including future AGA support. Where calls, operands or branches must change for relocation, state precisely what changed and validate original unaffected instructions.
+3. **Temporary placeholders are explicitly temporary.** An isolated host shim may bridge a missing original allocator, coroutine/IRQ scheduler, asset loader or other external service to keep an intermediate candidate testable. It must be named and documented `TEMPORARY`, must never be mistaken for retail parity, and must not silently replace gameplay logic. Track its original entry and dependency, the exact deletion/replacement criterion, and a next-pass replacement objective in canonical Wiki. Each pass must work towards eliminating placeholders; regressions in original-code coverage are not acceptable simply to make diagnostics green.
+4. **Report extraction progress honestly.** Classify each added span as `ORIGINAL / LIVE` (executing), `RELOCATED / LIVE` (with documented operands/calls), `STAGED ORIGINAL` (included but not executed), `HOST I/O` or `TEMPORARY`. Count *distinct* verified original address bytes; never count duplicate fixtures, data tables, instructions staged but unexecuted, host-written instructions, or renamed diagnostics as newly live source. Amiga `RC=0` demonstrates that a candidate ran, not complete retail equivalence.
+5. **Prioritise connected substantive extraction.** Integrate and exercise significant original call paths and their producer/consumer dependencies rather than routinely adding isolated 20–50 byte leaves or further test HUD features. A bounded pass may deliberately stop at a native scheduler or rendering dependency; disclose the precise gap and do not claim unfinished coroutines are active.
+6. **Existing successes are not a blank cheque for host substitutions.** Audit earlier Stage 3B host decisions; progressively replace them with source-verifiable retail routines. Preserve actual owner-reported negative coverage (`PREF` route switch not seen, native crew/fire/debris visuals not yet scheduled, original manual pit pickup incomplete) and avoid tuning or inventing engine behaviour to satisfy visual expectations.
+7. **The required source bundle and canonical documents must accompany the output.** A complete Amiga candidate ZIP includes native HUNK, readable full `.s`, builder, exact source/provenance fixtures and any resource files actually needed to run. Changed Wiki pages must be complete replacement pages under their canonical names, `AGENTS.md` at repository root if changed; no partial patch snippets or remote modifications. The Amiga is the final acceptance authority.
 
-The Wiki is primarily a reverse-engineering/data reference, not an editor changelog.
+## Final documentation check
 
-Canonical research pages:
-
-- `Disk Image, Loader and Runtime Resource Map.md`
-- `Track Data and Runtime Setup.md`
-- `Waypoint, AI and Car Behaviour.md`
-- `Race, Car and Pit Runtime Structures.md`
-- `Race Presentation and Graphics Resources.md`
-- `WHDLoad Runtime Overrides and Custom Track Loading.md`
-
-Editor documentation:
-
-- `Circuit Editor Operations.md`
-- `Editor and Track Package Workflow.md`
-
-Do not move game-data research into editor pages merely because the editor consumes it. Do not put editor implementation details into reverse-engineering pages unless they are evidence about the original game.
-
-## One unresolved-work page only
-
-There must be one and only one:
-
-`Further Investigation.md`
-
-All unresolved research, validation questions and deliberately deferred investigations belong there.
-
-When an item becomes settled:
-
-1. move/add the result to the appropriate research/data page;
-2. remove the resolved item from `Further Investigation.md`;
-3. update or replace any research image whose annotation has now been confirmed or disproved;
-4. preserve useful historical evidence where it explains the current architecture, but label superseded approaches clearly.
-
-A direct user visual/runtime confirmation is sufficient project evidence to settle a visual identity unless later source/runtime evidence contradicts it.
-
-## Documentation preservation
-
-When updating the Wiki:
-
-- use the current pushed Wiki/export supplied by the user as the baseline;
-- do not reconstruct pages from an older export when a newer Wiki copy exists;
-- preserve existing settled detail;
-- add new findings rather than deleting useful evidence;
-- correct stale statements that would cause repeated research;
-- preserve page names exactly;
-- update `_Sidebar.md` only to keep the research/editor/open-work grouping accurate.
-
-Routine small editor changes do not require Wiki updates unless the user asks for a documentation pass or the change establishes new technical knowledge.
-
-## Targeted editor tasks
-
-A targeted task is a small/localised request where the user identifies the mode, control, file or behaviour and is not asking for new reverse-engineering.
-
-Examples:
-
-- add one control;
-- fix one interaction;
-- alter one transform/default/range;
-- wire already-known graphics into an existing inspector;
-- adjust one export field;
-- move/rename one editor element.
-
-For a targeted task:
-
-1. use implementation mode immediately;
-2. use the current local/current-session owner file first; fetch the canonical owner once only if necessary;
-3. widen only if the owner code proves it necessary;
-4. begin editing within three tool calls;
-5. make the smallest production change that satisfies the request;
-6. increment the editor version where the app itself changes;
-7. perform one focused verification;
-8. deliver complete changed files in the same response;
-9. do not provide diagnosis, patch notes or implementation commentary instead of the requested files.
-
-### Canonical editor ownership
-
-- Foreground / Surface base editing: `app/layer-editor.js`
-- Auto Foreground inference: `app/foreground-auto.js`
-- Waypoints: `app/app.js` and `app/waypoint-actions.js`
-- Recovery: `app/recovery-editor.js`
-- Race setup: `app/race-setup.js`
-- Retail race graphics decoder: `app/indyheat_race_graphics.js`
-- Retail race graphics inspector UI: `app/race-graphics-inspector.js`
-- Backdrop: `app/track-backdrop.js`
-- MiniMap / Map / package: `app/circuit-package.js`
-- brush raster primitives: `app/brush-tools.js`
-- brush catalogue / IHBR / folder discovery / shared placement: `app/brush-library.js`
-- Brush Manager UI: `app/brush-manager.js`
-- editor coordination / layout: `app/editor-ui.js`
-- top-level shell/version/script order: `app/index.html`
-
-Do not use `app/brush-library.js` as a general editor catch-all.
-
-## Current graphics implementation rule
-
-Research authority is the Wiki:
-
-```text
-$10/$11  driver / face presentation banks
-$38      racing-car bank
-$05      pit crew
-$08      PIT-board attendants
-$0F      flag man / starting gun
-```
-
-Normal `$38` car preview direction comes from route/driving heading, not the Recovery `+3` layer.
-
-## Continuity and source selection
-
-- Prefer the newest known working source.
-- If the current conversation contains a user-tested local build newer than `master`, do not silently rebuild from older `master`.
-- If the user has pushed the prior work, current `master` supersedes old handover version references.
-- Do not recreate a solved feature from memory if current source already contains it.
-- Preserve accepted behaviour unless the task explicitly changes it.
-- Do not fetch the same source file repeatedly in one task.
-
-## Editor versioning and file hygiene
-
-- Every HTML5 editor/app change increments the visible/internal version.
-- The editor remains a 0.x development product until the user explicitly declares a release candidate/complete v1 release.
-- After `v0.100`, continue `v0.101`, `v0.102`, `v0.103`, etc.; do not roll to `v1.00` automatically.
-- Update canonical production files in place.
-- Add a new production file only for a genuinely independent responsibility.
-- Do not create `*-fix-vNN.js`, `*-patch-vNN.js` or similar corrective layers.
-- Do not reorganise unrelated modules during a targeted task.
-
-## Brush architecture
-
-- User catalogue brushes live as `.ihbrush` files under `app/brushes/`; do not embed their raster payloads in JavaScript.
-- IHBR v1 remains readable; IHBR v2 carries UTF-8 JSON catalogue metadata with the raster.
-- `app/brush-library.js` owns catalogue/format/folder loading and placement integration.
-- `app/brush-manager.js` owns the manager workspace and metadata editing.
-- `app/foreground-auto.js` owns Auto Foreground and remains independent of the brush catalogue.
-- Special Functions remain procedural and separate from ordinary raster brushes.
-
-## Special Functions versioning
-
-- Plugin version numbering starts at `1.000`.
-- `1.xxx` is the normal revision line.
-- `2.xxx`, `3.xxx`, etc. are reserved for complete rewrites/major replacement generations.
-- Do not use `0.x.x` plugin versions for new revisions.
-
-## Editor deliverables
-
-- Deliver complete changed production files, at repository-relative paths, suitable for overwriting the user's local files.
-- Include genuinely new production modules only when required.
-- Do not provide a patch/apply script as the primary deliverable.
-- Do not package the whole app for a small targeted task.
-- A ZIP may be supplied as convenience, containing only changed/new files with repository-relative paths.
-- Do not create multiple duplicate ZIPs.
-- Do not ask the user to run development tests unless requested; the user normally tests directly in the browser.
-- Never provide patch notes unless explicitly requested.
-- When the user requests an output file, the response is incomplete until the file is actually supplied.
-
-## WHDLoad slave development
-
-- Treat the current checked-in slave as authority unless the conversation contains a newer user-tested source not yet pushed.
-- Preserve WHDLoad header fields, CUSTOM options, trainer behaviour and proven runtime hooks unless the requested task changes them.
-- Final release remains 1.3; development builds are sequential `1.3 test N`.
-- The user compiles/tests the slave; lack of a local Amiga assembler is not a blocker.
-- Deliver the complete changed `.asm` source, not a patch.
-- Do not silently fall back from a selected custom circuit to retail/template data when a mandatory custom asset fails.
-
-## Current architectural principles
-
-- `CUSTOM2=1` is custom-track mode.
-- Custom circuits use one reusable active arena, not one permanent allocation per race.
-- Custom graphical assets must not be written into transient retail allocator/decompression destinations.
-- Retail mode remains available with the original memory footprint through the low-memory configuration.
-- Editor package formats should not be changed merely to solve runtime storage.
-- Circuit IDs remain `0..99`.
-- Current championship runtime remains 11 events.
-- Current custom race length remains `1..20` laps.
+Deliverable acceptance for a research/documentation task requires complete canonical `.md` files, not snippets or a narrative claiming they are ready. The file-tree should be immediately suitable for copying to the repository. Never announce research staging folders as long-term Wiki dependencies. Retire staging fragments only **after** the complete replacements have been verified to contain their findings.
